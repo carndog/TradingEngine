@@ -2,8 +2,9 @@
 name: Engineering story
 about: Define a small, independently verifiable unit of Trading Engine work
 title: ''
-labels: ''
+labels: story
 assignees: ''
+
 ---
 
 ## Outcome
