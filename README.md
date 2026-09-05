@@ -1,7 +1,5 @@
 # TradingEngine
-Greenfield .NET trading engine for deterministic historical replay and later Azure and eToro Demo integration.
-
--Greenfield implementation
+.NET trading engine for deterministic historical replay and later Azure and eToro Demo integration.
 
 -Old source remains external reference material
 
