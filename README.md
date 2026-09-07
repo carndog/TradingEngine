@@ -10,7 +10,7 @@ The first usable version will provide:
 
 - A REST API for maintaining instruments, exchanges and monitoring status.
 - A keyboard-focused web client for configuring watched instruments.
-- Versioned monitoring rules, including support and resistance regions, stored and validated by the API.
+- Revision-controlled monitoring rules, including support and resistance regions, stored and validated by the API.
 - Scheduled price collection that respects provider sampling and rate limits.
 - Read-only signal detection and recommendation alerts.
 - Stubbed or demo-only order execution until the relevant safety controls have been proven.
@@ -22,7 +22,7 @@ The planned architecture includes:
 - ASP.NET Core and .NET services.
 - Entity Framework Core with Azure SQL as the operational system of record.
 - Relational storage for core entities such as instruments, observations, signals, trade intents and executions.
-- Versioned XML stored in Azure SQL for irregular per-instrument monitoring-rule definitions.
+- Revision-controlled monitoring-rule definitions stored as XML in Azure SQL, preserving the timeline of changes.
 - Azure Functions and Service Bus for the asynchronous processing pipeline.
 - Managed Identity and Azure Key Vault for service authentication and secrets.
 - Application Insights for logging, tracing and operational monitoring.
