@@ -1,16 +1,62 @@
 # TradingEngine
 
-.NET trading engine for deterministic historical replay and later Azure and eToro Demo integration.
+TradingEngine is a public .NET project for building the generic infrastructure of a price-monitoring and trading system. It starts with instrument administration and read-only monitoring, then develops toward a message-driven Azure architecture, safe demo execution and historical replay.
 
-## Project boundaries
+The project deliberately separates reusable engineering from proprietary trading strategy. Strategy algorithms, meaningful parameters, private research, live configuration and sensitive operational information are not stored in this repository.
 
-- Old source remains external reference material.
-- Phase 1 is local-first historical replay.
-- No live-money execution.
-- No paid data or Azure resources without an explicit decision.
+## Initial product
 
-## Public repository boundary
+The first usable version will provide:
 
-This repository contains generic infrastructure, contracts and harmless reference implementations. Proprietary strategies, meaningful parameters, private research, live configuration and sensitive operational information are deliberately excluded.
+- A REST API for maintaining instruments, exchanges and monitoring status.
+- A keyboard-focused web client for configuring watched instruments.
+- Versioned monitoring rules, including support and resistance regions, stored and validated by the API.
+- Scheduled price collection that respects provider sampling and rate limits.
+- Read-only signal detection and recommendation alerts.
+- Stubbed or demo-only order execution until the relevant safety controls have been proven.
 
-See [Public Scope and Data Integrity Policy](PUBLIC_SCOPE.md) before contributing or using an AI coding agent.
+## Technical direction
+
+The planned architecture includes:
+
+- ASP.NET Core and .NET services.
+- Entity Framework Core with Azure SQL as the operational system of record.
+- Relational storage for core entities such as instruments, observations, signals, trade intents and executions.
+- Versioned XML stored in Azure SQL for irregular per-instrument monitoring-rule definitions.
+- Azure Functions and Service Bus for the asynchronous processing pipeline.
+- Managed Identity and Azure Key Vault for service authentication and secrets.
+- Application Insights for logging, tracing and operational monitoring.
+- Idempotency, concurrency control, reconciliation and auditable state changes.
+- Infrastructure as code and automated build, test and deployment workflows.
+
+Large historical datasets may later use separate archive storage, but they are not the canonical configuration store.
+
+## Delivery roadmap
+
+Work is organised into the following milestones:
+
+- **M0 — Planning and project foundation**
+- **M1 — Configuration foundation**
+- **M2 — Read-only signal detection**
+- **M3 — Messaging pipeline**
+- **M4 — Demo execution**
+- **M5 — Historical replay and backtesting**
+- **M6 — Controlled go-live preparation**
+
+See the [Trading Engine project](https://github.com/users/carndog/projects/1) and the repository milestones for the current plan and progress.
+
+## Safety and public scope
+
+Stub or demo execution is the safe default. Tests, examples, development environments and CI workflows must never submit real-money orders. Repository data must be synthetic or appropriately anonymised.
+
+Any use of paid data services, provisioned Azure resources or live execution requires an explicit, reviewed decision. Live credentials, account identifiers, real allocations and proprietary strategy belong in a separate private repository or deployment context.
+
+Read the [Public Scope and Data Integrity Policy](PUBLIC_SCOPE.md) before contributing or using an AI coding agent.
+
+## Legacy implementation
+
+The previous implementation may be consulted as reference material while rebuilding individual capabilities. This project starts afresh; legacy source code will not be imported wholesale into the public repository.
+
+## Licence
+
+This repository does not currently grant an open-source licence. Apache License 2.0 may be considered once the public infrastructure has matured.
