@@ -23,7 +23,7 @@ public sealed class DiagnosticsEndpointTests
     }
 
     [Test]
-    public async Task Health_returns_a_successful_public_safe_response()
+    public async Task Health_WhenRequested_ReturnsSuccessfulResponse()
     {
         HttpClient client = _factory.CreateClient();
 
@@ -39,7 +39,7 @@ public sealed class DiagnosticsEndpointTests
     }
 
     [Test]
-    public async Task Version_identifies_the_application_build_without_configuration_values()
+    public async Task Version_WhenRequested_ReturnsBuildIdentityWithoutConfiguration()
     {
         HttpClient client = _factory.CreateClient();
 

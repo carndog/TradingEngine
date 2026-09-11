@@ -22,7 +22,7 @@ public sealed class DomainDependencyRulesTests
     ];
 
     [Test]
-    public void Domain_types_do_not_depend_on_outer_layers_or_forbidden_technologies()
+    public void DomainTypes_WithCurrentDependencies_HaveNoForbiddenDependencies()
     {
         Assembly domainAssembly = typeof(WatchedInstrument).Assembly;
 
@@ -32,12 +32,20 @@ public sealed class DomainDependencyRulesTests
             .HaveDependencyOnAny(ForbiddenNamespaces)
             .GetResult();
 
-        string failingTypes = string.Join(", ", result.FailingTypeNames ?? Array.Empty<string>());
-        Assert.That(result.IsSuccessful, Is.True, $"Domain dependency violations: {failingTypes}");
+        string[] failingTypes = result.FailingTypeNames?
+            .Order(StringComparer.Ordinal)
+            .ToArray()
+            ?? Array.Empty<string>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(failingTypes, Is.Empty);
+            Assert.That(result.IsSuccessful, Is.True);
+        });
     }
 
     [Test]
-    public void Domain_assembly_does_not_reference_forbidden_assemblies()
+    public void DomainAssembly_WithCurrentReferences_HasNoForbiddenAssemblies()
     {
         Assembly domainAssembly = typeof(WatchedInstrument).Assembly;
         string[] forbiddenReferences = domainAssembly
@@ -51,7 +59,7 @@ public sealed class DomainDependencyRulesTests
     }
 
     [Test]
-    public void Domain_types_do_not_receive_or_store_a_clock()
+    public void DomainTypes_WithCurrentDesign_HaveNoClockDependency()
     {
         Assembly domainAssembly = typeof(WatchedInstrument).Assembly;
         Type clockType = typeof(IClock);

@@ -10,7 +10,7 @@ namespace TradingEngine.Application.Tests.WatchedInstruments.Register;
 public sealed class RegisterWatchedInstrumentHandlerTests
 {
     [Test]
-    public async Task HandleAsync_gets_the_time_from_the_application_clock_and_stores_the_instrument()
+    public async Task HandleAsync_WithValidCommand_UsesClockAndStoresInstrument()
     {
         Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
         FakeClock clock = new(now);
@@ -34,15 +34,4 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         });
     }
 
-    private sealed class CapturingWatchedInstrumentStore : IWatchedInstrumentStore
-    {
-        public WatchedInstrument? AddedInstrument { get; private set; }
-
-        public Task AddAsync(WatchedInstrument instrument, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            AddedInstrument = instrument;
-            return Task.CompletedTask;
-        }
-    }
 }
