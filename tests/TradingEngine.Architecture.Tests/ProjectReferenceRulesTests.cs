@@ -27,31 +27,28 @@ public sealed class ProjectReferenceRulesTests
             }
         };
 
-    [Test]
-    public void Production_projects_follow_the_reference_allow_list()
+    [TestCase("TradingEngine.Domain")]
+    [TestCase("TradingEngine.Application")]
+    [TestCase("TradingEngine.Infrastructure")]
+    [TestCase("TradingEngine.Contracts")]
+    [TestCase("TradingEngine.Api")]
+    public void ProductionProject_WithApprovedReferences_MatchesAllowList(string projectName)
     {
         string solutionRoot = SolutionRoot.Find();
+        string projectPath = Path.Combine(solutionRoot, "src", projectName, $"{projectName}.csproj");
+        string[] actualReferences = ReadIncludes(projectPath, "ProjectReference")
+            .Select(reference => Path.GetFileNameWithoutExtension(reference)!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        string[] expectedReferences = AllowedReferences[projectName]
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
-        foreach (KeyValuePair<string, IReadOnlySet<string>> rule in AllowedReferences)
-        {
-            string projectPath = Path.Combine(solutionRoot, "src", rule.Key, $"{rule.Key}.csproj");
-            string[] actualReferences = ReadIncludes(projectPath, "ProjectReference")
-                .Select(reference => Path.GetFileNameWithoutExtension(reference)!)
-                .Order(StringComparer.Ordinal)
-                .ToArray();
-            string[] expectedReferences = rule.Value
-                .Order(StringComparer.Ordinal)
-                .ToArray();
-
-            Assert.That(
-                actualReferences,
-                Is.EqualTo(expectedReferences),
-                $"Unexpected project-reference direction in {rule.Key}.");
-        }
+        Assert.That(actualReferences, Is.EqualTo(expectedReferences));
     }
 
     [Test]
-    public void Domain_project_references_only_approved_packages()
+    public void DomainProject_WithCurrentPackages_ReferencesOnlyApprovedPackages()
     {
         string solutionRoot = SolutionRoot.Find();
         string projectPath = Path.Combine(
@@ -77,5 +74,4 @@ public sealed class ProjectReferenceRulesTests
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!);
     }
-
 }

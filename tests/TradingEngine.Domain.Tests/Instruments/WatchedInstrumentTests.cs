@@ -10,7 +10,7 @@ public sealed class WatchedInstrumentTests
     private static readonly Instant CreatedAt = Instant.FromUtc(2026, 1, 2, 9, 30);
 
     [Test]
-    public void Create_establishes_a_valid_configured_instrument()
+    public void Create_WithValidValues_ReturnsConfiguredInstrument()
     {
         WatchedInstrument instrument = CreateInstrument();
 
@@ -28,7 +28,7 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
-    public void StartMonitoring_changes_state_policy_and_timestamp()
+    public void StartMonitoring_WhenConfigured_ChangesStatePolicyAndTimestamp()
     {
         WatchedInstrument instrument = CreateInstrument();
         Instant changedAt = CreatedAt + Duration.FromMinutes(5);
@@ -44,7 +44,7 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
-    public void StartMonitoring_rejects_a_duplicate_transition()
+    public void StartMonitoring_WhenAlreadyMonitored_ThrowsDomainRuleViolationException()
     {
         WatchedInstrument instrument = CreateInstrument();
         instrument.StartMonitoring(SamplingPolicy.Standard, CreatedAt);
@@ -56,7 +56,7 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
-    public void ChangeSamplingPolicy_rejects_a_timestamp_before_the_latest_change()
+    public void ChangeSamplingPolicy_WhenTimestampPrecedesLatestChange_ThrowsDomainRuleViolationException()
     {
         WatchedInstrument instrument = CreateInstrument();
 
@@ -69,7 +69,7 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
-    public void StopMonitoring_returns_the_instrument_to_configured_state()
+    public void StopMonitoring_WhenMonitored_ReturnsConfiguredState()
     {
         WatchedInstrument instrument = CreateInstrument();
         Instant startedAt = CreatedAt + Duration.FromMinutes(1);
@@ -86,7 +86,7 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
-    public void Create_rejects_an_unknown_sampling_policy()
+    public void Create_WithUnknownSamplingPolicy_ThrowsArgumentOutOfRangeException()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
             () => WatchedInstrument.Create(
