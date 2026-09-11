@@ -22,7 +22,7 @@ The planned architecture includes:
 - ASP.NET Core and .NET services.
 - Entity Framework Core with Azure SQL as the operational system of record.
 - Relational storage for core entities such as instruments, observations, signals, trade intents and executions.
-- Revision-controlled monitoring-rule definitions stored as XML in Azure SQL, preserving the timeline of changes.
+- Revision-controlled [chart-analysis definitions](docs/chart-analysis-definition-xml.md) stored as versioned XML in Azure SQL, preserving the timeline of changes independently from API contracts.
 - Azure Functions and Service Bus for the asynchronous processing pipeline.
 - Managed Identity and Azure Key Vault for service authentication and secrets.
 - Application Insights for logging, tracing and operational monitoring.

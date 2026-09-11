@@ -40,6 +40,17 @@ Contracts are transport-facing types rather than domain types. Domain and Applic
 - State transitions reject invalid or meaningless changes and reject timestamps earlier than the latest recorded change.
 - Sampling policy names express intent only. Provider-specific intervals and rate-limit mappings belong outside Domain.
 
+## Monitoring-rule definitions
+
+- A relational monitoring-rule revision owns the business revision number, lifecycle state, effective interval, creation metadata and concurrency state.
+- Its variable chart-analysis definition is stored as versioned XML and mapped to a validated Domain model by an Infrastructure adapter.
+- The XML persistence schema is independent of versioned HTTP and message contracts. Clients send transport DTOs and do not construct persistence XML.
+- Price observations, signals, risk decisions and orders are separate records rather than mutable state inside the definition.
+- Effective and superseded definitions are immutable. Schema evolution retains historical readers and writes an upgraded definition only as a new draft business revision.
+- Generic schema and synthetic examples are public-safe. Real definitions, meaningful parameters and strategy or execution logic remain private.
+
+See [Chart-analysis definition XML](chart-analysis-definition-xml.md) for the proposed v1 contract.
+
 ## Instrument identification
 
 - Domain currently identifies an instrument using its symbol, exchange and quote currency (`InstrumentSymbol`, `ExchangeCode` and `QuoteCurrencyCode`).

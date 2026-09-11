@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:ca="urn:carndog:trading-engine:chart-analysis:v1"
+    targetNamespace="urn:carndog:trading-engine:chart-analysis:v1"
+    elementFormDefault="qualified"
+    attributeFormDefault="unqualified">
+
+  <xs:simpleType name="IdentifierType">
+    <xs:restriction base="xs:string">
+      <xs:minLength value="1" />
+      <xs:maxLength value="64" />
+      <xs:pattern value="[a-z][a-z0-9.-]*" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PriceType">
+    <xs:restriction base="xs:decimal">
+      <xs:minExclusive value="0" />
+      <xs:totalDigits value="18" />
+      <xs:fractionDigits value="8" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PriceScaleType">
+    <xs:restriction base="xs:nonNegativeInteger">
+      <xs:maxInclusive value="8" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ConditionNameType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="buy-zone" />
+      <xs:enumeration value="support-loss" />
+      <xs:enumeration value="breakout" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="ConditionType">
+    <xs:attribute name="type" type="ca:ConditionNameType" use="required" />
+    <xs:attribute name="actionId" type="ca:IdentifierType" use="required" />
+  </xs:complexType>
+
+  <xs:complexType name="ZoneType">
+    <xs:sequence>
+      <xs:element name="Condition" type="ca:ConditionType" minOccurs="1" maxOccurs="2" />
+    </xs:sequence>
+    <xs:attribute name="id" type="ca:IdentifierType" use="required" />
+    <xs:attribute name="lower" type="ca:PriceType" use="required" />
+    <xs:attribute name="level" type="ca:PriceType" use="required" />
+    <xs:attribute name="upper" type="ca:PriceType" use="required" />
+  </xs:complexType>
+
+  <xs:element name="ChartAnalysisDefinition">
+    <xs:complexType>
+      <xs:choice>
+        <xs:sequence>
+          <xs:element name="SupportZones" type="ca:SupportZonesType" />
+          <xs:element name="ResistanceZones" type="ca:ResistanceZonesType" minOccurs="0" />
+        </xs:sequence>
+        <xs:element name="ResistanceZones" type="ca:ResistanceZonesType" />
+      </xs:choice>
+      <xs:attribute name="schemaVersion" type="xs:positiveInteger" use="required" fixed="1" />
+      <xs:attribute name="priceScale" type="ca:PriceScaleType" use="required" />
+    </xs:complexType>
+  </xs:element>
+
+  <xs:complexType name="SupportZonesType">
+    <xs:sequence>
+      <xs:element name="SupportZone" type="ca:ZoneType" minOccurs="1" maxOccurs="unbounded" />
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ResistanceZonesType">
+    <xs:sequence>
+      <xs:element name="ResistanceZone" type="ca:ZoneType" minOccurs="1" maxOccurs="unbounded" />
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>
