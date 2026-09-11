@@ -31,6 +31,28 @@ The planned architecture includes:
 
 Large historical datasets may later use separate archive storage, but they are not the canonical configuration store.
 
+## Development
+
+The solution targets .NET 10 LTS and C# 14. The `global.json` accepts the latest installed .NET 10 feature band while excluding preview SDKs and .NET 11.
+
+From the repository root:
+
+```bash
+dotnet restore TradingEngine.sln
+dotnet build TradingEngine.sln --configuration Release --no-restore
+dotnet test TradingEngine.sln --configuration Release --no-build
+dotnet run --project src/TradingEngine.Api
+```
+
+The API exposes two deployment-safe smoke-test endpoints:
+
+- `GET /health`
+- `GET /version`
+
+For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`.
+
+See [Solution boundaries and dependency rules](docs/architecture.md) for the Hexagonal Architecture conventions enforced by the architecture tests.
+
 ## Delivery roadmap
 
 Work is organised into the following milestones:
