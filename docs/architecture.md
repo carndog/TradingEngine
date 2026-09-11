@@ -40,6 +40,14 @@ Contracts are transport-facing types rather than domain types. Domain and Applic
 - State transitions reject invalid or meaningless changes and reject timestamps earlier than the latest recorded change.
 - Sampling policy names express intent only. Provider-specific intervals and rate-limit mappings belong outside Domain.
 
+## Instrument identification
+
+- Domain currently identifies an instrument using its symbol, exchange and quote currency (`InstrumentSymbol`, `ExchangeCode` and `QuoteCurrencyCode`).
+- `ExchangeCode` describes the listing exchange for an exchange-listed instrument. It does not describe the broker or provider, and eToro is never represented as the exchange.
+- Broker- and provider-specific instrument identifiers are external mappings owned by outbound adapters and Infrastructure, not by Domain.
+- Crypto instruments may not have one definitive listing exchange. Exchange optionality and asset classification will be addressed when crypto support is implemented.
+- Supported exchanges and currencies may initially be controlled by Application configuration or reference data rather than dedicated persistence.
+
 ## Enforcement
 
 `TradingEngine.Architecture.Tests` checks the production project-reference allow-list, the Domain assembly dependencies, forbidden Domain package references and the absence of `IClock` from Domain types. These tests are intentionally narrow and complement compiler-enforced project references.

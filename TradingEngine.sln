@@ -22,7 +22,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Application.T
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Architecture.Tests", "tests\TradingEngine.Architecture.Tests\TradingEngine.Architecture.Tests.csproj", "{2AF92FC0-E295-4129-96E9-127F19C72069}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Api.Tests", "tests\TradingEngine.Api.Tests\TradingEngine.Api.Tests.csproj", "{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Api.IntegrationTests", "tests\TradingEngine.Api.IntegrationTests\TradingEngine.Api.IntegrationTests.csproj", "{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

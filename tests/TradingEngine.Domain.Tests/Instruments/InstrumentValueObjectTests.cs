@@ -15,15 +15,15 @@ public sealed class InstrumentValueObjectTests
     [TestCase("US")]
     [TestCase("EURO")]
     [TestCase("G8P")]
-    public void From_WhenCurrencyCodeIsInvalid_ThrowsArgumentException(string value)
+    public void From_WhenQuoteCurrencyCodeIsInvalid_ThrowsArgumentException(string value)
     {
-        Assert.Throws<ArgumentException>(() => CurrencyCode.From(value));
+        Assert.Throws<ArgumentException>(() => QuoteCurrencyCode.From(value));
     }
 
     [Test]
-    public void From_WhenBrokerCodeContainsWhitespace_ThrowsArgumentException()
+    public void From_WhenSymbolContainsWhitespace_ThrowsArgumentException()
     {
-        Assert.Throws<ArgumentException>(() => BrokerInstrumentCode.From("DEMO 1"));
+        Assert.Throws<ArgumentException>(() => InstrumentSymbol.From("DEMO 1"));
     }
 
     [Test]

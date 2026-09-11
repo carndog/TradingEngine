@@ -17,9 +17,9 @@ public sealed class WatchedInstrumentTests
         Assert.Multiple(() =>
         {
             Assert.That(instrument.Id.Value, Is.EqualTo(Guid.Parse("1788c81b-2d9b-4686-ab26-b62685d7bda0")));
-            Assert.That(instrument.BrokerCode.Value, Is.EqualTo("DEMO-1"));
+            Assert.That(instrument.Symbol.Value, Is.EqualTo("DEMO-1"));
             Assert.That(instrument.Exchange.Value, Is.EqualTo("XTEST"));
-            Assert.That(instrument.Currency.Value, Is.EqualTo("GBP"));
+            Assert.That(instrument.QuoteCurrency.Value, Is.EqualTo("GBP"));
             Assert.That(instrument.MonitoringState, Is.EqualTo(MonitoringState.Configured));
             Assert.That(instrument.SamplingPolicy, Is.EqualTo(SamplingPolicy.Standard));
             Assert.That(instrument.CreatedAt, Is.EqualTo(CreatedAt));
@@ -91,9 +91,9 @@ public sealed class WatchedInstrumentTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => WatchedInstrument.Create(
                 WatchedInstrumentId.From(Guid.Parse("1788c81b-2d9b-4686-ab26-b62685d7bda0")),
-                BrokerInstrumentCode.From("DEMO-1"),
+                InstrumentSymbol.From("DEMO-1"),
                 ExchangeCode.From("XTEST"),
-                CurrencyCode.From("GBP"),
+                QuoteCurrencyCode.From("GBP"),
                 (SamplingPolicy)999,
                 CreatedAt));
     }
@@ -102,9 +102,9 @@ public sealed class WatchedInstrumentTests
     {
         return WatchedInstrument.Create(
             WatchedInstrumentId.From(Guid.Parse("1788c81b-2d9b-4686-ab26-b62685d7bda0")),
-            BrokerInstrumentCode.From("demo-1"),
+            InstrumentSymbol.From("demo-1"),
             ExchangeCode.From("xtest"),
-            CurrencyCode.From("gbp"),
+            QuoteCurrencyCode.From("gbp"),
             SamplingPolicy.Standard,
             CreatedAt);
     }

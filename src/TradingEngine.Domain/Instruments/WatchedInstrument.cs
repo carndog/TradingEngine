@@ -6,16 +6,16 @@ public sealed class WatchedInstrument
 {
     private WatchedInstrument(
         WatchedInstrumentId id,
-        BrokerInstrumentCode brokerCode,
+        InstrumentSymbol symbol,
         ExchangeCode exchange,
-        CurrencyCode currency,
+        QuoteCurrencyCode quoteCurrency,
         SamplingPolicy samplingPolicy,
         Instant createdAt)
     {
         Id = id;
-        BrokerCode = brokerCode;
+        Symbol = symbol;
         Exchange = exchange;
-        Currency = currency;
+        QuoteCurrency = quoteCurrency;
         SamplingPolicy = samplingPolicy;
         MonitoringState = MonitoringState.Configured;
         CreatedAt = createdAt;
@@ -24,11 +24,11 @@ public sealed class WatchedInstrument
 
     public WatchedInstrumentId Id { get; }
 
-    public BrokerInstrumentCode BrokerCode { get; }
+    public InstrumentSymbol Symbol { get; }
 
     public ExchangeCode Exchange { get; }
 
-    public CurrencyCode Currency { get; }
+    public QuoteCurrencyCode QuoteCurrency { get; }
 
     public MonitoringState MonitoringState { get; private set; }
 
@@ -40,23 +40,23 @@ public sealed class WatchedInstrument
 
     public static WatchedInstrument Create(
         WatchedInstrumentId id,
-        BrokerInstrumentCode brokerCode,
+        InstrumentSymbol symbol,
         ExchangeCode exchange,
-        CurrencyCode currency,
+        QuoteCurrencyCode quoteCurrency,
         SamplingPolicy samplingPolicy,
         Instant createdAt)
     {
         ArgumentNullException.ThrowIfNull(id);
-        ArgumentNullException.ThrowIfNull(brokerCode);
+        ArgumentNullException.ThrowIfNull(symbol);
         ArgumentNullException.ThrowIfNull(exchange);
-        ArgumentNullException.ThrowIfNull(currency);
+        ArgumentNullException.ThrowIfNull(quoteCurrency);
         EnsureValidSamplingPolicy(samplingPolicy);
 
         return new WatchedInstrument(
             id,
-            brokerCode,
+            symbol,
             exchange,
-            currency,
+            quoteCurrency,
             samplingPolicy,
             createdAt);
     }

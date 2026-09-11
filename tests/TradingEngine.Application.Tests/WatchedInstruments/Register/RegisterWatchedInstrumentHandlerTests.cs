@@ -18,9 +18,9 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         RegisterWatchedInstrumentHandler handler = new(clock, store);
         RegisterWatchedInstrument command = new(
             WatchedInstrumentId.From(Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1")),
-            BrokerInstrumentCode.From("demo-2"),
+            InstrumentSymbol.From("demo-2"),
             ExchangeCode.From("xtest"),
-            CurrencyCode.From("gbp"),
+            QuoteCurrencyCode.From("gbp"),
             SamplingPolicy.Conservative);
 
         WatchedInstrument result = await handler.HandleAsync(command, CancellationToken.None);

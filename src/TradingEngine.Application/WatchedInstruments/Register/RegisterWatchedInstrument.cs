@@ -4,7 +4,7 @@ namespace TradingEngine.Application.WatchedInstruments.Register;
 
 public sealed record RegisterWatchedInstrument(
     WatchedInstrumentId Id,
-    BrokerInstrumentCode BrokerCode,
+    InstrumentSymbol Symbol,
     ExchangeCode Exchange,
-    CurrencyCode Currency,
+    QuoteCurrencyCode QuoteCurrency,
     SamplingPolicy SamplingPolicy);

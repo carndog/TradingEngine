@@ -22,5 +22,3 @@ app.MapGet(
     .AllowAnonymous();
 
 app.Run();
-
-public partial class Program;

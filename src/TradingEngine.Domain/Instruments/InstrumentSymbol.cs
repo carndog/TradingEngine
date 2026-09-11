@@ -1,33 +1,33 @@
 namespace TradingEngine.Domain.Instruments;
 
-public sealed record BrokerInstrumentCode
+public sealed record InstrumentSymbol
 {
     private const int MaximumLength = 64;
 
-    private BrokerInstrumentCode(string value)
+    private InstrumentSymbol(string value)
     {
         Value = value;
     }
 
     public string Value { get; }
 
-    public static BrokerInstrumentCode From(string value)
+    public static InstrumentSymbol From(string value)
     {
         string normalizedValue = Normalize(value, nameof(value));
 
         if (normalizedValue.Length > MaximumLength)
         {
             throw new ArgumentException(
-                $"A broker instrument code cannot exceed {MaximumLength} characters.",
+                $"An instrument symbol cannot exceed {MaximumLength} characters.",
                 nameof(value));
         }
 
         if (normalizedValue.Any(char.IsWhiteSpace))
         {
-            throw new ArgumentException("A broker instrument code cannot contain whitespace.", nameof(value));
+            throw new ArgumentException("An instrument symbol cannot contain whitespace.", nameof(value));
         }
 
-        return new BrokerInstrumentCode(normalizedValue);
+        return new InstrumentSymbol(normalizedValue);
     }
 
     public override string ToString()
@@ -39,7 +39,7 @@ public sealed record BrokerInstrumentCode
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException("A broker instrument code is required.", parameterName);
+            throw new ArgumentException("An instrument symbol is required.", parameterName);
         }
 
         return value.Trim().ToUpperInvariant();

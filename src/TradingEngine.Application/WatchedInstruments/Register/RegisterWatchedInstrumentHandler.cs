@@ -24,9 +24,9 @@ public sealed class RegisterWatchedInstrumentHandler
         Instant occurredAt = _clock.GetCurrentInstant();
         WatchedInstrument instrument = WatchedInstrument.Create(
             command.Id,
-            command.BrokerCode,
+            command.Symbol,
             command.Exchange,
-            command.Currency,
+            command.QuoteCurrency,
             command.SamplingPolicy,
             occurredAt);
 

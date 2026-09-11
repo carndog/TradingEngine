@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using TradingEngine.Contracts.Diagnostics;
 
-namespace TradingEngine.Api.Tests.Diagnostics;
+namespace TradingEngine.Api.IntegrationTests.Diagnostics;
 
 [TestFixture]
 public sealed class DiagnosticsEndpointTests
