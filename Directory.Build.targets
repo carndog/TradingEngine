@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <SourceRevisionId Condition="'$(SourceRevisionId)' == '' and '$(GITHUB_SHA)' != ''">$(GITHUB_SHA)</SourceRevisionId>
+    <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">local</SourceRevisionId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="CommitSha" Value="$(SourceRevisionId)" />
+  </ItemGroup>
+</Project>

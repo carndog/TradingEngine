@@ -1,0 +1,84 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{65C1716A-E59A-45B7-BF9B-B155212ED468}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{7A7381F8-9710-4659-898F-C2C155B8BFE1}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Domain", "src\TradingEngine.Domain\TradingEngine.Domain.csproj", "{E4849E3B-B522-43E3-AED1-0CA07721F613}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Application", "src\TradingEngine.Application\TradingEngine.Application.csproj", "{15393EEE-65A6-4D21-9C6A-A34B99229FAF}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Infrastructure", "src\TradingEngine.Infrastructure\TradingEngine.Infrastructure.csproj", "{A99C5B38-6F04-4680-8F68-67A8DDCBC779}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Contracts", "src\TradingEngine.Contracts\TradingEngine.Contracts.csproj", "{A7FAFF31-50F4-46BB-9235-8380F5C1389C}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Api", "src\TradingEngine.Api\TradingEngine.Api.csproj", "{00DD7D3C-2EEA-47F6-A6F6-B3963E886207}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Domain.Tests", "tests\TradingEngine.Domain.Tests\TradingEngine.Domain.Tests.csproj", "{5F09C1B6-92DA-42BF-8558-C5FE2F6CB465}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Application.Tests", "tests\TradingEngine.Application.Tests\TradingEngine.Application.Tests.csproj", "{86FC8980-449B-4811-A6A6-C32C559D3828}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Architecture.Tests", "tests\TradingEngine.Architecture.Tests\TradingEngine.Architecture.Tests.csproj", "{2AF92FC0-E295-4129-96E9-127F19C72069}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradingEngine.Api.Tests", "tests\TradingEngine.Api.Tests\TradingEngine.Api.Tests.csproj", "{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E4849E3B-B522-43E3-AED1-0CA07721F613}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E4849E3B-B522-43E3-AED1-0CA07721F613}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E4849E3B-B522-43E3-AED1-0CA07721F613}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E4849E3B-B522-43E3-AED1-0CA07721F613}.Release|Any CPU.Build.0 = Release|Any CPU
+		{15393EEE-65A6-4D21-9C6A-A34B99229FAF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{15393EEE-65A6-4D21-9C6A-A34B99229FAF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{15393EEE-65A6-4D21-9C6A-A34B99229FAF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{15393EEE-65A6-4D21-9C6A-A34B99229FAF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A99C5B38-6F04-4680-8F68-67A8DDCBC779}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A99C5B38-6F04-4680-8F68-67A8DDCBC779}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A99C5B38-6F04-4680-8F68-67A8DDCBC779}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A99C5B38-6F04-4680-8F68-67A8DDCBC779}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7FAFF31-50F4-46BB-9235-8380F5C1389C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7FAFF31-50F4-46BB-9235-8380F5C1389C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7FAFF31-50F4-46BB-9235-8380F5C1389C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7FAFF31-50F4-46BB-9235-8380F5C1389C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{00DD7D3C-2EEA-47F6-A6F6-B3963E886207}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{00DD7D3C-2EEA-47F6-A6F6-B3963E886207}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{00DD7D3C-2EEA-47F6-A6F6-B3963E886207}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{00DD7D3C-2EEA-47F6-A6F6-B3963E886207}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5F09C1B6-92DA-42BF-8558-C5FE2F6CB465}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5F09C1B6-92DA-42BF-8558-C5FE2F6CB465}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5F09C1B6-92DA-42BF-8558-C5FE2F6CB465}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5F09C1B6-92DA-42BF-8558-C5FE2F6CB465}.Release|Any CPU.Build.0 = Release|Any CPU
+		{86FC8980-449B-4811-A6A6-C32C559D3828}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{86FC8980-449B-4811-A6A6-C32C559D3828}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{86FC8980-449B-4811-A6A6-C32C559D3828}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{86FC8980-449B-4811-A6A6-C32C559D3828}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2AF92FC0-E295-4129-96E9-127F19C72069}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2AF92FC0-E295-4129-96E9-127F19C72069}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2AF92FC0-E295-4129-96E9-127F19C72069}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2AF92FC0-E295-4129-96E9-127F19C72069}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E4849E3B-B522-43E3-AED1-0CA07721F613} = {65C1716A-E59A-45B7-BF9B-B155212ED468}
+		{15393EEE-65A6-4D21-9C6A-A34B99229FAF} = {65C1716A-E59A-45B7-BF9B-B155212ED468}
+		{A99C5B38-6F04-4680-8F68-67A8DDCBC779} = {65C1716A-E59A-45B7-BF9B-B155212ED468}
+		{A7FAFF31-50F4-46BB-9235-8380F5C1389C} = {65C1716A-E59A-45B7-BF9B-B155212ED468}
+		{00DD7D3C-2EEA-47F6-A6F6-B3963E886207} = {65C1716A-E59A-45B7-BF9B-B155212ED468}
+		{5F09C1B6-92DA-42BF-8558-C5FE2F6CB465} = {7A7381F8-9710-4659-898F-C2C155B8BFE1}
+		{86FC8980-449B-4811-A6A6-C32C559D3828} = {7A7381F8-9710-4659-898F-C2C155B8BFE1}
+		{2AF92FC0-E295-4129-96E9-127F19C72069} = {7A7381F8-9710-4659-898F-C2C155B8BFE1}
+		{2BC5FF05-1D85-435E-9D5C-0EAD99B9AFB1} = {7A7381F8-9710-4659-898F-C2C155B8BFE1}
+	EndGlobalSection
+EndGlobal
