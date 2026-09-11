@@ -1,0 +1,10 @@
+<ChartAnalysisDefinition
+    xmlns="urn:carndog:trading-engine:chart-analysis:v1"
+    schemaVersion="2"
+    priceScale="4">
+  <ResistanceZones>
+    <ResistanceZone id="resistance-a" lower="120.0000" level="125.0000" upper="130.0000">
+      <Condition type="breakout" actionId="publish-signal" />
+    </ResistanceZone>
+  </ResistanceZones>
+</ChartAnalysisDefinition>

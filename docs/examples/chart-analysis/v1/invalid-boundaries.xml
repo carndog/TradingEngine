@@ -1,0 +1,11 @@
+<ChartAnalysisDefinition
+    xmlns="urn:carndog:trading-engine:chart-analysis:v1"
+    schemaVersion="1"
+    priceScale="4">
+  <SupportZones>
+    <SupportZone id="support-a" lower="105.0000" level="100.0000" upper="95.0000">
+      <Condition type="buy-zone" actionId="publish-signal" />
+      <Condition type="support-loss" actionId="publish-signal" />
+    </SupportZone>
+  </SupportZones>
+</ChartAnalysisDefinition>
