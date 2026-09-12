@@ -60,14 +60,6 @@ public sealed record ChartZone
         foreach (ChartCondition condition in conditions)
         {
             ArgumentNullException.ThrowIfNull(condition);
-
-            if (Enum.IsDefined(condition.Type) is false)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(conditions),
-                    condition.Type,
-                    "Unknown chart condition type.");
-            }
         }
 
         return new ChartZone(id, lower, level, upper, conditions.ToArray());

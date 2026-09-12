@@ -48,7 +48,7 @@ public sealed class ChartAnalysisDefinitionTests
             95m,
             100m,
             105m,
-            [new ChartCondition(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal"))]);
+            [ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal"))]);
 
         DomainRuleViolationException? exception = Assert.Throws<DomainRuleViolationException>(
             () => ChartAnalysisDefinition.Create(4, [zone], []));
@@ -65,8 +65,8 @@ public sealed class ChartAnalysisDefinitionTests
             100m,
             105m,
             [
-                new ChartCondition(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
-                new ChartCondition(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))
+                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
+                ChartCondition.Create(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))
             ]);
 
         DomainRuleViolationException? exception = Assert.Throws<DomainRuleViolationException>(
@@ -96,14 +96,25 @@ public sealed class ChartAnalysisDefinitionTests
             100m,
             105m,
             [
-                new ChartCondition(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
-                new ChartCondition(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
+                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
+                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
             ]);
 
         DomainRuleViolationException? exception = Assert.Throws<DomainRuleViolationException>(
             () => ChartAnalysisDefinition.Create(4, [zone], []));
 
         Assert.That(exception!.Rule, Is.EqualTo(ChartAnalysisDefinitionRule.PriceExceedsScale));
+    }
+
+    [Test]
+    public void Create_WithMaximumDecimalPrices_AcceptsDefinition()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
+            0,
+            [CreateSupportZone("support-a", 1m, 2m, decimal.MaxValue)],
+            []);
+
+        Assert.That(definition.SupportZones, Has.Count.EqualTo(1));
     }
 
     [Test]
@@ -141,8 +152,8 @@ public sealed class ChartAnalysisDefinitionTests
             level,
             upper,
             [
-                new ChartCondition(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
-                new ChartCondition(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
+                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
+                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
             ]);
     }
 
@@ -153,6 +164,6 @@ public sealed class ChartAnalysisDefinitionTests
             lower,
             level,
             upper,
-            [new ChartCondition(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))]);
+            [ChartCondition.Create(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))]);
     }
 }

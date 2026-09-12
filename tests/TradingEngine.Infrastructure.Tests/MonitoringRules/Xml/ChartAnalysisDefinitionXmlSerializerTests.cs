@@ -64,6 +64,40 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     }
 
     [Test]
+    public void Serialize_WithMaximumDecimalPrices_RoundTripsThroughXml()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
+            0,
+            [CreateSupportZone("support-a", 1m, 2m, decimal.MaxValue)],
+            []);
+
+        string xml = _serializer.Serialize(definition);
+        ChartAnalysisDefinition reparsed = _serializer.Deserialize(xml);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xml, Does.Contain("upper=\"79228162514264337593543950335\""));
+            Assert.That(reparsed.SupportZones[0].Upper, Is.EqualTo(decimal.MaxValue));
+            Assert.That(_serializer.Serialize(reparsed), Is.EqualTo(xml));
+        });
+    }
+
+    [Test]
+    public void Deserialize_WithPriceOutsideDecimalRange_ThrowsInvalidDataException()
+    {
+        string xml = "<ChartAnalysisDefinition xmlns=\"urn:carndog:trading-engine:chart-analysis:v1\" schemaVersion=\"1\" priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"100.0000\" upper=\"79228162514264337593543950336\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
+
+        InvalidDataException? exception = Assert.Throws<InvalidDataException>(
+            () => _serializer.Deserialize(xml));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception!.Message, Does.Contain("outside the supported decimal range"));
+            Assert.That(exception.InnerException, Is.TypeOf<OverflowException>());
+        });
+    }
+
+    [Test]
     public void Deserialize_WithMalformedXml_ThrowsXmlException()
     {
         Assert.Throws<XmlException>(() => _serializer.Deserialize("<ChartAnalysisDefinition"));
@@ -120,8 +154,8 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
             level,
             upper,
             [
-                new ChartCondition(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
-                new ChartCondition(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
+                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
+                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
             ]);
     }
 
@@ -132,7 +166,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
             lower,
             level,
             upper,
-            [new ChartCondition(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))]);
+            [ChartCondition.Create(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))]);
     }
 
     private static string ReadExample(string fileName)

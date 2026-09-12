@@ -18,6 +18,8 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         XmlResolver = null
     };
 
+    private static readonly string[] PriceAttributeNames = ["lower", "level", "upper"];
+
     private static readonly Lazy<XmlSchemaSet> V1Schemas = new(LoadV1Schemas);
 
     public string Serialize(ChartAnalysisDefinition definition)
@@ -75,6 +77,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
             throw new UnsupportedChartAnalysisSchemaVersionException(root.Name.NamespaceName);
         }
 
+        EnsurePricesWithinDecimalRange(root);
         ValidateAgainstV1Schema(document);
 
         return MapV1(root);
@@ -101,6 +104,43 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         {
             throw new XmlSchemaValidationException(
                 $"The chart-analysis document failed v1 schema validation: {string.Join(" ", failures)}");
+        }
+    }
+
+    private static void EnsurePricesWithinDecimalRange(XElement root)
+    {
+        XNamespace ns = V1Namespace;
+
+        IEnumerable<XElement> zones = root
+            .Descendants(ns + "SupportZone")
+            .Concat(root.Descendants(ns + "ResistanceZone"));
+
+        foreach (XElement zone in zones)
+        {
+            foreach (string attributeName in PriceAttributeNames)
+            {
+                XAttribute? attribute = zone.Attribute(attributeName);
+
+                if (attribute is null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    XmlConvert.ToDecimal(attribute.Value);
+                }
+                catch (OverflowException exception)
+                {
+                    throw new InvalidDataException(
+                        $"The '{attributeName}' price is outside the supported decimal range.",
+                        exception);
+                }
+                catch (FormatException)
+                {
+                    // Schema validation reports malformed values.
+                }
+            }
         }
     }
 
@@ -135,9 +175,9 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
     private static ChartZone ReadZone(XElement zone)
     {
         ChartAnalysisIdentifier id = ChartAnalysisIdentifier.From((string)zone.Attribute("id")!);
-        decimal lower = (decimal)zone.Attribute("lower")!;
-        decimal level = (decimal)zone.Attribute("level")!;
-        decimal upper = (decimal)zone.Attribute("upper")!;
+        decimal lower = ReadPrice(zone, "lower");
+        decimal level = ReadPrice(zone, "level");
+        decimal upper = ReadPrice(zone, "upper");
 
         ChartCondition[] conditions = zone
             .Elements(XName.Get("Condition", V1Namespace))
@@ -147,13 +187,27 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         return ChartZone.Create(id, lower, level, upper, conditions);
     }
 
+    private static decimal ReadPrice(XElement zone, string attributeName)
+    {
+        try
+        {
+            return (decimal)zone.Attribute(attributeName)!;
+        }
+        catch (OverflowException exception)
+        {
+            throw new InvalidDataException(
+                $"The '{attributeName}' price is outside the supported decimal range.",
+                exception);
+        }
+    }
+
     private static ChartCondition ReadCondition(XElement condition)
     {
         ChartConditionType type = ParseConditionType((string)condition.Attribute("type")!);
         ChartAnalysisIdentifier actionId = ChartAnalysisIdentifier.From(
             (string)condition.Attribute("actionId")!);
 
-        return new ChartCondition(type, actionId);
+        return ChartCondition.Create(type, actionId);
     }
 
     private static ChartConditionType ParseConditionType(string value)
