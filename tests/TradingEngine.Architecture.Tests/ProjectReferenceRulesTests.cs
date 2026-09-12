@@ -60,7 +60,7 @@ public sealed class ProjectReferenceRulesTests
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        Assert.That(actualPackages, Is.EqualTo(new[] { "NodaTime" }));
+        Assert.That(actualPackages, Is.EqualTo(["NodaTime"]));
     }
 
     private static IEnumerable<string> ReadIncludes(string projectPath, string itemName)
@@ -71,7 +71,7 @@ public sealed class ProjectReferenceRulesTests
             .Descendants()
             .Where(element => element.Name.LocalName == itemName)
             .Select(element => element.Attribute("Include")?.Value)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Where(value => string.IsNullOrWhiteSpace(value) is false)
             .Select(value => value!);
     }
 }

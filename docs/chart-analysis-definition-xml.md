@@ -1,6 +1,6 @@
 # Chart-analysis definition XML
 
-**Status:** Proposed v1 contract for review
+**Status:** v1 contract implemented by `ChartAnalysisDefinitionXmlSerializer` in `TradingEngine.Infrastructure`
 
 **Related issue:** [#3](https://github.com/carndog/TradingEngine/issues/3)
 
@@ -70,14 +70,14 @@ All examples use synthetic values. Real chart-analysis definitions and meaningfu
 
 - Prices are decimal values in quote-currency units. There is no implicit conversion from pence, cents or another minor unit.
 - Values use invariant XML decimal syntax with a period as the decimal separator and no exponent.
-- A price has at most 18 significant digits and 8 fractional digits.
+- A price has at most 8 fractional digits and must be representable as a .NET `decimal`.
 - `priceScale` is between 0 and 8 and declares the number of fractional digits used by every price in the document.
 - Canonical serialization writes every price with exactly `priceScale` fractional digits.
 - Every price must be greater than zero.
 - Every zone must satisfy `lower < level < upper` after decimal parsing.
 - Zone ranges must not overlap. Touching boundaries are also rejected so that a price cannot occupy two zones simultaneously.
 
-The XSD enforces the lexical numeric limits. The serializer and Domain model enforce the shared scale, cross-field ordering and overlap rules.
+The XSD enforces the lexical numeric limits. The serializer and Domain model enforce the shared scale, cross-field ordering and overlap rules. An XML `xs:decimal` value outside the .NET `decimal` range is rejected with `InvalidDataException` at the Infrastructure mapping boundary before persistence.
 
 ## Condition semantics
 
@@ -120,13 +120,21 @@ Before persistence, the Infrastructure adapter must:
 6. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap.
 7. Canonically serialize the validated Domain model.
 
-The v1 XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/V1/chart-analysis-definition-v1.xsd` and should be embedded in that assembly when the serializer is implemented.
+The v1 XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/V1/chart-analysis-definition-v1.xsd` and is embedded in that assembly for validation.
 
 ## Schema evolution
 
-Readers are selected by XML schema version. Supported historical readers remain available so an old revision can be evaluated without altering its stored document.
+`ChartAnalysisDefinitionXmlSerializer` dispatches deserialization on the document's namespace and `schemaVersion` pair. Each supported version has a dedicated embedded XSD and a version-specific reader that maps the document to the current Domain model. A namespace/version pair with no registered reader is rejected with `UnsupportedChartAnalysisSchemaVersionException` before persistence.
 
-When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision using the latest schema version. It never upgrades the XML held by an effective or superseded revision in place.
+Introducing a new schema version means adding a new `vN` namespace, XSD and reader while retaining every previous reader. Supported historical readers remain available so an old revision can be evaluated without altering its stored document.
+
+When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision using the latest schema version. It never upgrades the XML held by an effective or superseded revision in place. Changing only the XML schema therefore never permits a historical rule definition to be overwritten.
+
+## Azure SQL persistence
+
+The `DefinitionXml` column of the monitoring-rule revision table is intended to use the Azure SQL `xml` type. The SQL `xml` type preserves the XML information set — the semantic content and document structure — not the identical lexical string: whitespace, attribute order and other lexical details may differ when the value is read back. Code must therefore not depend on SQL returning the byte-for-byte canonical string originally written. After reading, Infrastructure deserializes the stored value into the Domain model and can serialize it canonically again. Equality checks must compare the validated Domain meaning or freshly canonicalized output, and hashing must not depend directly on the raw string returned by SQL.
+
+EF Core maps a `string` property to the Azure SQL `xml` type via `HasColumnType("xml")`; the adapter validates and canonically serializes the document before it reaches the column, so no SQL Server XML schema collection is required. The EF Core mapping, `TradingEngineDbContext` and migrations belong to issue #32 and are not implemented here. Relational concerns such as revision identity, lifecycle, effective boundaries, creation metadata and the `rowversion` concurrency token remain in their own columns, and effective or superseded monitoring-rule revisions remain immutable.
 
 Future indicators remain descriptive chart-analysis inputs. Dynamic stop-loss or take-profit changes depend on current evaluation, risk and execution state and therefore belong in later signal, risk and order workflows rather than being written repeatedly into this immutable XML. Sampling cadence remains a relational sampling-policy concern and can change without an XML schema change.
 

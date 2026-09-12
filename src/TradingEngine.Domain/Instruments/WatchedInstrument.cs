@@ -68,7 +68,9 @@ public sealed class WatchedInstrument
 
         if (MonitoringState == MonitoringState.Monitored)
         {
-            throw new DomainRuleViolationException("The instrument is already being monitored.");
+            throw new DomainRuleViolationException(
+                WatchedInstrumentRule.AlreadyMonitored,
+                "The instrument is already being monitored.");
         }
 
         SamplingPolicy = samplingPolicy;
@@ -82,7 +84,9 @@ public sealed class WatchedInstrument
 
         if (MonitoringState == MonitoringState.Configured)
         {
-            throw new DomainRuleViolationException("The instrument is not currently being monitored.");
+            throw new DomainRuleViolationException(
+                WatchedInstrumentRule.NotMonitored,
+                "The instrument is not currently being monitored.");
         }
 
         MonitoringState = MonitoringState.Configured;
@@ -96,7 +100,9 @@ public sealed class WatchedInstrument
 
         if (SamplingPolicy == samplingPolicy)
         {
-            throw new DomainRuleViolationException("The requested sampling policy is already assigned.");
+            throw new DomainRuleViolationException(
+                WatchedInstrumentRule.SamplingPolicyUnchanged,
+                "The requested sampling policy is already assigned.");
         }
 
         SamplingPolicy = samplingPolicy;
@@ -105,7 +111,7 @@ public sealed class WatchedInstrument
 
     private static void EnsureValidSamplingPolicy(SamplingPolicy samplingPolicy)
     {
-        if (!Enum.IsDefined(samplingPolicy))
+        if (Enum.IsDefined(samplingPolicy) is false)
         {
             throw new ArgumentOutOfRangeException(nameof(samplingPolicy), samplingPolicy, "Unknown sampling policy.");
         }
@@ -116,6 +122,7 @@ public sealed class WatchedInstrument
         if (changedAt < LastChangedAt)
         {
             throw new DomainRuleViolationException(
+                WatchedInstrumentRule.ChangePrecedesLatestChange,
                 "A change cannot be recorded before the instrument's latest change.");
         }
     }

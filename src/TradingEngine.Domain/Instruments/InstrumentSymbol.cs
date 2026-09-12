@@ -17,14 +17,16 @@ public sealed record InstrumentSymbol
 
         if (normalizedValue.Length > MaximumLength)
         {
-            throw new ArgumentException(
-                $"An instrument symbol cannot exceed {MaximumLength} characters.",
-                nameof(value));
+            throw new DomainRuleViolationException(
+                InstrumentSymbolRule.ExceedsMaximumLength,
+                $"An instrument symbol cannot exceed {MaximumLength} characters.");
         }
 
         if (normalizedValue.Any(char.IsWhiteSpace))
         {
-            throw new ArgumentException("An instrument symbol cannot contain whitespace.", nameof(value));
+            throw new DomainRuleViolationException(
+                InstrumentSymbolRule.ContainsWhitespace,
+                "An instrument symbol cannot contain whitespace.");
         }
 
         return new InstrumentSymbol(normalizedValue);
@@ -39,7 +41,9 @@ public sealed record InstrumentSymbol
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException("An instrument symbol is required.", parameterName);
+            throw new DomainRuleViolationException(
+                InstrumentSymbolRule.Required,
+                "An instrument symbol is required.");
         }
 
         return value.Trim().ToUpperInvariant();

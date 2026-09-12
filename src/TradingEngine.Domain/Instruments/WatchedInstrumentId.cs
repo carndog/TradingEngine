@@ -13,7 +13,9 @@ public sealed record WatchedInstrumentId
     {
         if (value == Guid.Empty)
         {
-            throw new ArgumentException("A watched-instrument identifier cannot be empty.", nameof(value));
+            throw new DomainRuleViolationException(
+                WatchedInstrumentIdRule.Empty,
+                "A watched-instrument identifier cannot be empty.");
         }
 
         return new WatchedInstrumentId(value);

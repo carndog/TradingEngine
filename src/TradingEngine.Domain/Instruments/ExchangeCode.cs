@@ -15,23 +15,25 @@ public sealed record ExchangeCode
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException("An exchange code is required.", nameof(value));
+            throw new DomainRuleViolationException(
+                ExchangeCodeRule.Required,
+                "An exchange code is required.");
         }
 
         string normalizedValue = value.Trim().ToUpperInvariant();
 
         if (normalizedValue.Length > MaximumLength)
         {
-            throw new ArgumentException(
-                $"An exchange code cannot exceed {MaximumLength} characters.",
-                nameof(value));
+            throw new DomainRuleViolationException(
+                ExchangeCodeRule.ExceedsMaximumLength,
+                $"An exchange code cannot exceed {MaximumLength} characters.");
         }
 
-        if (!normalizedValue.All(IsAllowedCharacter))
+        if (normalizedValue.All(IsAllowedCharacter) is false)
         {
-            throw new ArgumentException(
-                "An exchange code may contain only ASCII letters, digits, periods, hyphens and underscores.",
-                nameof(value));
+            throw new DomainRuleViolationException(
+                ExchangeCodeRule.InvalidCharacters,
+                "An exchange code may contain only ASCII letters, digits, periods, hyphens and underscores.");
         }
 
         return new ExchangeCode(normalizedValue);

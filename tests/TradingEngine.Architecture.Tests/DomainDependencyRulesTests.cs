@@ -35,7 +35,7 @@ public sealed class DomainDependencyRulesTests
         string[] failingTypes = result.FailingTypeNames?
             .Order(StringComparer.Ordinal)
             .ToArray()
-            ?? Array.Empty<string>();
+            ?? [];
 
         Assert.Multiple(() =>
         {
