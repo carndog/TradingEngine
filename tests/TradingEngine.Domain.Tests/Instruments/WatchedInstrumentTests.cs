@@ -52,7 +52,7 @@ public sealed class WatchedInstrumentTests
         DomainRuleViolationException? exception = Assert.Throws<DomainRuleViolationException>(
             () => instrument.StartMonitoring(SamplingPolicy.Frequent, CreatedAt));
 
-        Assert.That(exception!.Message, Does.Contain("already"));
+        Assert.That(exception!.Rule, Is.EqualTo(WatchedInstrumentRule.AlreadyMonitored));
     }
 
     [Test]
@@ -65,7 +65,7 @@ public sealed class WatchedInstrumentTests
                 SamplingPolicy.Frequent,
                 CreatedAt - Duration.FromNanoseconds(1)));
 
-        Assert.That(exception!.Message, Does.Contain("before"));
+        Assert.That(exception!.Rule, Is.EqualTo(WatchedInstrumentRule.ChangePrecedesLatestChange));
     }
 
     [Test]

@@ -32,6 +32,7 @@ The following rules are non-negotiable:
 - Use explicit types for every local and `foreach` variable. Never use `var`.
 - Do not add code comments. Express intent through naming and extracted methods.
 - Prefer private methods over local functions.
+- Write boolean negation as `is false` rather than the `!` operator.
 - Keep one class, interface, record or enum per file.
 - Separate interface method declarations with a blank line.
 - Name tests `MethodUnderTest_Condition_ExpectedResult`.

@@ -11,6 +11,7 @@ These standards apply to all C# production and test code in this repository.
 - Separate interface method declarations with a blank line.
 - Make the smallest change that satisfies the requirement.
 - Keep formatting consistent with surrounding code and favour readability over cleverness.
+- Write boolean negation as `is false` rather than the `!` operator.
 
 ## Tests
 

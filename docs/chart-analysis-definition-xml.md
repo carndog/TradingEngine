@@ -1,6 +1,6 @@
 # Chart-analysis definition XML
 
-**Status:** Proposed v1 contract for review
+**Status:** v1 contract implemented by `ChartAnalysisDefinitionXmlSerializer` in `TradingEngine.Infrastructure`
 
 **Related issue:** [#3](https://github.com/carndog/TradingEngine/issues/3)
 
@@ -120,13 +120,19 @@ Before persistence, the Infrastructure adapter must:
 6. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap.
 7. Canonically serialize the validated Domain model.
 
-The v1 XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/V1/chart-analysis-definition-v1.xsd` and should be embedded in that assembly when the serializer is implemented.
+The v1 XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/V1/chart-analysis-definition-v1.xsd` and is embedded in that assembly for validation.
 
 ## Schema evolution
 
-Readers are selected by XML schema version. Supported historical readers remain available so an old revision can be evaluated without altering its stored document.
+`ChartAnalysisDefinitionXmlSerializer` dispatches deserialization on the document's namespace and `schemaVersion` pair. Each supported version has a dedicated embedded XSD and a version-specific reader that maps the document to the current Domain model. A namespace/version pair with no registered reader is rejected with `UnsupportedChartAnalysisSchemaVersionException` before persistence.
 
-When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision using the latest schema version. It never upgrades the XML held by an effective or superseded revision in place.
+Introducing a new schema version means adding a new `vN` namespace, XSD and reader while retaining every previous reader. Supported historical readers remain available so an old revision can be evaluated without altering its stored document.
+
+When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision using the latest schema version. It never upgrades the XML held by an effective or superseded revision in place. Changing only the XML schema therefore never permits a historical rule definition to be overwritten.
+
+## Azure SQL persistence
+
+The canonical document is stored unchanged in the `DefinitionXml` column of the monitoring-rule revision table. EF Core maps a `string` property to the Azure SQL `xml` type via `HasColumnType("xml")`; the adapter validates and canonically serializes the document before it reaches the column, so no SQL Server XML schema collection is required. Relational concerns such as revision identity, lifecycle, effective boundaries, creation metadata and the `rowversion` concurrency token remain in their own columns.
 
 Future indicators remain descriptive chart-analysis inputs. Dynamic stop-loss or take-profit changes depend on current evaluation, risk and execution state and therefore belong in later signal, risk and order workflows rather than being written repeatedly into this immutable XML. Sampling cadence remains a relational sampling-policy concern and can change without an XML schema change.
 

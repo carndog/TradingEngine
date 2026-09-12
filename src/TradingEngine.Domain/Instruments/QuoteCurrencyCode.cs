@@ -15,16 +15,18 @@ public sealed record QuoteCurrencyCode
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException("A quote currency code is required.", nameof(value));
+            throw new DomainRuleViolationException(
+                QuoteCurrencyCodeRule.Required,
+                "A quote currency code is required.");
         }
 
         string normalizedValue = value.Trim().ToUpperInvariant();
 
-        if (normalizedValue.Length != RequiredLength || !normalizedValue.All(char.IsAsciiLetter))
+        if (normalizedValue.Length != RequiredLength || normalizedValue.All(char.IsAsciiLetter) is false)
         {
-            throw new ArgumentException(
-                "A quote currency code must contain exactly three ASCII letters.",
-                nameof(value));
+            throw new DomainRuleViolationException(
+                QuoteCurrencyCodeRule.InvalidFormat,
+                "A quote currency code must contain exactly three ASCII letters.");
         }
 
         return new QuoteCurrencyCode(normalizedValue);
