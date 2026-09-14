@@ -16,9 +16,11 @@ The deployment creates a dedicated development resource group containing a low-c
 Choose the intended subscription explicitly and verify it before running any deployment command. Substitute your own subscription name or ID; do not commit a real subscription ID to this repository.
 
 ```powershell
+$subscription = '<subscription-name-or-id>'
+
 az login
-az account set --subscription "<subscription-name-or-id>"
-az account show --output table
+az account set --subscription $subscription
+az account show --subscription $subscription --output table
 ```
 
 Confirm the displayed subscription is the intended development subscription before continuing.
@@ -34,8 +36,18 @@ Per issue #34, obtain Jason's explicit approval of the selected SKU and expected
 Confirm that App Service offers the .NET 10 Linux runtime before deploying:
 
 ```powershell
-az webapp list-runtimes --os-type linux --query "[?contains(@, 'DOTNETCORE|10.0')]"
+$runtimes = az webapp list-runtimes --os-type linux | ConvertFrom-Json
+
+$runtimeConfigs = @($runtimes | ForEach-Object {
+    if ($_ -is [string]) { $_ } else { $_.config }
+})
+
+if ('DOTNETCORE|10.0' -notin $runtimeConfigs) {
+    throw 'DOTNETCORE|10.0 is not available.'
+}
 ```
+
+Current Azure CLI versions return structured objects from `list-runtimes`; older supported versions may return strings. The check above handles both formats.
 
 The template sets `linuxFxVersion` to `DOTNETCORE|10.0`. If the runtime is not listed, stop and raise it with Jason rather than silently targeting another .NET version.
 
@@ -57,6 +69,7 @@ $deploymentName = 'tradingengine-dev'
 
 az deployment sub what-if `
   --name $deploymentName `
+  --subscription $subscription `
   --location uksouth `
   --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam
@@ -67,6 +80,7 @@ az deployment sub what-if `
 ```powershell
 az deployment sub create `
   --name $deploymentName `
+  --subscription $subscription `
   --location uksouth `
   --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam
@@ -77,6 +91,7 @@ The deployment outputs the resource group name, Web App name, default hostname a
 ```powershell
 $outputs = az deployment sub show `
   --name $deploymentName `
+  --subscription $subscription `
   --query properties.outputs -o json | ConvertFrom-Json
 $webAppName = $outputs.webAppName.value
 $resourceGroupName = $outputs.resourceGroupName.value
@@ -100,6 +115,7 @@ Compress-Archive -Path ./artifacts/api/* -DestinationPath ./artifacts/api.zip -F
 az webapp deploy `
   --resource-group $resourceGroupName `
   --name $webAppName `
+  --subscription $subscription `
   --src-path ./artifacts/api.zip `
   --type zip
 ```
@@ -122,7 +138,7 @@ Invoke-RestMethod "https://$hostName/version"
 Delete only the generated development resource group. This removes the App Service Plan, Web App and Managed Identity created by this deployment and nothing else.
 
 ```powershell
-az group delete --name $resourceGroupName --yes --no-wait
+az group delete --name $resourceGroupName --subscription $subscription --yes --no-wait
 ```
 
 ## Notes
