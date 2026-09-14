@@ -6,9 +6,22 @@ The deployment creates a dedicated development resource group containing a low-c
 
 ## Prerequisites
 
-- Azure CLI 2.x with the Bicep CLI (`az bicep install` if `az bicep version` fails).
+- Azure CLI **2.48.1 or later**. SCM basic authentication is disabled on the Web App, so `az webapp deploy` must authenticate with Microsoft Entra; earlier CLI versions can fall back to basic credentials and fail.
+- Bicep CLI (`az bicep install` if `az bicep version` fails).
 - An Azure account with permission to create resource groups and App Service resources in the target subscription.
 - .NET 10 SDK for publishing the API.
+
+## Select and verify the subscription
+
+Choose the intended subscription explicitly and verify it before running any deployment command. Substitute your own subscription name or ID; do not commit a real subscription ID to this repository.
+
+```powershell
+az login
+az account set --subscription "<subscription-name-or-id>"
+az account show --output table
+```
+
+Confirm the displayed subscription is the intended development subscription before continuing.
 
 ## Cost and approval
 
@@ -16,19 +29,34 @@ The default SKU is **B1** (Linux Basic, 1 core, 1.75 GB RAM), the lowest tier th
 
 Per issue #34, obtain Jason's explicit approval of the selected SKU and expected cost immediately before provisioning.
 
-## Build and lint the Bicep
+## Verify the .NET Linux runtime
+
+Confirm that App Service offers the .NET 10 Linux runtime before deploying:
 
 ```powershell
-az bicep build --file infra/main.bicep
+az webapp list-runtimes --os-type linux --query "[?contains(@, 'DOTNETCORE|10.0')]"
+```
+
+The template sets `linuxFxVersion` to `DOTNETCORE|10.0`. If the runtime is not listed, stop and raise it with Jason rather than silently targeting another .NET version.
+
+## Build and lint the Bicep
+
+Use `--stdout` so the generated ARM JSON is not written into `infra/`. If a file is needed, output to the gitignored `artifacts/` directory instead.
+
+```powershell
+az bicep build --file infra/main.bicep --stdout | Out-Null
 az bicep lint --file infra/main.bicep
 ```
 
 ## Preview changes with what-if
 
-Run a subscription-level what-if against the dev parameters. This creates no resources.
+Run a subscription-level what-if against the dev parameters. This creates no resources. Use an explicit deployment name so `what-if`, `create` and `show` all refer to the same deployment.
 
 ```powershell
+$deploymentName = 'tradingengine-dev'
+
 az deployment sub what-if `
+  --name $deploymentName `
   --location uksouth `
   --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam
@@ -38,6 +66,7 @@ az deployment sub what-if `
 
 ```powershell
 az deployment sub create `
+  --name $deploymentName `
   --location uksouth `
   --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam
@@ -47,7 +76,7 @@ The deployment outputs the resource group name, Web App name, default hostname a
 
 ```powershell
 $outputs = az deployment sub show `
-  --name main `
+  --name $deploymentName `
   --query properties.outputs -o json | ConvertFrom-Json
 $webAppName = $outputs.webAppName.value
 $resourceGroupName = $outputs.resourceGroupName.value
@@ -56,11 +85,14 @@ $hostName = $outputs.defaultHostName.value
 
 ## Publish the API
 
-Publish `TradingEngine.Api` and deploy the package to the Web App:
+Publish `TradingEngine.Api`, stamping the build with the current commit so `/version` identifies the deployed commit, then deploy the package to the Web App:
 
 ```powershell
+$commitSha = git rev-parse HEAD
+
 dotnet publish src/TradingEngine.Api/TradingEngine.Api.csproj `
   --configuration Release `
+  -p:SourceRevisionId=$commitSha `
   --output ./artifacts/api
 
 Compress-Archive -Path ./artifacts/api/* -DestinationPath ./artifacts/api.zip -Force
@@ -71,6 +103,8 @@ az webapp deploy `
   --src-path ./artifacts/api.zip `
   --type zip
 ```
+
+`az webapp deploy` authenticates with Microsoft Entra because SCM basic authentication is disabled on the Web App.
 
 ## Verify the endpoints
 
@@ -95,5 +129,6 @@ az group delete --name $resourceGroupName --yes --no-wait
 
 - The Web App name is generated with `uniqueString` so it is globally unique without committing subscription IDs or live identifiers.
 - The Web App runs the `DOTNETCORE|10.0` Linux runtime, matching the repository's .NET 10 target.
-- HTTPS only, minimum TLS 1.2, FTPS disabled and `/health` configured as the App Service health-check path.
+- HTTPS only, minimum TLS 1.2, FTPS disabled, `alwaysOn` enabled and `/health` configured as the App Service health-check path.
+- FTP and SCM basic publishing credentials are disabled; deployments must use Microsoft Entra authentication.
 - A system-assigned Managed Identity is enabled for future use (for example Azure SQL access in a later story); nothing consumes it yet.

@@ -42,7 +42,24 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       healthCheckPath: '/health'
+      alwaysOn: true
     }
+  }
+}
+
+resource ftpPublishingPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
+  parent: webApp
+  name: 'ftp'
+  properties: {
+    allow: false
+  }
+}
+
+resource scmPublishingPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
+  parent: webApp
+  name: 'scm'
+  properties: {
+    allow: false
   }
 }
 
