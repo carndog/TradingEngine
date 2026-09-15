@@ -27,9 +27,15 @@ Confirm the displayed subscription is the intended development subscription befo
 
 ## Cost and approval
 
-The default SKU is **B1** (Linux Basic, 1 core, 1.75 GB RAM), the lowest tier that supports a stable always-on development deployment. Expected cost is roughly **$13 USD/month** at list prices; verify the current regional price in the Azure pricing calculator before deploying.
+The development App Service Plan uses the paid **B1 Linux** tier and incurs charges while it exists, including when the application is idle.
 
-Per issue #34, obtain Jason's explicit approval of the selected SKU and expected cost immediately before provisioning.
+Before provisioning:
+
+- Verify the current price for B1 in the configured Azure region.
+- Confirm that subscription cost budgets and alerts are configured.
+- Confirm that the expected ongoing cost is acceptable.
+
+Deleting the generated development resource group removes the App Service Plan and stops its ongoing compute charge.
 
 ## Verify the .NET Linux runtime
 
@@ -70,7 +76,7 @@ $deploymentName = 'tradingengine-dev'
 az deployment sub what-if `
   --name $deploymentName `
   --subscription $subscription `
-  --location uksouth `
+  --location ukwest `
   --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam
 ```
@@ -81,7 +87,7 @@ az deployment sub what-if `
 az deployment sub create `
   --name $deploymentName `
   --subscription $subscription `
-  --location uksouth `
+  --location ukwest `
   --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam
 ```
