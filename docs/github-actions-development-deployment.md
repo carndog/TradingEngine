@@ -53,13 +53,29 @@ The credential trusts GitHub OIDC tokens for the `development` environment of th
 - **Audience**: `api://AzureADTokenExchange`
 - **Subject**: `repo:carndog/TradingEngine:environment:development`
 
+Write the credential definition to a temporary JSON file and pass the file path to `--parameters`. Passing a file avoids the Windows PowerShell/native-command quoting problem where Azure CLI receives the inline JSON with its quotation marks stripped.
+
 ```powershell
-az ad app federated-credential create --id $appId --parameters '{
-  "name": "github-development",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:carndog/TradingEngine:environment:development",
-  "audiences": ["api://AzureADTokenExchange"]
-}'
+$federatedCredentialPath = Join-Path `
+  $env:TEMP `
+  'tradingengine-github-development-federated-credential.json'
+
+@{
+    name = 'github-development'
+    issuer = 'https://token.actions.githubusercontent.com'
+    subject = 'repo:carndog/TradingEngine:environment:development'
+    audiences = @('api://AzureADTokenExchange')
+} |
+    ConvertTo-Json -Depth 3 |
+    Set-Content `
+        -Path $federatedCredentialPath `
+        -Encoding ascii
+
+az ad app federated-credential create `
+  --id $appId `
+  --parameters $federatedCredentialPath
+
+Remove-Item $federatedCredentialPath
 ```
 
 ### 3. Assign Website Contributor on the Web App only
