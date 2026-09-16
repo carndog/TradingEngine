@@ -24,15 +24,26 @@ $webAppName = '<web-app-name>'
 $appDisplayName = 'tradingengine-github-deploy-development'
 ```
 
+Sign in to the intended tenant, select the subscription and verify the account before creating anything:
+
+```powershell
+az login --tenant $tenantId
+az account set --subscription $subscription
+az account show --output table
+```
+
+Confirm the displayed tenant and subscription are the intended development targets before continuing.
+
 ### 1. Create a dedicated Microsoft Entra application
 
 Create an application used only for GitHub deployment, plus its service principal. **No client secret is created** — OIDC federated credentials replace secrets entirely.
 
 ```powershell
-az ad app create --display-name $appDisplayName
-$appId = az ad app list --display-name $appDisplayName --query "[0].appId" -o tsv
-az ad sp create --id $appId
+$appId = az ad app create --display-name $appDisplayName --query appId -o tsv
+$servicePrincipalObjectId = az ad sp create --id $appId --query id -o tsv
 ```
+
+`$appId` is the application (client) ID used for `AZURE_CLIENT_ID` and for application and federated-credential operations. `$servicePrincipalObjectId` is the service principal object ID used for role assignment operations.
 
 ### 2. Add the federated credential
 
@@ -63,7 +74,8 @@ $webAppId = az webapp show `
   --query id -o tsv
 
 az role assignment create `
-  --assignee $appId `
+  --assignee-object-id $servicePrincipalObjectId `
+  --assignee-principal-type ServicePrincipal `
   --role "Website Contributor" `
   --scope $webAppId
 ```
@@ -96,7 +108,7 @@ Confirm the federated credential subject and the role assignment scope:
 az ad app federated-credential list --id $appId --output table
 
 az role assignment list `
-  --assignee $appId `
+  --assignee $servicePrincipalObjectId `
   --scope $webAppId `
   --output table
 ```
@@ -110,7 +122,7 @@ Any one of the following stops GitHub deployments:
 ```powershell
 # Remove the role assignment
 az role assignment delete `
-  --assignee $appId `
+  --assignee $servicePrincipalObjectId `
   --role "Website Contributor" `
   --scope $webAppId
 

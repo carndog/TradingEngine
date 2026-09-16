@@ -35,13 +35,16 @@ jobs:
         run: dotnet test TradingEngine.sln --configuration Release --no-build
 
       - name: Publish API
+        if: github.ref == 'refs/heads/main'
         run: dotnet publish src/TradingEngine.Api/TradingEngine.Api.csproj --configuration Release -p:SourceRevisionId=${{ github.sha }} --output ./artifacts/api
 
       - name: Package published output
+        if: github.ref == 'refs/heads/main'
         working-directory: ./artifacts/api
         run: zip -r ../api.zip .
 
       - name: Upload deployment package
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v7
         with:
           name: api-package
@@ -103,23 +106,15 @@ jobs:
           expected="${{ github.sha }}"
           response=""
           for attempt in $(seq 1 12); do
-            response=$(curl -fsS "$url" 2>/dev/null) && break
-            response=""
-            echo "Attempt $attempt of 12: /version unreachable; retrying in 10s"
+            response=$(curl -fsS "$url" 2>/dev/null) || response=""
+            commit=$(echo "$response" | jq -r '.commit // empty' 2>/dev/null)
+            version=$(echo "$response" | jq -r '.version // empty' 2>/dev/null)
+            if [ "$commit" = "$expected" ] && [[ "$version" == *"$expected"* ]]; then
+              echo "Version check passed: $response"
+              exit 0
+            fi
+            echo "Attempt $attempt of 12: commit '${commit:-unavailable}', version '${version:-unavailable}'; retrying in 10s"
             sleep 10
           done
-          if [ -z "$response" ]; then
-            echo "::error::/version did not return a successful response"
-            exit 1
-          fi
-          echo "Version response: $response"
-          commit=$(echo "$response" | jq -r '.commit // empty')
-          version=$(echo "$response" | jq -r '.version // empty')
-          if [ "$commit" != "$expected" ]; then
-            echo "::error::Deployed commit '$commit' does not match expected commit '$expected'"
-            exit 1
-          fi
-          case "$version" in
-            *"$expected"*) echo "Informational version '$version' identifies commit '$expected'" ;;
-            *) echo "::error::Informational version '$version' does not identify commit '$expected'"; exit 1 ;;
-          esac
+          echo "::error::Version check failed: expected commit '$expected' identified by both 'commit' and 'version'. Last response: ${response:-<none>}"
+          exit 1
