@@ -1,0 +1,125 @@
+name: Deploy development
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore TradingEngine.sln
+
+      - name: Build
+        run: dotnet build TradingEngine.sln --configuration Release --no-restore -p:SourceRevisionId=${{ github.sha }}
+
+      - name: Test
+        run: dotnet test TradingEngine.sln --configuration Release --no-build
+
+      - name: Publish API
+        run: dotnet publish src/TradingEngine.Api/TradingEngine.Api.csproj --configuration Release -p:SourceRevisionId=${{ github.sha }} --output ./artifacts/api
+
+      - name: Package published output
+        working-directory: ./artifacts/api
+        run: zip -r ../api.zip .
+
+      - name: Upload deployment package
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-package
+          path: ./artifacts/api.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to development
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: development
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: deploy-development
+      cancel-in-progress: false
+    steps:
+      - name: Download deployment package
+        uses: actions/download-artifact@v8
+        with:
+          name: api-package
+          path: ./deploy
+
+      - name: Azure login via OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: ./deploy/api.zip
+
+      - name: Verify health endpoint
+        run: |
+          url="https://${{ vars.AZURE_WEBAPP_HOSTNAME }}/health"
+          for attempt in $(seq 1 12); do
+            response=$(curl -fsS "$url" 2>/dev/null) || response=""
+            status=$(echo "$response" | jq -r '.status // empty')
+            if [ "$status" = "Healthy" ]; then
+              echo "Health check passed: $response"
+              exit 0
+            fi
+            echo "Attempt $attempt of 12: status '${status:-unreachable}'; retrying in 10s"
+            sleep 10
+          done
+          echo "::error::Health check failed: /health did not report Healthy after 12 attempts"
+          exit 1
+
+      - name: Verify version endpoint
+        run: |
+          url="https://${{ vars.AZURE_WEBAPP_HOSTNAME }}/version"
+          expected="${{ github.sha }}"
+          response=""
+          for attempt in $(seq 1 12); do
+            response=$(curl -fsS "$url" 2>/dev/null) && break
+            response=""
+            echo "Attempt $attempt of 12: /version unreachable; retrying in 10s"
+            sleep 10
+          done
+          if [ -z "$response" ]; then
+            echo "::error::/version did not return a successful response"
+            exit 1
+          fi
+          echo "Version response: $response"
+          commit=$(echo "$response" | jq -r '.commit // empty')
+          version=$(echo "$response" | jq -r '.version // empty')
+          if [ "$commit" != "$expected" ]; then
+            echo "::error::Deployed commit '$commit' does not match expected commit '$expected'"
+            exit 1
+          fi
+          case "$version" in
+            *"$expected"*) echo "Informational version '$version' identifies commit '$expected'" ;;
+            *) echo "::error::Informational version '$version' does not identify commit '$expected'"; exit 1 ;;
+          esac

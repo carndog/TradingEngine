@@ -53,6 +53,8 @@ For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`
 
 See [Solution boundaries and dependency rules](docs/architecture.md) for the Hexagonal Architecture conventions enforced by the architecture tests.
 
+Pushes to `main` are built, tested and deployed to the development App Service by GitHub Actions; see [GitHub Actions development deployment](docs/github-actions-development-deployment.md).
+
 ## Delivery roadmap
 
 Work is organised into the following milestones:
