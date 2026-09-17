@@ -1,6 +1,6 @@
 # GitHub Actions infrastructure deployment
 
-The workflow `.github/workflows/deploy-infrastructure-development.yml` validates and deploys the subscription-scope Bicep in `infra/` to the development environment. It uses the same GitHub-to-Azure OpenID Connect (OIDC) identity as the application workflow; no client secret, publish profile or other long-lived credential is stored anywhere.
+The workflow `.github/workflows/deploy-infrastructure-development.yml` validates and deploys the subscription-scope Bicep in `infra/` to the development environment. It uses a dedicated GitHub-to-Azure OpenID Connect (OIDC) identity, `tradingengine-github-infrastructure-development`, that is separate from the application-deployment identity; no client secret, publish profile or other long-lived credential is stored anywhere.
 
 Application build, test and deployment remain the responsibility of `.github/workflows/deploy-development.yml`. The infrastructure workflow never builds or deploys application binaries.
 
@@ -8,46 +8,134 @@ Application build, test and deployment remain the responsibility of `.github/wor
 
 The workflow triggers only when `infra/**` or the workflow file itself changes:
 
-- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then previews the subscription-scope deployment and writes the change list to the workflow summary.
-- **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` and records the commit, deployment name and Bicep outputs in the workflow summary.
+- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then previews the subscription-scope deployment against the `development-infrastructure-preview` environment and writes the change list to the workflow summary.
+- **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` against the `development` environment and records the commit, deployment name and Bicep outputs in the workflow summary.
 - **Manual `workflow_dispatch`**: recovery option. The `deploy` job still requires `refs/heads/main`, so a manual run only deploys when started from `main`.
 
-The `validate` job holds only `contents: read` and receives no Azure OIDC token or environment secrets, so it is safe on fork pull requests. The `whatif` job is additionally gated on `github.event.pull_request.head.repo.full_name == github.repository`, so fork pull requests never reach the `development` environment or receive an OIDC token. The `deploy` job uses a `deploy-infrastructure-development` concurrency group with `cancel-in-progress: false` so overlapping deployments queue rather than cancel halfway through.
+The `validate` job holds only `contents: read` and receives no Azure OIDC token or environment secrets, so it is safe on fork pull requests. The `whatif` job is additionally gated on `github.event.pull_request.head.repo.full_name == github.repository`, so fork pull requests never reach the `development-infrastructure-preview` environment or receive an OIDC token. The `deploy` job uses the `development` environment — restricted to `main` — plus a `deploy-infrastructure-development` concurrency group with `cancel-in-progress: false` so overlapping deployments queue rather than cancel halfway through.
 
 Deployment names are unique per run (`tradingengine-dev-<run-id>` for deployments, `tradingengine-dev-whatif-<run-id>` for previews) so each run is identifiable in the subscription deployment history.
 
 ## Required GitHub environment configuration
 
-The workflow reuses the existing `development` environment. No new secrets are required.
+The workflow uses two GitHub environments with separate secrets so that pull-request previews and real deployments are independently controlled. Jason must create and configure both manually; the workflow does not create environments.
 
-Existing secrets (already configured):
+### `development` (existing — real deployments)
+
+Remains restricted to the `main` branch and is used only by the `deploy` job. Keep its existing entries untouched — the application workflow still needs them — and add the infrastructure entries.
+
+Existing secrets (unchanged, used by the application workflow):
 
 | Secret | Value |
 | --- | --- |
-| `AZURE_CLIENT_ID` | Application (client) ID of the GitHub deployment identity |
+| `AZURE_CLIENT_ID` | Application (client) ID of the application-deployment identity |
 | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Target development subscription |
 
-Existing variables (already configured, used by the application workflow):
+Existing variables (unchanged, used by the application workflow):
 
 | Variable | Value |
 | --- | --- |
 | `AZURE_WEBAPP_NAME` | Existing Web App name |
 | `AZURE_WEBAPP_HOSTNAME` | Web App default hostname |
 
-New variable to add:
+New entries to add for the infrastructure `deploy` job:
 
-| Variable | Value |
-| --- | --- |
-| `AZURE_DEPLOYMENT_LOCATION` | `ukwest` — the Azure region used as the subscription-scope deployment location |
+| Entry | Type | Value |
+| --- | --- | --- |
+| `AZURE_INFRA_CLIENT_ID` | Secret | Application (client) ID of `tradingengine-github-infrastructure-development` |
+| `AZURE_DEPLOYMENT_LOCATION` | Variable | `ukwest` — the Azure region used as the subscription-scope deployment location |
 
-Keep the environment's deployment branch restriction limited to `main` and retain any required reviewers; the environment is the trust boundary that prevents untrusted code from obtaining an Azure token.
+### `development-infrastructure-preview` (new — pull-request what-if only)
+
+Used only by the `whatif` job on same-repository pull requests. Create it in **Settings → Environments** with:
+
+- **Required reviewers**: add at least one reviewer so a human approves each preview before the Azure token is issued.
+- **Deployment branches and tags**: permit same-repository pull-request branches — set to **All branches** (or a `refs/pull/*` name pattern). It must not be restricted to `main`, because pull-request runs deploy from the PR merge ref.
+- The same-repository guard in the workflow (`github.event.pull_request.head.repo.full_name == github.repository`) is the primary boundary; fork pull requests can never reach this environment.
+
+Secrets and variables:
+
+| Entry | Type | Value |
+| --- | --- | --- |
+| `AZURE_INFRA_CLIENT_ID` | Secret | Application (client) ID of `tradingengine-github-infrastructure-development` |
+| `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Secret | Target development subscription |
+| `AZURE_DEPLOYMENT_LOCATION` | Variable | `ukwest` |
+
+The environments are the trust boundary that prevents untrusted code from obtaining an Azure token.
 
 ## OIDC and Azure permissions
 
-The existing federated credential on the deployment application trusts `repo:carndog/TradingEngine:environment:development`. Because the infrastructure workflow uses the same `development` environment, **no new federated credential is needed**.
+Infrastructure deployment uses a **separate Microsoft Entra identity** from application deployment. The existing application-deployment identity (`tradingengine-github-deploy-development`) keeps only its Website Contributor role on the Web App and receives no infrastructure permissions. The new infrastructure identity (`tradingengine-github-infrastructure-development`) receives only the permissions needed for Bicep what-if and infrastructure deployment, and is never used to deploy application binaries.
 
-The current role assignment — **Website Contributor scoped to the Web App** — is sufficient for application deployment but cannot run a subscription-scope deployment. Jason must perform the following bootstrap manually; the workflow does not change Azure RBAC.
+Both identities authenticate with OIDC federated credentials. **No client secret is created for either.**
+
+Jason must perform the following bootstrap manually; the workflow does not change Azure RBAC.
+
+### 1. Create the infrastructure Entra application
+
+```powershell
+$subscription = '<subscription-id>'
+$tenantId = '<tenant-id>'
+$infraAppDisplayName = 'tradingengine-github-infrastructure-development'
+
+az login --tenant $tenantId
+az account set --subscription $subscription
+az account show --output table
+
+$infraAppId = az ad app create `
+  --display-name $infraAppDisplayName `
+  --query appId -o tsv
+
+$infraSpObjectId = az ad sp create `
+  --id $infraAppId `
+  --query id -o tsv
+```
+
+`$infraAppId` is the value for the `AZURE_INFRA_CLIENT_ID` secrets. `$infraSpObjectId` is the object ID used for all infrastructure role assignments — do not reuse the application-deployment principal.
+
+### 2. Add both federated credentials
+
+The infrastructure identity needs two federated credentials, one per GitHub environment:
+
+| Purpose | Subject |
+| --- | --- |
+| Real infrastructure deployment | `repo:carndog/TradingEngine:environment:development` |
+| Pull-request what-if | `repo:carndog/TradingEngine:environment:development-infrastructure-preview` |
+
+Both use issuer `https://token.actions.githubusercontent.com` and audience `api://AzureADTokenExchange`. Write each credential to a temporary JSON file and pass the file path to `--parameters` to avoid the Windows PowerShell/native-command quoting problem.
+
+```powershell
+$federatedCredentialPath = Join-Path `
+  $env:TEMP `
+  'tradingengine-github-infrastructure-federated-credentials.json'
+
+@(
+    @{
+        name = 'github-development'
+        issuer = 'https://token.actions.githubusercontent.com'
+        subject = 'repo:carndog/TradingEngine:environment:development'
+        audiences = @('api://AzureADTokenExchange')
+    },
+    @{
+        name = 'github-development-infrastructure-preview'
+        issuer = 'https://token.actions.githubusercontent.com'
+        subject = 'repo:carndog/TradingEngine:environment:development-infrastructure-preview'
+        audiences = @('api://AzureADTokenExchange')
+    }
+) | ForEach-Object {
+    $_ | ConvertTo-Json -Depth 3 | Set-Content `
+        -Path $federatedCredentialPath `
+        -Encoding ascii
+
+    az ad app federated-credential create `
+      --id $infraAppId `
+      --parameters $federatedCredentialPath
+}
+
+Remove-Item $federatedCredentialPath
+```
 
 ### Narrowest viable permissions
 
@@ -59,13 +147,11 @@ A subscription-scope `az deployment sub create` that manages `rg-tradingengine-d
 
 **Bootstrap decision, stated explicitly:** `Microsoft.Resources/subscriptions/resourcegroups/write` at subscription scope allows the identity to create *any* resource group in the subscription, not only `rg-tradingengine-dev`. This is unavoidable while the template manages the resource group at subscription scope. It is still far narrower than subscription-wide Contributor, which must not be granted. If that breadth is unacceptable, the alternative is to keep resource-group creation as a manual step and remove it from the template — a template design change that is out of scope for this issue.
 
-### Bootstrap steps
+### 3. Assign the infrastructure roles
 
-All commands use placeholders. Do not commit real IDs to this repository.
+All commands use placeholders. Do not commit real IDs to this repository. All infrastructure role assignments target `$infraSpObjectId` — the new infrastructure service principal — never the application-deployment principal.
 
 ```powershell
-$subscription = '<subscription-id>'
-$servicePrincipalObjectId = '<deployment-sp-object-id>'
 $resourceGroupName = 'rg-tradingengine-dev'
 ```
 
@@ -94,28 +180,28 @@ Assign it at subscription scope, and Contributor on the development resource gro
 
 ```powershell
 az role assignment create `
-  --assignee-object-id $servicePrincipalObjectId `
+  --assignee-object-id $infraSpObjectId `
   --assignee-principal-type ServicePrincipal `
   --role 'TradingEngine infrastructure deployer' `
   --scope "/subscriptions/$subscription"
 
 az role assignment create `
-  --assignee-object-id $servicePrincipalObjectId `
+  --assignee-object-id $infraSpObjectId `
   --assignee-principal-type ServicePrincipal `
   --role 'Contributor' `
   --scope "/subscriptions/$subscription/resourceGroups/$resourceGroupName"
 ```
 
-The existing Website Contributor assignment on the Web App remains in place for the application workflow; the assignments are additive.
+The application-deployment identity is untouched: it keeps Website Contributor on the Web App and nothing else. The infrastructure identity holds only the two assignments above.
 
 ## Trusted versus fork pull requests
 
 | Pull request source | `validate` | `whatif` | `deploy` |
 | --- | --- | --- | --- |
-| This repository | Runs | Runs | Never on PRs |
+| This repository | Runs | Runs via `development-infrastructure-preview` | Never on PRs |
 | Fork | Runs | Skipped | Never on PRs |
 
-Fork pull requests execute only the unprivileged validation job: no OIDC token is issued, no environment secrets are exposed and no Azure operation is attempted.
+Fork pull requests execute only the unprivileged validation job: no OIDC token is issued, no environment secrets are exposed and no Azure operation is attempted. Same-repository pull requests use only the `development-infrastructure-preview` environment; the `development` environment is reachable solely from a push to `main` or a manual run started from `main`.
 
 ## Local validation
 
@@ -165,16 +251,22 @@ Remove the infrastructure permissions without affecting application deployment:
 
 ```powershell
 az role assignment delete `
-  --assignee $servicePrincipalObjectId `
+  --assignee $infraSpObjectId `
   --role 'TradingEngine infrastructure deployer' `
   --scope "/subscriptions/$subscription"
 
 az role assignment delete `
-  --assignee $servicePrincipalObjectId `
+  --assignee $infraSpObjectId `
   --role 'Contributor' `
   --scope "/subscriptions/$subscription/resourceGroups/$resourceGroupName"
 
 az role definition delete --name 'TradingEngine infrastructure deployer'
+```
+
+To revoke the infrastructure identity entirely without touching application deployment, delete its Entra application (this also removes its service principal and both federated credentials):
+
+```powershell
+az ad app delete --id $infraAppId
 ```
 
 To remove the deployed resources, delete only the development resource group:
@@ -183,4 +275,4 @@ To remove the deployed resources, delete only the development resource group:
 az group delete --name $resourceGroupName --subscription $subscription --yes --no-wait
 ```
 
-To revoke the identity entirely (which also stops application deployments), delete the federated credential or the Entra application as described in [GitHub Actions development deployment](github-actions-development-deployment.md).
+To revoke the application-deployment identity (which stops application deployments), delete its federated credential or Entra application as described in [GitHub Actions development deployment](github-actions-development-deployment.md).

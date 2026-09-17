@@ -156,4 +156,4 @@ Deleting the application also removes its service principal and all federated cr
 
 - SCM basic authentication is disabled on the Web App, so `azure/webapps-deploy` authenticates with the OIDC token from `azure/login`.
 - The published package is passed between jobs as a workflow artifact with a one-day retention period.
-- Infrastructure provisioning and Bicep validation are handled separately; this workflow deploys application code only. See [GitHub Actions infrastructure deployment](github-actions-infrastructure-deployment.md) for the automated path and [Azure development deployment](azure-development-deployment.md) for the manual path.
+- Infrastructure provisioning and Bicep validation are handled separately; this workflow deploys application code only and uses only the `AZURE_CLIENT_ID` application-deployment identity. The infrastructure workflow uses a separate `AZURE_INFRA_CLIENT_ID` identity; see [GitHub Actions infrastructure deployment](github-actions-infrastructure-deployment.md) for the automated path and [Azure development deployment](azure-development-deployment.md) for the manual path.

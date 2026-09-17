@@ -39,7 +39,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    environment: development
+    environment: development-infrastructure-preview
     permissions:
       id-token: write
       contents: read
@@ -52,7 +52,7 @@ jobs:
       - name: Azure login via OIDC
         uses: azure/login@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_INFRA_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -64,7 +64,8 @@ jobs:
             --location "${{ vars.AZURE_DEPLOYMENT_LOCATION }}" \
             --template-file infra/main.bicep \
             --parameters infra/environments/dev.bicepparam \
-            --no-pretty-print > what-if.json
+            --no-pretty-print \
+            --output json > what-if.json
 
       - name: Write what-if summary
         run: |
@@ -73,13 +74,13 @@ jobs:
             echo ""
             echo "Commit: \`${{ github.sha }}\`"
             echo ""
-            change_count=$(jq '.changes | length' what-if.json)
+            change_count=$(jq '(.changes // []) | length' what-if.json)
             if [ "$change_count" = "0" ]; then
               echo "No changes detected. The deployed resources already match the template."
             else
               echo "| Change | Resource type | Resource ID |"
               echo "| --- | --- | --- |"
-              jq -r '.changes[] | "| \(.changeType) | \(.resourceType) | \(.resourceId) |"' what-if.json
+              jq -r '(.changes // [])[] | "| \(.changeType) | \(.after.type // .before.type // "Unknown") | \(.resourceId) |"' what-if.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -106,7 +107,7 @@ jobs:
       - name: Azure login via OIDC
         uses: azure/login@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_INFRA_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
