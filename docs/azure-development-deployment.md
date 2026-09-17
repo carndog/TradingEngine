@@ -154,3 +154,4 @@ az group delete --name $resourceGroupName --subscription $subscription --yes --n
 - HTTPS only, minimum TLS 1.2, FTPS disabled, `alwaysOn` enabled and `/health` configured as the App Service health-check path.
 - FTP and SCM basic publishing credentials are disabled; deployments must use Microsoft Entra authentication.
 - A system-assigned Managed Identity is enabled for future use (for example Azure SQL access in a later story); nothing consumes it yet.
+- The `appServicePlanFreeOfferExpirationTime` parameter preserves the subscription-assigned temporary App Service Plan free offer already present on the plan (`2026-10-15T17:51:34.82` for dev). Without it, a deployment would remove the expiry. Reassess the parameter after the offer expires.

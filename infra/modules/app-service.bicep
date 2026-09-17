@@ -10,6 +10,9 @@ param location string
 @description('App Service Plan SKU name.')
 param appServiceSkuName string
 
+@description('Expiry of the subscription-assigned temporary App Service Plan free offer, preserved so deployments do not remove it.')
+param appServicePlanFreeOfferExpirationTime string
+
 @description('Tags applied to the resources.')
 param tags object
 
@@ -23,6 +26,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
   properties: {
     reserved: true
+    freeOfferExpirationTime: appServicePlanFreeOfferExpirationTime
   }
 }
 

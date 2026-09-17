@@ -51,7 +51,7 @@ The credential trusts GitHub OIDC tokens for the `development` environment of th
 
 - **Issuer**: `https://token.actions.githubusercontent.com`
 - **Audience**: `api://AzureADTokenExchange`
-- **Subject**: `repo:carndog/TradingEngine:environment:development`
+- **Subject**: `repo:carndog@7319736/TradingEngine@1349997095:environment:development`
 
 Write the credential definition to a temporary JSON file and pass the file path to `--parameters`. Passing a file avoids the Windows PowerShell/native-command quoting problem where Azure CLI receives the inline JSON with its quotation marks stripped.
 
@@ -63,7 +63,7 @@ $federatedCredentialPath = Join-Path `
 @{
     name = 'github-development'
     issuer = 'https://token.actions.githubusercontent.com'
-    subject = 'repo:carndog/TradingEngine:environment:development'
+    subject = 'repo:carndog@7319736/TradingEngine@1349997095:environment:development'
     audiences = @('api://AzureADTokenExchange')
 } |
     ConvertTo-Json -Depth 3 |
@@ -156,4 +156,4 @@ Deleting the application also removes its service principal and all federated cr
 
 - SCM basic authentication is disabled on the Web App, so `azure/webapps-deploy` authenticates with the OIDC token from `azure/login`.
 - The published package is passed between jobs as a workflow artifact with a one-day retention period.
-- Infrastructure provisioning and Bicep validation are handled separately; this workflow deploys application code only. See [Azure development deployment](azure-development-deployment.md) for the manual infrastructure path.
+- Infrastructure provisioning and Bicep validation are handled separately; this workflow deploys application code only and uses only the `AZURE_CLIENT_ID` application-deployment identity. The infrastructure workflow uses a separate `AZURE_INFRA_CLIENT_ID` identity; see [GitHub Actions infrastructure deployment](github-actions-infrastructure-deployment.md) for the automated path and [Azure development deployment](azure-development-deployment.md) for the manual path.

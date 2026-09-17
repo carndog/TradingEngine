@@ -12,6 +12,9 @@ param namingPrefix string
 @description('App Service Plan SKU name. B1 is the low-cost development default.')
 param appServiceSkuName string = 'B1'
 
+@description('Expiry of the subscription-assigned temporary App Service Plan free offer, preserved so deployments do not remove it.')
+param appServicePlanFreeOfferExpirationTime string
+
 @description('Common tags applied to all resources.')
 param tags object
 
@@ -36,6 +39,7 @@ module appService 'modules/app-service.bicep' = {
     webAppName: webAppName
     location: location
     appServiceSkuName: appServiceSkuName
+    appServicePlanFreeOfferExpirationTime: appServicePlanFreeOfferExpirationTime
     tags: tags
   }
   dependsOn: [

@@ -1,0 +1,161 @@
+name: Deploy development infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/deploy-infrastructure-development.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/deploy-infrastructure-development.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Bicep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build Bicep
+        run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Lint Bicep
+        run: az bicep lint --file infra/main.bicep
+
+  whatif:
+    name: What-if development infrastructure
+    needs: validate
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: development-infrastructure-preview
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      DEPLOYMENT_NAME: tradingengine-dev-whatif-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login via OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_INFRA_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run subscription what-if
+        run: |
+          az deployment sub what-if \
+            --name "$DEPLOYMENT_NAME" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --location "${{ vars.AZURE_DEPLOYMENT_LOCATION }}" \
+            --template-file infra/main.bicep \
+            --parameters infra/environments/dev.bicepparam \
+            --no-pretty-print \
+            --output json > what-if.json
+
+      - name: Write what-if summary
+        run: |
+          {
+            echo "### What-if: \`$DEPLOYMENT_NAME\`"
+            echo ""
+            echo "Commit: \`${{ github.sha }}\`"
+            echo ""
+            change_count=$(jq '(.changes // []) | length' what-if.json)
+            if [ "$change_count" = "0" ]; then
+              echo "No changes detected. The deployed resources already match the template."
+            else
+              echo "| Change | Resource type | Resource ID |"
+              echo "| --- | --- | --- |"
+              jq -r '(.changes // [])[] | "| \(.changeType) | \(.after.type // .before.type // "Unknown") | \(.resourceId) |"' what-if.json
+              echo ""
+              echo "#### Property changes"
+              echo ""
+              jq -r '
+                def delta_rows:
+                  . as $d
+                  | ($d.children // []) as $children
+                  | if ($children | length) > 0 then
+                      $children[] | delta_rows
+                    else
+                      "| `\($d.path // "?")` | \($d.propertyChangeType // $d.changeType // "Unknown") |"
+                    end;
+                (.changes // [])[] |
+                  "##### `\(.resourceId)`",
+                  "",
+                  "| Property path | Change |",
+                  "| --- | --- |",
+                  ((.delta // []) | if length == 0 then
+                    "| — | No property-level delta reported |"
+                  else
+                    (.[] | delta_rows)
+                  end),
+                  ""
+              ' what-if.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy development infrastructure
+    needs: validate
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment: development
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: deploy-infrastructure-development
+      cancel-in-progress: false
+    env:
+      DEPLOYMENT_NAME: tradingengine-dev-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login via OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_INFRA_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy subscription-scope Bicep
+        run: |
+          az deployment sub create \
+            --name "$DEPLOYMENT_NAME" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --location "${{ vars.AZURE_DEPLOYMENT_LOCATION }}" \
+            --template-file infra/main.bicep \
+            --parameters infra/environments/dev.bicepparam
+
+      - name: Write deployment summary
+        run: |
+          az deployment sub show \
+            --name "$DEPLOYMENT_NAME" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query properties.outputs -o json > outputs.json
+          {
+            echo "### Infrastructure deployment: \`$DEPLOYMENT_NAME\`"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Deployment name | \`$DEPLOYMENT_NAME\` |"
+            jq -r 'to_entries[] | "| \(.key) | `\(.value.value)` |"' outputs.json
+          } >> "$GITHUB_STEP_SUMMARY"
