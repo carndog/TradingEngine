@@ -51,7 +51,7 @@ The credential trusts GitHub OIDC tokens for the `development` environment of th
 
 - **Issuer**: `https://token.actions.githubusercontent.com`
 - **Audience**: `api://AzureADTokenExchange`
-- **Subject**: `repo:carndog/TradingEngine:environment:development`
+- **Subject**: `repo:carndog@7319736/TradingEngine@1349997095:environment:development`
 
 Write the credential definition to a temporary JSON file and pass the file path to `--parameters`. Passing a file avoids the Windows PowerShell/native-command quoting problem where Azure CLI receives the inline JSON with its quotation marks stripped.
 
@@ -63,7 +63,7 @@ $federatedCredentialPath = Join-Path `
 @{
     name = 'github-development'
     issuer = 'https://token.actions.githubusercontent.com'
-    subject = 'repo:carndog/TradingEngine:environment:development'
+    subject = 'repo:carndog@7319736/TradingEngine@1349997095:environment:development'
     audiences = @('api://AzureADTokenExchange')
 } |
     ConvertTo-Json -Depth 3 |

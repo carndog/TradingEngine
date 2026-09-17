@@ -99,12 +99,12 @@ $infraSpObjectId = az ad sp create `
 
 The infrastructure identity needs two federated credentials, one per GitHub environment:
 
-| Purpose | Subject |
-| --- | --- |
-| Real infrastructure deployment | `repo:carndog/TradingEngine:environment:development` |
-| Pull-request what-if | `repo:carndog/TradingEngine:environment:development-infrastructure-preview` |
+| Purpose | Credential name | Subject |
+| --- | --- | --- |
+| Real infrastructure deployment | `github-development-infrastructure` | `repo:carndog@7319736/TradingEngine@1349997095:environment:development` |
+| Pull-request what-if | `github-development-infrastructure-preview` | `repo:carndog@7319736/TradingEngine@1349997095:environment:development-infrastructure-preview` |
 
-Both use issuer `https://token.actions.githubusercontent.com` and audience `api://AzureADTokenExchange`. Write each credential to a temporary JSON file and pass the file path to `--parameters` to avoid the Windows PowerShell/native-command quoting problem.
+Both use issuer `https://token.actions.githubusercontent.com` and audience `api://AzureADTokenExchange`. This repository uses an ID-qualified OIDC subject format: `7319736` is the GitHub owner ID of `carndog` and `1349997095` is the repository ID of `TradingEngine`. These are public, stable GitHub identifiers required by the customized subject format — they are not secrets. Write each credential to a temporary JSON file and pass the file path to `--parameters` to avoid the Windows PowerShell/native-command quoting problem.
 
 ```powershell
 $federatedCredentialPath = Join-Path `
@@ -113,15 +113,15 @@ $federatedCredentialPath = Join-Path `
 
 @(
     @{
-        name = 'github-development'
+        name = 'github-development-infrastructure'
         issuer = 'https://token.actions.githubusercontent.com'
-        subject = 'repo:carndog/TradingEngine:environment:development'
+        subject = 'repo:carndog@7319736/TradingEngine@1349997095:environment:development'
         audiences = @('api://AzureADTokenExchange')
     },
     @{
         name = 'github-development-infrastructure-preview'
         issuer = 'https://token.actions.githubusercontent.com'
-        subject = 'repo:carndog/TradingEngine:environment:development-infrastructure-preview'
+        subject = 'repo:carndog@7319736/TradingEngine@1349997095:environment:development-infrastructure-preview'
         audiences = @('api://AzureADTokenExchange')
     }
 ) | ForEach-Object {
