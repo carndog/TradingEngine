@@ -73,7 +73,7 @@ public sealed class WatchedInstrumentTests
     {
         Result<WatchedInstrument> result = WatchedInstrument.Create(
             InstrumentId,
-            symbol!,
+            symbol,
             "XTEST",
             "GBP",
             60,
@@ -121,7 +121,7 @@ public sealed class WatchedInstrumentTests
         Result<WatchedInstrument> result = WatchedInstrument.Create(
             InstrumentId,
             "DEMO-1",
-            exchange!,
+            exchange,
             "GBP",
             60,
             CreatedAt);
@@ -169,7 +169,7 @@ public sealed class WatchedInstrumentTests
             InstrumentId,
             "DEMO-1",
             "XTEST",
-            quoteCurrency!,
+            quoteCurrency,
             60,
             CreatedAt);
 

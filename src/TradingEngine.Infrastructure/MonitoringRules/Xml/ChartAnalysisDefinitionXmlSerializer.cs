@@ -125,7 +125,6 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
                 }
                 catch (FormatException)
                 {
-                    // Schema validation reports malformed values.
                 }
             }
         }

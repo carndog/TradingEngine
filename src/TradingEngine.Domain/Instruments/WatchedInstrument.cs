@@ -48,9 +48,9 @@ public sealed class WatchedInstrument
 
     public static Result<WatchedInstrument> Create(
         Guid id,
-        string symbol,
-        string exchange,
-        string quoteCurrency,
+        string? symbol,
+        string? exchange,
+        string? quoteCurrency,
         int samplingIntervalSeconds,
         Instant createdAt)
     {

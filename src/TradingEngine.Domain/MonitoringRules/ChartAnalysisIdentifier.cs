@@ -13,7 +13,7 @@ public sealed record ChartAnalysisIdentifier
 
     public string Value { get; }
 
-    public static Result<ChartAnalysisIdentifier> From(string value)
+    public static Result<ChartAnalysisIdentifier> From(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {

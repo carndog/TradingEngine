@@ -20,7 +20,7 @@ public sealed class ChartAnalysisIdentifierTests
     [TestCase("   ")]
     public void From_WithMissingValue_ReturnsIdentifierRequiredError(string? value)
     {
-        Result<ChartAnalysisIdentifier> result = ChartAnalysisIdentifier.From(value!);
+        Result<ChartAnalysisIdentifier> result = ChartAnalysisIdentifier.From(value);
 
         Assert.That(result.IsFailure, Is.True);
         Assert.That(result.Error, Is.EqualTo(ChartAnalysisErrors.IdentifierRequired));
