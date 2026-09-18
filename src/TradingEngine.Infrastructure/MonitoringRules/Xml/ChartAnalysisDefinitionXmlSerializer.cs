@@ -3,6 +3,7 @@ using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Schema;
 using TradingEngine.Domain.MonitoringRules;
+using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Infrastructure.MonitoringRules.Xml;
 
@@ -141,7 +142,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
             root.Element("ResistanceZones"),
             "ResistanceZone");
 
-        return ChartAnalysisDefinition.Create(priceScale, supportZones, resistanceZones);
+        return Unwrap(ChartAnalysisDefinition.Create(priceScale, supportZones, resistanceZones));
     }
 
     private static ChartZone[] ReadZones(XElement? container, XName zoneName)
@@ -159,7 +160,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
 
     private static ChartZone ReadZone(XElement zone)
     {
-        ChartAnalysisIdentifier id = ChartAnalysisIdentifier.From((string)zone.Attribute("id")!);
+        ChartAnalysisIdentifier id = Unwrap(ChartAnalysisIdentifier.From((string)zone.Attribute("id")!));
         decimal lower = ReadPrice(zone, "lower");
         decimal level = ReadPrice(zone, "level");
         decimal upper = ReadPrice(zone, "upper");
@@ -169,7 +170,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
             .Select(ReadCondition)
             .ToArray();
 
-        return ChartZone.Create(id, lower, level, upper, conditions);
+        return Unwrap(ChartZone.Create(id, lower, level, upper, conditions));
     }
 
     private static decimal ReadPrice(XElement zone, string attributeName)
@@ -189,10 +190,21 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
     private static ChartCondition ReadCondition(XElement condition)
     {
         ChartConditionType type = ParseConditionType((string)condition.Attribute("type")!);
-        ChartAnalysisIdentifier actionId = ChartAnalysisIdentifier.From(
-            (string)condition.Attribute("actionId")!);
+        ChartAnalysisIdentifier actionId = Unwrap(ChartAnalysisIdentifier.From(
+            (string)condition.Attribute("actionId")!));
 
-        return ChartCondition.Create(type, actionId);
+        return Unwrap(ChartCondition.Create(type, actionId));
+    }
+
+    private static T Unwrap<T>(Result<T> result)
+    {
+        if (result.IsFailure)
+        {
+            throw new InvalidDataException(
+                $"The chart-analysis document is invalid ({result.Error.Code}): {result.Error.Description}");
+        }
+
+        return result.Value;
     }
 
     private static ChartConditionType ParseConditionType(string value)

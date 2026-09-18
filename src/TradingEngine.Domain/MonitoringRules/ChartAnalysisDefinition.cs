@@ -1,3 +1,5 @@
+using TradingEngine.Domain.Results;
+
 namespace TradingEngine.Domain.MonitoringRules;
 
 public sealed record ChartAnalysisDefinition
@@ -31,7 +33,7 @@ public sealed record ChartAnalysisDefinition
 
     public IReadOnlyList<ChartZone> ResistanceZones { get; }
 
-    public static ChartAnalysisDefinition Create(
+    public static Result<ChartAnalysisDefinition> Create(
         int priceScale,
         IReadOnlyList<ChartZone> supportZones,
         IReadOnlyList<ChartZone> resistanceZones)
@@ -41,27 +43,27 @@ public sealed record ChartAnalysisDefinition
 
         if (priceScale < 0 || priceScale > MaximumPriceScale)
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(priceScale),
-                priceScale,
-                $"The price scale must be between 0 and {MaximumPriceScale}.");
+            return ChartAnalysisErrors.PriceScaleOutOfRange;
         }
 
         if (supportZones.Count == 0 && resistanceZones.Count == 0)
         {
-            throw new DomainRuleViolationException(
-                ChartAnalysisDefinitionRule.MissingZones,
-                "A chart-analysis definition requires at least one zone.");
+            return ChartAnalysisErrors.MissingZones;
         }
 
         IReadOnlyList<ChartZone> support = CopyZones(supportZones, nameof(supportZones));
         IReadOnlyList<ChartZone> resistance = CopyZones(resistanceZones, nameof(resistanceZones));
 
-        EnsureConditionOrder(support, SupportConditionOrder, "A support zone");
-        EnsureConditionOrder(resistance, ResistanceConditionOrder, "A resistance zone");
-        EnsureUniqueZoneIds(support, resistance);
-        EnsurePriceScale(support, resistance, priceScale);
-        EnsureNoOverlap(support, resistance);
+        Error? failure = EnsureConditionOrder(support, SupportConditionOrder, "A support zone")
+            ?? EnsureConditionOrder(resistance, ResistanceConditionOrder, "A resistance zone")
+            ?? EnsureUniqueZoneIds(support, resistance)
+            ?? EnsurePriceScale(support, resistance, priceScale)
+            ?? EnsureNoOverlap(support, resistance);
+
+        if (failure is not null)
+        {
+            return failure;
+        }
 
         return new ChartAnalysisDefinition(priceScale, support, resistance);
     }
@@ -78,7 +80,7 @@ public sealed record ChartAnalysisDefinition
         return zones.ToArray();
     }
 
-    private static void EnsureConditionOrder(
+    private static Error? EnsureConditionOrder(
         IReadOnlyList<ChartZone> zones,
         ChartConditionType[] requiredOrder,
         string zoneDescription)
@@ -91,14 +93,14 @@ public sealed record ChartAnalysisDefinition
 
             if (actual.SequenceEqual(requiredOrder) is false)
             {
-                throw new DomainRuleViolationException(
-                    ChartAnalysisDefinitionRule.InvalidConditionOrder,
-                    $"{zoneDescription} must declare conditions in the order: {string.Join(", ", requiredOrder)}.");
+                return ChartAnalysisErrors.InvalidConditionOrder(zoneDescription, requiredOrder);
             }
         }
+
+        return null;
     }
 
-    private static void EnsureUniqueZoneIds(
+    private static Error? EnsureUniqueZoneIds(
         IReadOnlyList<ChartZone> supportZones,
         IReadOnlyList<ChartZone> resistanceZones)
     {
@@ -108,14 +110,14 @@ public sealed record ChartAnalysisDefinition
         {
             if (seen.Add(zone.Id.Value) is false)
             {
-                throw new DomainRuleViolationException(
-                    ChartAnalysisDefinitionRule.DuplicateZoneId,
-                    $"The zone identifier '{zone.Id.Value}' is duplicated.");
+                return ChartAnalysisErrors.DuplicateZoneId(zone.Id.Value);
             }
         }
+
+        return null;
     }
 
-    private static void EnsurePriceScale(
+    private static Error? EnsurePriceScale(
         IReadOnlyList<ChartZone> supportZones,
         IReadOnlyList<ChartZone> resistanceZones,
         int priceScale)
@@ -126,14 +128,14 @@ public sealed record ChartAnalysisDefinition
                 || decimal.Round(zone.Level, priceScale) != zone.Level
                 || decimal.Round(zone.Upper, priceScale) != zone.Upper)
             {
-                throw new DomainRuleViolationException(
-                    ChartAnalysisDefinitionRule.PriceExceedsScale,
-                    $"Zone '{zone.Id.Value}' contains a price with more than {priceScale} fractional digits.");
+                return ChartAnalysisErrors.PriceExceedsScale(zone.Id.Value, priceScale);
             }
         }
+
+        return null;
     }
 
-    private static void EnsureNoOverlap(
+    private static Error? EnsureNoOverlap(
         IReadOnlyList<ChartZone> supportZones,
         IReadOnlyList<ChartZone> resistanceZones)
     {
@@ -147,10 +149,12 @@ public sealed record ChartAnalysisDefinition
         {
             if (ordered[index].Lower <= ordered[index - 1].Upper)
             {
-                throw new DomainRuleViolationException(
-                    ChartAnalysisDefinitionRule.OverlappingZones,
-                    $"Zone '{ordered[index].Id.Value}' overlaps or touches zone '{ordered[index - 1].Id.Value}'.");
+                return ChartAnalysisErrors.OverlappingZones(
+                    ordered[index].Id.Value,
+                    ordered[index - 1].Id.Value);
             }
         }
+
+        return null;
     }
 }

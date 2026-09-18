@@ -1,3 +1,5 @@
+using TradingEngine.Domain.Results;
+
 namespace TradingEngine.Domain.MonitoringRules;
 
 public sealed record ChartAnalysisIdentifier
@@ -11,27 +13,21 @@ public sealed record ChartAnalysisIdentifier
 
     public string Value { get; }
 
-    public static ChartAnalysisIdentifier From(string value)
+    public static Result<ChartAnalysisIdentifier> From(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new DomainRuleViolationException(
-                ChartAnalysisIdentifierRule.Required,
-                "A chart-analysis identifier is required.");
+            return ChartAnalysisErrors.IdentifierRequired;
         }
 
         if (value.Length > MaximumLength)
         {
-            throw new DomainRuleViolationException(
-                ChartAnalysisIdentifierRule.ExceedsMaximumLength,
-                $"A chart-analysis identifier cannot exceed {MaximumLength} characters.");
+            return ChartAnalysisErrors.IdentifierExceedsMaximumLength;
         }
 
         if (IsAllowedStart(value[0]) is false || value.Skip(1).All(IsAllowedCharacter) is false)
         {
-            throw new DomainRuleViolationException(
-                ChartAnalysisIdentifierRule.InvalidCharacters,
-                "A chart-analysis identifier must start with a lowercase ASCII letter and contain only lowercase ASCII letters, digits, periods and hyphens.");
+            return ChartAnalysisErrors.IdentifierInvalidCharacters;
         }
 
         return new ChartAnalysisIdentifier(value);

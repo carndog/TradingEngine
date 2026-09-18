@@ -1,129 +1,244 @@
 using NodaTime;
+using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Domain.Instruments;
 
 public sealed class WatchedInstrument
 {
+    private const int SymbolMaximumLength = 64;
+    private const int ExchangeMaximumLength = 20;
+    private const int QuoteCurrencyMinimumLength = 3;
+    private const int QuoteCurrencyMaximumLength = 10;
+    private const int MinimumSamplingIntervalSeconds = 1;
+    private const int MaximumSamplingIntervalSeconds = 3600;
+
     private WatchedInstrument(
-        WatchedInstrumentId id,
-        InstrumentSymbol symbol,
-        ExchangeCode exchange,
-        QuoteCurrencyCode quoteCurrency,
-        SamplingPolicy samplingPolicy,
+        Guid id,
+        string symbol,
+        string exchange,
+        string quoteCurrency,
+        int samplingIntervalSeconds,
         Instant createdAt)
     {
         Id = id;
         Symbol = symbol;
         Exchange = exchange;
         QuoteCurrency = quoteCurrency;
-        SamplingPolicy = samplingPolicy;
+        SamplingIntervalSeconds = samplingIntervalSeconds;
         MonitoringState = MonitoringState.Configured;
         CreatedAt = createdAt;
         LastChangedAt = createdAt;
     }
 
-    public WatchedInstrumentId Id { get; }
+    public Guid Id { get; }
 
-    public InstrumentSymbol Symbol { get; }
+    public string Symbol { get; }
 
-    public ExchangeCode Exchange { get; }
+    public string Exchange { get; }
 
-    public QuoteCurrencyCode QuoteCurrency { get; }
+    public string QuoteCurrency { get; }
 
     public MonitoringState MonitoringState { get; private set; }
 
-    public SamplingPolicy SamplingPolicy { get; private set; }
+    public int SamplingIntervalSeconds { get; private set; }
 
     public Instant CreatedAt { get; }
 
     public Instant LastChangedAt { get; private set; }
 
-    public static WatchedInstrument Create(
-        WatchedInstrumentId id,
-        InstrumentSymbol symbol,
-        ExchangeCode exchange,
-        QuoteCurrencyCode quoteCurrency,
-        SamplingPolicy samplingPolicy,
+    public static Result<WatchedInstrument> Create(
+        Guid id,
+        string symbol,
+        string exchange,
+        string quoteCurrency,
+        int samplingIntervalSeconds,
         Instant createdAt)
     {
-        ArgumentNullException.ThrowIfNull(id);
-        ArgumentNullException.ThrowIfNull(symbol);
-        ArgumentNullException.ThrowIfNull(exchange);
-        ArgumentNullException.ThrowIfNull(quoteCurrency);
-        EnsureValidSamplingPolicy(samplingPolicy);
+        if (id == Guid.Empty)
+        {
+            return WatchedInstrumentErrors.IdRequired;
+        }
+
+        Result<string> symbolResult = NormalizeSymbol(symbol);
+        if (symbolResult.IsFailure)
+        {
+            return symbolResult.Error;
+        }
+
+        Result<string> exchangeResult = NormalizeExchange(exchange);
+        if (exchangeResult.IsFailure)
+        {
+            return exchangeResult.Error;
+        }
+
+        Result<string> quoteCurrencyResult = NormalizeQuoteCurrency(quoteCurrency);
+        if (quoteCurrencyResult.IsFailure)
+        {
+            return quoteCurrencyResult.Error;
+        }
+
+        if (IsValidSamplingInterval(samplingIntervalSeconds) is false)
+        {
+            return WatchedInstrumentErrors.SamplingIntervalOutOfRange;
+        }
 
         return new WatchedInstrument(
             id,
-            symbol,
-            exchange,
-            quoteCurrency,
-            samplingPolicy,
+            symbolResult.Value,
+            exchangeResult.Value,
+            quoteCurrencyResult.Value,
+            samplingIntervalSeconds,
             createdAt);
     }
 
-    public void StartMonitoring(SamplingPolicy samplingPolicy, Instant changedAt)
+    public Result StartMonitoring(int samplingIntervalSeconds, Instant changedAt)
     {
-        EnsureChangeTimestamp(changedAt);
-        EnsureValidSamplingPolicy(samplingPolicy);
+        Error? failure = ValidateChangeTimestamp(changedAt);
+        if (failure is not null)
+        {
+            return failure;
+        }
+
+        if (IsValidSamplingInterval(samplingIntervalSeconds) is false)
+        {
+            return WatchedInstrumentErrors.SamplingIntervalOutOfRange;
+        }
 
         if (MonitoringState == MonitoringState.Monitored)
         {
-            throw new DomainRuleViolationException(
-                WatchedInstrumentRule.AlreadyMonitored,
-                "The instrument is already being monitored.");
+            return WatchedInstrumentErrors.AlreadyMonitored;
         }
 
-        SamplingPolicy = samplingPolicy;
+        SamplingIntervalSeconds = samplingIntervalSeconds;
         MonitoringState = MonitoringState.Monitored;
         LastChangedAt = changedAt;
+
+        return Result.Success();
     }
 
-    public void StopMonitoring(Instant changedAt)
+    public Result StopMonitoring(Instant changedAt)
     {
-        EnsureChangeTimestamp(changedAt);
+        Error? failure = ValidateChangeTimestamp(changedAt);
+        if (failure is not null)
+        {
+            return failure;
+        }
 
         if (MonitoringState == MonitoringState.Configured)
         {
-            throw new DomainRuleViolationException(
-                WatchedInstrumentRule.NotMonitored,
-                "The instrument is not currently being monitored.");
+            return WatchedInstrumentErrors.NotMonitored;
         }
 
         MonitoringState = MonitoringState.Configured;
         LastChangedAt = changedAt;
+
+        return Result.Success();
     }
 
-    public void ChangeSamplingPolicy(SamplingPolicy samplingPolicy, Instant changedAt)
+    public Result ChangeSamplingInterval(int samplingIntervalSeconds, Instant changedAt)
     {
-        EnsureChangeTimestamp(changedAt);
-        EnsureValidSamplingPolicy(samplingPolicy);
-
-        if (SamplingPolicy == samplingPolicy)
+        Error? failure = ValidateChangeTimestamp(changedAt);
+        if (failure is not null)
         {
-            throw new DomainRuleViolationException(
-                WatchedInstrumentRule.SamplingPolicyUnchanged,
-                "The requested sampling policy is already assigned.");
+            return failure;
         }
 
-        SamplingPolicy = samplingPolicy;
+        if (IsValidSamplingInterval(samplingIntervalSeconds) is false)
+        {
+            return WatchedInstrumentErrors.SamplingIntervalOutOfRange;
+        }
+
+        if (SamplingIntervalSeconds == samplingIntervalSeconds)
+        {
+            return WatchedInstrumentErrors.SamplingIntervalUnchanged;
+        }
+
+        SamplingIntervalSeconds = samplingIntervalSeconds;
         LastChangedAt = changedAt;
+
+        return Result.Success();
     }
 
-    private static void EnsureValidSamplingPolicy(SamplingPolicy samplingPolicy)
+    private static Result<string> NormalizeSymbol(string? symbol)
     {
-        if (Enum.IsDefined(samplingPolicy) is false)
+        if (string.IsNullOrWhiteSpace(symbol))
         {
-            throw new ArgumentOutOfRangeException(nameof(samplingPolicy), samplingPolicy, "Unknown sampling policy.");
+            return WatchedInstrumentErrors.SymbolRequired;
         }
+
+        string normalized = symbol.Trim().ToUpperInvariant();
+
+        if (normalized.Length > SymbolMaximumLength)
+        {
+            return WatchedInstrumentErrors.SymbolExceedsMaximumLength;
+        }
+
+        if (normalized.Any(char.IsWhiteSpace))
+        {
+            return WatchedInstrumentErrors.SymbolContainsWhitespace;
+        }
+
+        return normalized;
     }
 
-    private void EnsureChangeTimestamp(Instant changedAt)
+    private static Result<string> NormalizeExchange(string? exchange)
+    {
+        if (string.IsNullOrWhiteSpace(exchange))
+        {
+            return WatchedInstrumentErrors.ExchangeRequired;
+        }
+
+        string normalized = exchange.Trim().ToUpperInvariant();
+
+        if (normalized.Length > ExchangeMaximumLength)
+        {
+            return WatchedInstrumentErrors.ExchangeExceedsMaximumLength;
+        }
+
+        if (normalized.All(IsAllowedExchangeCharacter) is false)
+        {
+            return WatchedInstrumentErrors.ExchangeInvalidCharacters;
+        }
+
+        return normalized;
+    }
+
+    private static Result<string> NormalizeQuoteCurrency(string? quoteCurrency)
+    {
+        if (string.IsNullOrWhiteSpace(quoteCurrency))
+        {
+            return WatchedInstrumentErrors.QuoteCurrencyRequired;
+        }
+
+        string normalized = quoteCurrency.Trim().ToUpperInvariant();
+
+        if (normalized.Length is < QuoteCurrencyMinimumLength or > QuoteCurrencyMaximumLength
+            || normalized.All(char.IsAsciiLetterOrDigit) is false)
+        {
+            return WatchedInstrumentErrors.QuoteCurrencyInvalidFormat;
+        }
+
+        return normalized;
+    }
+
+    private static bool IsAllowedExchangeCharacter(char character)
+    {
+        return char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_';
+    }
+
+    private static bool IsValidSamplingInterval(int samplingIntervalSeconds)
+    {
+        return samplingIntervalSeconds is >= MinimumSamplingIntervalSeconds
+            and <= MaximumSamplingIntervalSeconds;
+    }
+
+    private Error? ValidateChangeTimestamp(Instant changedAt)
     {
         if (changedAt < LastChangedAt)
         {
-            throw new DomainRuleViolationException(
-                WatchedInstrumentRule.ChangePrecedesLatestChange,
-                "A change cannot be recorded before the instrument's latest change.");
+            return WatchedInstrumentErrors.ChangePrecedesLatestChange;
         }
+
+        return null;
     }
 }

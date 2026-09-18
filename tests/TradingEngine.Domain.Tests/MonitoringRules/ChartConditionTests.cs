@@ -1,4 +1,5 @@
 using TradingEngine.Domain.MonitoringRules;
+using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Domain.Tests.MonitoringRules;
 
@@ -8,14 +9,15 @@ public sealed class ChartConditionTests
     [Test]
     public void Create_WithValidValues_ReturnsCondition()
     {
-        ChartCondition condition = ChartCondition.Create(
+        Result<ChartCondition> result = ChartCondition.Create(
             ChartConditionType.BuyZone,
-            ChartAnalysisIdentifier.From("publish-signal"));
+            ChartAnalysisIdentifier.From("publish-signal").Value);
 
+        Assert.That(result.IsSuccess, Is.True);
         Assert.Multiple(() =>
         {
-            Assert.That(condition.Type, Is.EqualTo(ChartConditionType.BuyZone));
-            Assert.That(condition.ActionId.Value, Is.EqualTo("publish-signal"));
+            Assert.That(result.Value.Type, Is.EqualTo(ChartConditionType.BuyZone));
+            Assert.That(result.Value.ActionId.Value, Is.EqualTo("publish-signal"));
         });
     }
 
@@ -27,11 +29,13 @@ public sealed class ChartConditionTests
     }
 
     [Test]
-    public void Create_WithUndefinedConditionType_ThrowsArgumentOutOfRangeException()
+    public void Create_WithUndefinedConditionType_ReturnsConditionTypeUndefinedError()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => ChartCondition.Create(
-                (ChartConditionType)999,
-                ChartAnalysisIdentifier.From("publish-signal")));
+        Result<ChartCondition> result = ChartCondition.Create(
+            (ChartConditionType)999,
+            ChartAnalysisIdentifier.From("publish-signal").Value);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(ChartAnalysisErrors.ConditionTypeUndefined));
     }
 }

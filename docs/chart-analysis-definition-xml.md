@@ -112,8 +112,8 @@ Before persistence, the Infrastructure adapter must:
 1. Parse with DTD processing prohibited and external resource resolution disabled.
 2. Reject malformed XML and a missing, unexpected or namespace-qualified root element.
 3. Validate the document against the single embedded XSD.
-4. Map the structurally valid document to the Domain model.
-5. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap.
+4. Map the structurally valid document to the Domain model through its `Result`-returning factories.
+5. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap. A failed Domain `Result` is translated into `InvalidDataException` carrying the stable error code; it never surfaces as a successfully deserialized object.
 6. Canonically serialize the validated Domain model and validate the generated document against the same XSD before returning it for persistence.
 
 The XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/chart-analysis-definition.xsd` and is embedded in that assembly for validation.
