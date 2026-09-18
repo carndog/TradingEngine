@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
-    <EmbeddedResource Include="MonitoringRules/Xml/V1/chart-analysis-definition-v1.xsd" />
+    <EmbeddedResource Include="MonitoringRules/Xml/chart-analysis-definition.xsd" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../TradingEngine.Application/TradingEngine.Application.csproj" />

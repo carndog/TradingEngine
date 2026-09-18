@@ -8,9 +8,8 @@ namespace TradingEngine.Infrastructure.MonitoringRules.Xml;
 
 public sealed class ChartAnalysisDefinitionXmlSerializer
 {
-    private const string V1Namespace = "urn:carndog:trading-engine:chart-analysis:v1";
-    private const string V1SchemaResource =
-        "TradingEngine.Infrastructure.MonitoringRules.Xml.V1.chart-analysis-definition-v1.xsd";
+    private const string SchemaResource =
+        "TradingEngine.Infrastructure.MonitoringRules.Xml.chart-analysis-definition.xsd";
 
     private static readonly XmlReaderSettings SafeReaderSettings = new()
     {
@@ -20,22 +19,20 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
 
     private static readonly string[] PriceAttributeNames = ["lower", "level", "upper"];
 
-    private static readonly Lazy<XmlSchemaSet> V1Schemas = new(LoadV1Schemas);
+    private static readonly Lazy<XmlSchemaSet> Schemas = new(LoadSchemas);
 
     public string Serialize(ChartAnalysisDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
 
         XElement root = new(
-            XName.Get("ChartAnalysisDefinition", V1Namespace),
-            new XAttribute("xmlns", V1Namespace),
-            new XAttribute("schemaVersion", "1"),
+            "ChartAnalysisDefinition",
             new XAttribute("priceScale", definition.PriceScale.ToString(CultureInfo.InvariantCulture)));
 
         if (definition.SupportZones.Count > 0)
         {
             root.Add(new XElement(
-                XName.Get("SupportZones", V1Namespace),
+                "SupportZones",
                 OrderZones(definition.SupportZones)
                     .Select(zone => SerializeZone("SupportZone", zone, definition.PriceScale))));
         }
@@ -43,10 +40,13 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         if (definition.ResistanceZones.Count > 0)
         {
             root.Add(new XElement(
-                XName.Get("ResistanceZones", V1Namespace),
+                "ResistanceZones",
                 OrderZones(definition.ResistanceZones)
                     .Select(zone => SerializeZone("ResistanceZone", zone, definition.PriceScale))));
         }
+
+        XDocument document = new(root);
+        ValidateAgainstSchema(document);
 
         return root.ToString(SaveOptions.DisableFormatting);
     }
@@ -59,28 +59,16 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         XElement root = document.Root
             ?? throw new InvalidDataException("The chart-analysis document has no root element.");
 
-        if (root.Name.LocalName != "ChartAnalysisDefinition")
+        if (root.Name != XName.Get("ChartAnalysisDefinition"))
         {
             throw new InvalidDataException(
-                $"Unexpected root element '{root.Name.LocalName}'. Expected 'ChartAnalysisDefinition'.");
-        }
-
-        if (root.Name.NamespaceName != V1Namespace)
-        {
-            throw new UnsupportedChartAnalysisSchemaVersionException(root.Name.NamespaceName);
-        }
-
-        string? schemaVersion = (string?)root.Attribute("schemaVersion");
-
-        if (schemaVersion is not null && schemaVersion != "1")
-        {
-            throw new UnsupportedChartAnalysisSchemaVersionException(root.Name.NamespaceName);
+                $"Unexpected root element '{root.Name}'. Expected 'ChartAnalysisDefinition' with no namespace.");
         }
 
         EnsurePricesWithinDecimalRange(root);
-        ValidateAgainstV1Schema(document);
+        ValidateAgainstSchema(document);
 
-        return MapV1(root);
+        return Map(root);
     }
 
     private static XDocument ParseSafely(string xml)
@@ -91,29 +79,27 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         return XDocument.Load(reader, LoadOptions.None);
     }
 
-    private static void ValidateAgainstV1Schema(XDocument document)
+    private static void ValidateAgainstSchema(XDocument document)
     {
         List<string> failures = [];
 
         document.Validate(
-            V1Schemas.Value,
+            Schemas.Value,
             (_, args) => failures.Add(args.Message),
             true);
 
         if (failures.Count > 0)
         {
             throw new XmlSchemaValidationException(
-                $"The chart-analysis document failed v1 schema validation: {string.Join(" ", failures)}");
+                $"The chart-analysis document failed schema validation: {string.Join(" ", failures)}");
         }
     }
 
     private static void EnsurePricesWithinDecimalRange(XElement root)
     {
-        XNamespace ns = V1Namespace;
-
         IEnumerable<XElement> zones = root
-            .Descendants(ns + "SupportZone")
-            .Concat(root.Descendants(ns + "ResistanceZone"));
+            .Descendants("SupportZone")
+            .Concat(root.Descendants("ResistanceZone"));
 
         foreach (XElement zone in zones)
         {
@@ -144,17 +130,16 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         }
     }
 
-    private static ChartAnalysisDefinition MapV1(XElement root)
+    private static ChartAnalysisDefinition Map(XElement root)
     {
-        XNamespace ns = V1Namespace;
         int priceScale = (int)root.Attribute("priceScale")!;
 
         ChartZone[] supportZones = ReadZones(
-            root.Element(ns + "SupportZones"),
-            ns + "SupportZone");
+            root.Element("SupportZones"),
+            "SupportZone");
         ChartZone[] resistanceZones = ReadZones(
-            root.Element(ns + "ResistanceZones"),
-            ns + "ResistanceZone");
+            root.Element("ResistanceZones"),
+            "ResistanceZone");
 
         return ChartAnalysisDefinition.Create(priceScale, supportZones, resistanceZones);
     }
@@ -180,7 +165,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         decimal upper = ReadPrice(zone, "upper");
 
         ChartCondition[] conditions = zone
-            .Elements(XName.Get("Condition", V1Namespace))
+            .Elements("Condition")
             .Select(ReadCondition)
             .ToArray();
 
@@ -230,10 +215,8 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
 
     private static XElement SerializeZone(string elementName, ChartZone zone, int priceScale)
     {
-        XNamespace ns = V1Namespace;
-
         return new XElement(
-            ns + elementName,
+            elementName,
             new XAttribute("id", zone.Id.Value),
             new XAttribute("lower", FormatPrice(zone.Lower, priceScale)),
             new XAttribute("level", FormatPrice(zone.Level, priceScale)),
@@ -244,7 +227,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
     private static XElement SerializeCondition(ChartCondition condition)
     {
         return new XElement(
-            XName.Get("Condition", V1Namespace),
+            "Condition",
             new XAttribute("type", FormatConditionType(condition.Type)),
             new XAttribute("actionId", condition.ActionId.Value));
     }
@@ -265,12 +248,12 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         return price.ToString($"F{priceScale}", CultureInfo.InvariantCulture);
     }
 
-    private static XmlSchemaSet LoadV1Schemas()
+    private static XmlSchemaSet LoadSchemas()
     {
         using Stream stream = typeof(ChartAnalysisDefinitionXmlSerializer).Assembly
-            .GetManifestResourceStream(V1SchemaResource)
+            .GetManifestResourceStream(SchemaResource)
             ?? throw new InvalidOperationException(
-                $"The embedded schema resource '{V1SchemaResource}' was not found.");
+                $"The embedded schema resource '{SchemaResource}' was not found.");
         using XmlReader reader = XmlReader.Create(stream, SafeReaderSettings);
 
         XmlSchemaSet schemas = new();
