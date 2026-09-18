@@ -247,6 +247,111 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
+    public void Restore_WithConfiguredState_ReturnsRestoredInstrument()
+    {
+        Instant lastChangedAt = CreatedAt + Duration.FromMinutes(10);
+
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            "demo-1",
+            "xtest",
+            "gbp",
+            MonitoringState.Configured,
+            60,
+            CreatedAt,
+            lastChangedAt);
+
+        Assert.That(result.IsSuccess, Is.True);
+        WatchedInstrument instrument = result.Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(instrument.Id, Is.EqualTo(InstrumentId));
+            Assert.That(instrument.Symbol, Is.EqualTo("DEMO-1"));
+            Assert.That(instrument.Exchange, Is.EqualTo("XTEST"));
+            Assert.That(instrument.QuoteCurrency, Is.EqualTo("GBP"));
+            Assert.That(instrument.MonitoringState, Is.EqualTo(MonitoringState.Configured));
+            Assert.That(instrument.SamplingIntervalSeconds, Is.EqualTo(60));
+            Assert.That(instrument.CreatedAt, Is.EqualTo(CreatedAt));
+            Assert.That(instrument.LastChangedAt, Is.EqualTo(lastChangedAt));
+        });
+    }
+
+    [Test]
+    public void Restore_WithMonitoredState_ReturnsRestoredInstrument()
+    {
+        Instant lastChangedAt = CreatedAt + Duration.FromMinutes(10);
+
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            "DEMO-1",
+            "XTEST",
+            "GBP",
+            MonitoringState.Monitored,
+            120,
+            CreatedAt,
+            lastChangedAt);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Value.MonitoringState, Is.EqualTo(MonitoringState.Monitored));
+            Assert.That(result.Value.SamplingIntervalSeconds, Is.EqualTo(120));
+            Assert.That(result.Value.LastChangedAt, Is.EqualTo(lastChangedAt));
+        });
+    }
+
+    [Test]
+    public void Restore_WithUndefinedMonitoringState_ReturnsError()
+    {
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            "DEMO-1",
+            "XTEST",
+            "GBP",
+            (MonitoringState)7,
+            60,
+            CreatedAt,
+            CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.MonitoringStateUndefined));
+    }
+
+    [Test]
+    public void Restore_WithLastChangedBeforeCreated_ReturnsError()
+    {
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            "DEMO-1",
+            "XTEST",
+            "GBP",
+            MonitoringState.Configured,
+            60,
+            CreatedAt,
+            CreatedAt - Duration.FromNanoseconds(1));
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.LastChangedPrecedesCreated));
+    }
+
+    [Test]
+    public void Restore_WithInvalidInstrumentData_ReturnsCreationError()
+    {
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            " ",
+            "XTEST",
+            "GBP",
+            MonitoringState.Configured,
+            60,
+            CreatedAt,
+            CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.SymbolRequired));
+    }
+
+    [Test]
     public void StartMonitoring_WhenConfigured_ChangesStateIntervalAndTimestamp()
     {
         WatchedInstrument instrument = CreateInstrument().Value;
