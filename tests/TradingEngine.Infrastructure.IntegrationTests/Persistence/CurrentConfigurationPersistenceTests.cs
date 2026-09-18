@@ -174,7 +174,8 @@ public sealed class CurrentConfigurationPersistenceTests
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
             orphaned = await store.GetAsync(second.Id, CancellationToken.None);
             persistedDefinitionRows = await context.Database
-                .SqlQuery<int>($"SELECT COUNT(*) FROM ChartAnalysisDefinitions WHERE WatchedInstrumentId = {second.Id}")
+                .SqlQuery<int>(
+                    $"SELECT COUNT(*) AS [Value] FROM ChartAnalysisDefinitions WHERE WatchedInstrumentId = {second.Id}")
                 .SingleAsync();
         }
 

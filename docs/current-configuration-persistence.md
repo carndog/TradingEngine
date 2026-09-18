@@ -69,7 +69,7 @@ dotnet ef database update --project src/TradingEngine.Infrastructure --startup-p
 dotnet ef migrations bundle --project src/TradingEngine.Infrastructure --startup-project src/TradingEngine.Infrastructure --output efbundle.exe
 ```
 
-The documented command produces a single-file, framework-dependent bundle; run it against a target server with `efbundle.exe --connection "<connection string>"`. A self-contained bundle additionally requires `--self-contained` and an appropriate target runtime (for example `--runtime win-x64`).
+The documented command produces a single-file, framework-dependent bundle; run it against a target server with `efbundle.exe --connection "<connection string>"`. A self-contained bundle additionally requires `--self-contained` and an appropriate target runtime (for example `--target-runtime win-x64`).
 
 ## Testing
 
