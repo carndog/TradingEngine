@@ -21,6 +21,7 @@ public sealed class RegisterWatchedInstrumentHandler
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(command.Definition);
 
         Instant occurredAt = _clock.GetCurrentInstant();
         Result<WatchedInstrument> created = WatchedInstrument.Create(
@@ -36,7 +37,14 @@ public sealed class RegisterWatchedInstrumentHandler
             return created;
         }
 
-        await _store.AddAsync(created.Value, cancellationToken);
+        Result stored = await _store.AddAsync(
+            new WatchedInstrumentConfiguration(created.Value, command.Definition),
+            cancellationToken);
+
+        if (stored.IsFailure)
+        {
+            return stored.Error;
+        }
 
         return created;
     }

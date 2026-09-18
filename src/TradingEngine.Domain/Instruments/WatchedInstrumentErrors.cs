@@ -59,4 +59,24 @@ public static class WatchedInstrumentErrors
     public static readonly Error ChangePrecedesLatestChange = Error.Conflict(
         "watched_instrument.change_precedes_latest_change",
         "A change cannot be recorded before the instrument's latest change.");
+
+    public static readonly Error MonitoringStateUndefined = Error.Validation(
+        "watched_instrument.monitoring_state_undefined",
+        "The monitoring state is not a defined value.");
+
+    public static readonly Error LastChangedPrecedesCreated = Error.Validation(
+        "watched_instrument.last_changed_precedes_created",
+        "The last-changed timestamp cannot precede the creation timestamp.");
+
+    public static readonly Error DuplicateId = Error.Conflict(
+        "watched_instrument.duplicate_id",
+        "A watched instrument with the same identifier already exists.");
+
+    public static readonly Error DuplicateBusinessKey = Error.Conflict(
+        "watched_instrument.duplicate_business_key",
+        "A watched instrument with the same exchange, symbol and quote currency already exists.");
+
+    public static readonly Error ConfigurationNotFound = Error.NotFound(
+        "watched_instrument.configuration_not_found",
+        "No configuration exists for the requested watched instrument.");
 }

@@ -1,16 +1,38 @@
 using TradingEngine.Application.Ports;
-using TradingEngine.Domain.Instruments;
+using TradingEngine.Application.WatchedInstruments;
+using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Application.Tests.WatchedInstruments.Register;
 
 internal sealed class CapturingWatchedInstrumentStore : IWatchedInstrumentStore
 {
-    public WatchedInstrument? AddedInstrument { get; private set; }
+    private readonly Result _addResult;
 
-    public Task AddAsync(WatchedInstrument instrument, CancellationToken cancellationToken)
+    public CapturingWatchedInstrumentStore()
+        : this(Result.Success())
+    {
+    }
+
+    public CapturingWatchedInstrumentStore(Result addResult)
+    {
+        _addResult = addResult;
+    }
+
+    public WatchedInstrumentConfiguration? AddedConfiguration { get; private set; }
+
+    public Task<Result> AddAsync(
+        WatchedInstrumentConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        AddedInstrument = instrument;
-        return Task.CompletedTask;
+        AddedConfiguration = configuration;
+        return Task.FromResult(_addResult);
+    }
+
+    public Task<Result<WatchedInstrumentConfiguration>> GetAsync(
+        Guid instrumentId,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
     }
 }

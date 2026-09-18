@@ -28,3 +28,7 @@ secrets.json
 *.nupkg
 *.snupkg
 *.log
+
+## EF Core migration bundles
+efbundle
+efbundle.exe

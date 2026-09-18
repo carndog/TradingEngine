@@ -91,6 +91,45 @@ public sealed class WatchedInstrument
             createdAt);
     }
 
+    public static Result<WatchedInstrument> Restore(
+        Guid id,
+        string? symbol,
+        string? exchange,
+        string? quoteCurrency,
+        MonitoringState monitoringState,
+        int samplingIntervalSeconds,
+        Instant createdAt,
+        Instant lastChangedAt)
+    {
+        Result<WatchedInstrument> created = Create(
+            id,
+            symbol,
+            exchange,
+            quoteCurrency,
+            samplingIntervalSeconds,
+            createdAt);
+        if (created.IsFailure)
+        {
+            return created;
+        }
+
+        if (Enum.IsDefined(monitoringState) is false)
+        {
+            return WatchedInstrumentErrors.MonitoringStateUndefined;
+        }
+
+        if (lastChangedAt < createdAt)
+        {
+            return WatchedInstrumentErrors.LastChangedPrecedesCreated;
+        }
+
+        WatchedInstrument instrument = created.Value;
+        instrument.MonitoringState = monitoringState;
+        instrument.LastChangedAt = lastChangedAt;
+
+        return instrument;
+    }
+
     public Result StartMonitoring(int samplingIntervalSeconds, Instant changedAt)
     {
         Error? failure = ValidateChangeTimestamp(changedAt);
