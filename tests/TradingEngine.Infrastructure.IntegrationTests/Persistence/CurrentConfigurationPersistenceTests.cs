@@ -245,7 +245,7 @@ public sealed class CurrentConfigurationPersistenceTests
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
 
-        Assert.ThrowsAsync<OperationCanceledException>(
+        Assert.CatchAsync<OperationCanceledException>(
             () => store.AddAsync(
                 new WatchedInstrumentConfiguration(instrument, CreateDefinition()),
                 cancellation.Token));
@@ -266,8 +266,10 @@ public sealed class CurrentConfigurationPersistenceTests
         await using TradingEngineDbContext context = new(options);
         SqlServerWatchedInstrumentStore store = new(context, _serializer);
 
-        Assert.ThrowsAsync<SqlException>(
+        InvalidOperationException? exception = Assert.ThrowsAsync<InvalidOperationException>(
             () => store.GetAsync(UnavailableDatabaseInstrumentId, CancellationToken.None));
+
+        Assert.That(exception?.InnerException, Is.TypeOf<SqlException>());
     }
 
     private TradingEngineDbContext CreateContext()
