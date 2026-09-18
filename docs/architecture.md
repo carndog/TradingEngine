@@ -34,11 +34,24 @@ Contracts are transport-facing types rather than domain types. Domain and Applic
 
 ## Domain conventions
 
-- Stable identifiers and constrained codes are validated value objects.
+- Aggregates expose ordinary .NET primitives rather than per-field wrapper types.
 - Absolute timestamps are NodaTime `Instant` values.
 - Domain methods never read a system clock.
 - State transitions reject invalid or meaningless changes and reject timestamps earlier than the latest recorded change.
-- Sampling policy names express intent only. Provider-specific intervals and rate-limit mappings belong outside Domain.
+- Expected validation and state-transition rejections return `Result` outcomes rather than throwing.
+- Sampling intervals are plain seconds. Provider-specific rate-limit mappings belong outside Domain.
+
+## Expected failures and Results
+
+`TradingEngine.Domain.Results` provides a small package-free outcome model used by Domain and Application: `Result`, `Result<T>`, `Error` and `ErrorType`. No Result library or mediator package is introduced.
+
+- Return a failed `Result` for expected outcomes: invalid user or domain data, invalid state transitions, duplicate or conflicting changes and missing expected resources.
+- Throw for unexpected outcomes: SQL, network and runtime failures, `OperationCanceledException`, corrupt persisted XML or database state, missing configuration, and programming defects such as null arguments or impossible internal states.
+- A failed `Result` carries exactly one `Error`. A successful `Result<T>` exposes a non-null `Value`; reading `Value` on a failure is programmer misuse and throws `InvalidOperationException`.
+- An `Error` has a stable machine-readable `Code`, a public-safe `Description` and an `ErrorType` classification. Codes use lowercase dotted snake_case segments, for example `watched_instrument.symbol_required` or `chart_analysis.duplicate_zone_id`.
+- `ErrorType` currently supports `Validation`, `Conflict` and `NotFound`. A later API adapter will map them to Problem Details: `Validation` to 400, `Conflict` to 409 and `NotFound` to 404. Unexpected failures and cancellation remain exception-based and are never converted into Results.
+- Cohesive catalogues such as `WatchedInstrumentErrors` and `ChartAnalysisErrors` hold the complete `Error` definitions for their area. Per-type rule enums are not used.
+- At the Infrastructure XML boundary, a failed Domain `Result` during deserialization is translated into `InvalidDataException` carrying the stable error code. Malformed or corrupt persistence XML is never converted into an Application validation `Result`, because clients do not submit persistence XML.
 
 ## Monitoring-rule definitions
 
@@ -53,10 +66,22 @@ See [Chart-analysis definition XML](chart-analysis-definition-xml.md) for the ca
 
 ## Instrument identification
 
-- Domain currently identifies an instrument using its symbol, exchange and quote currency (`InstrumentSymbol`, `ExchangeCode` and `QuoteCurrencyCode`).
-- `ExchangeCode` describes the listing exchange for an exchange-listed instrument. It does not describe the broker or provider, and eToro is never represented as the exchange.
+`WatchedInstrument` is a straightforward aggregate with ordinary properties:
+
+| Property | Meaning |
+| --- | --- |
+| `Id` | Stable internal `Guid` identity. Must not be `Guid.Empty`. |
+| `Symbol` | Instrument ticker or symbol. Trimmed, uppercased, at most 64 characters, no whitespace. |
+| `Exchange` | Exchange or venue code where the instrument is quoted. Required, trimmed, uppercased, at most 20 characters; ASCII letters, digits, periods, hyphens and underscores. |
+| `QuoteCurrency` | Currency the instrument is quoted in. Required, trimmed, uppercased, 3 to 10 ASCII letters or digits, covering fiat codes such as `GBP` and `USD` and crypto quote codes such as `USDT` and `USDC`. |
+| `MonitoringState` | `Configured` or `Monitored`. Drives the start/stop monitoring transitions. |
+| `SamplingIntervalSeconds` | Price-sampling cadence in seconds, from 1 through 3600 inclusive. |
+| `CreatedAt` | `Instant` the instrument was registered. |
+| `LastChangedAt` | `Instant` of the latest recorded change. Change timestamps earlier than this are rejected. |
+
+- `Id` is the stable internal identity. The future persistence business key is `Exchange` + `Symbol` + `QuoteCurrency`.
+- Conceptual examples: a stock as `LLOY` / `XLON` / `GBP`; crypto as `BTC` / `ETORO` / `USD` or `XRP` / `ETORO` / `USD`.
 - Broker- and provider-specific instrument identifiers are external mappings owned by outbound adapters and Infrastructure, not by Domain.
-- Crypto instruments may not have one definitive listing exchange. Exchange optionality and asset classification will be addressed when crypto support is implemented.
 - Supported exchanges and currencies may initially be controlled by Application configuration or reference data rather than dedicated persistence.
 
 ## Enforcement

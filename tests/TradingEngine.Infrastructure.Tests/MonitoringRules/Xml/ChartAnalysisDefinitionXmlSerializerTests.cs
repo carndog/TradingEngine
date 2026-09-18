@@ -1,7 +1,6 @@
 using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Schema;
-using TradingEngine.Domain;
 using TradingEngine.Domain.MonitoringRules;
 using TradingEngine.Infrastructure.MonitoringRules.Xml;
 
@@ -50,7 +49,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
         ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
             4,
             [CreateSupportZone("support-b", 50m, 55m, 60m), CreateSupportZone("support-a", 90m, 95m, 99m)],
-            [CreateResistanceZone("resistance-a", 120m, 125m, 130m)]);
+            [CreateResistanceZone("resistance-a", 120m, 125m, 130m)]).Value;
 
         string xml = _serializer.Serialize(definition);
 
@@ -70,7 +69,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
         ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
             4,
             [CreateSupportZone("support-a", 95m, 100m, 105m)],
-            [CreateResistanceZone("resistance-a", 120m, 125m, 130m)]);
+            [CreateResistanceZone("resistance-a", 120m, 125m, 130m)]).Value;
 
         string xml = _serializer.Serialize(definition);
         XDocument document = XDocument.Parse(xml);
@@ -86,7 +85,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
         ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
             0,
             [CreateSupportZone("support-a", 1m, 2m, decimal.MaxValue)],
-            []);
+            []).Value;
 
         string xml = _serializer.Serialize(definition);
         ChartAnalysisDefinition reparsed = _serializer.Deserialize(xml);
@@ -151,14 +150,25 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     }
 
     [Test]
-    public void Deserialize_WithInvertedZoneBoundaries_ThrowsDomainRuleViolationException()
+    public void Deserialize_WithInvertedZoneBoundaries_ThrowsInvalidDataException()
     {
         string xml = ReadExample("invalid-boundaries.xml");
 
-        DomainRuleViolationException? exception = Assert.Throws<DomainRuleViolationException>(
+        InvalidDataException? exception = Assert.Throws<InvalidDataException>(
             () => _serializer.Deserialize(xml));
 
-        Assert.That(exception!.Rule, Is.EqualTo(ChartZoneRule.InvalidBoundaryOrder));
+        Assert.That(exception!.Message, Does.Contain("chart_analysis.zone_invalid_boundary_order"));
+    }
+
+    [Test]
+    public void Deserialize_WithSemanticallyInvalidDocument_ThrowsInvalidDataExceptionWithErrorCode()
+    {
+        string xml = "<ChartAnalysisDefinition priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"100.0000\" upper=\"105.0000\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone><SupportZone id=\"support-a\" lower=\"110.0000\" level=\"115.0000\" upper=\"120.0000\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
+
+        InvalidDataException? exception = Assert.Throws<InvalidDataException>(
+            () => _serializer.Deserialize(xml));
+
+        Assert.That(exception!.Message, Does.Contain("chart_analysis.duplicate_zone_id"));
     }
 
     [Test]
@@ -180,24 +190,24 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     private static ChartZone CreateSupportZone(string id, decimal lower, decimal level, decimal upper)
     {
         return ChartZone.Create(
-            ChartAnalysisIdentifier.From(id),
+            ChartAnalysisIdentifier.From(id).Value,
             lower,
             level,
             upper,
             [
-                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal")),
-                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal"))
-            ]);
+                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal").Value).Value,
+                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal").Value).Value
+            ]).Value;
     }
 
     private static ChartZone CreateResistanceZone(string id, decimal lower, decimal level, decimal upper)
     {
         return ChartZone.Create(
-            ChartAnalysisIdentifier.From(id),
+            ChartAnalysisIdentifier.From(id).Value,
             lower,
             level,
             upper,
-            [ChartCondition.Create(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal"))]);
+            [ChartCondition.Create(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal").Value).Value]).Value;
     }
 
     private static string ReadExample(string fileName)

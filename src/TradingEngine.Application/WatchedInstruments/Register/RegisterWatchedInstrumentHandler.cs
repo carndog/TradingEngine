@@ -1,6 +1,7 @@
 using NodaTime;
 using TradingEngine.Application.Ports;
 using TradingEngine.Domain.Instruments;
+using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Application.WatchedInstruments.Register;
 
@@ -15,23 +16,28 @@ public sealed class RegisterWatchedInstrumentHandler
         _store = store ?? throw new ArgumentNullException(nameof(store));
     }
 
-    public async Task<WatchedInstrument> HandleAsync(
+    public async Task<Result<WatchedInstrument>> HandleAsync(
         RegisterWatchedInstrument command,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
 
         Instant occurredAt = _clock.GetCurrentInstant();
-        WatchedInstrument instrument = WatchedInstrument.Create(
+        Result<WatchedInstrument> created = WatchedInstrument.Create(
             command.Id,
             command.Symbol,
             command.Exchange,
             command.QuoteCurrency,
-            command.SamplingPolicy,
+            command.SamplingIntervalSeconds,
             occurredAt);
 
-        await _store.AddAsync(instrument, cancellationToken);
+        if (created.IsFailure)
+        {
+            return created;
+        }
 
-        return instrument;
+        await _store.AddAsync(created.Value, cancellationToken);
+
+        return created;
     }
 }

@@ -34,7 +34,7 @@ Each relational monitoring-rule revision owns one `ChartAnalysisDefinition` docu
 | Stable revision identity and business revision number | Relational columns |
 | `Draft`, `Effective` and `Superseded` lifecycle | Relational columns |
 | Effective interval, creation metadata and change reason | Relational columns |
-| Instrument, exchange, currency, monitoring state and sampling policy | Relational columns |
+| Instrument, exchange, currency, monitoring state and sampling interval | Relational columns |
 | Support and resistance zones and their generic conditions | `ChartAnalysisDefinition` XML |
 | Actual price observations and resulting signals | Separate relational records |
 | SQL optimistic concurrency token | Relational `rowversion` |
@@ -112,8 +112,8 @@ Before persistence, the Infrastructure adapter must:
 1. Parse with DTD processing prohibited and external resource resolution disabled.
 2. Reject malformed XML and a missing, unexpected or namespace-qualified root element.
 3. Validate the document against the single embedded XSD.
-4. Map the structurally valid document to the Domain model.
-5. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap.
+4. Map the structurally valid document to the Domain model through its `Result`-returning factories.
+5. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap. A failed Domain `Result` is translated into `InvalidDataException` carrying the stable error code; it never surfaces as a successfully deserialized object.
 6. Canonically serialize the validated Domain model and validate the generated document against the same XSD before returning it for persistence.
 
 The XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/chart-analysis-definition.xsd` and is embedded in that assembly for validation.
@@ -130,7 +130,7 @@ The `DefinitionXml` column of the monitoring-rule revision table is intended to 
 
 EF Core maps a `string` property to the Azure SQL `xml` type via `HasColumnType("xml")`; the adapter validates and canonically serializes the document before it reaches the column, so no SQL Server XML schema collection is required. The EF Core mapping, `TradingEngineDbContext` and migrations belong to issue #32 and are not implemented here. Relational concerns such as revision identity, lifecycle, effective boundaries, creation metadata and the `rowversion` concurrency token remain in their own columns, and effective or superseded monitoring-rule revisions remain immutable.
 
-Future indicators remain descriptive chart-analysis inputs. Dynamic stop-loss or take-profit changes depend on current evaluation, risk and execution state and therefore belong in later signal, risk and order workflows rather than being written repeatedly into this immutable XML. Sampling cadence remains a relational sampling-policy concern and can change without an XML schema change.
+Future indicators remain descriptive chart-analysis inputs. Dynamic stop-loss or take-profit changes depend on current evaluation, risk and execution state and therefore belong in later signal, risk and order workflows rather than being written repeatedly into this immutable XML. Sampling cadence in seconds remains a relational concern and can change without an XML schema change.
 
 ## Scope
 

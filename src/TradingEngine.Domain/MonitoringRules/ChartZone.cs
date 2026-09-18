@@ -1,3 +1,5 @@
+using TradingEngine.Domain.Results;
+
 namespace TradingEngine.Domain.MonitoringRules;
 
 public sealed record ChartZone
@@ -26,7 +28,7 @@ public sealed record ChartZone
 
     public IReadOnlyList<ChartCondition> Conditions { get; }
 
-    public static ChartZone Create(
+    public static Result<ChartZone> Create(
         ChartAnalysisIdentifier id,
         decimal lower,
         decimal level,
@@ -38,23 +40,17 @@ public sealed record ChartZone
 
         if (lower <= 0m || level <= 0m || upper <= 0m)
         {
-            throw new DomainRuleViolationException(
-                ChartZoneRule.NonPositivePrice,
-                "Zone prices must be greater than zero.");
+            return ChartAnalysisErrors.ZoneNonPositivePrice;
         }
 
         if ((lower < level && level < upper) is false)
         {
-            throw new DomainRuleViolationException(
-                ChartZoneRule.InvalidBoundaryOrder,
-                "A zone must satisfy lower < level < upper.");
+            return ChartAnalysisErrors.ZoneInvalidBoundaryOrder;
         }
 
         if (conditions.Count == 0)
         {
-            throw new DomainRuleViolationException(
-                ChartZoneRule.MissingConditions,
-                "A zone requires at least one condition.");
+            return ChartAnalysisErrors.ZoneMissingConditions;
         }
 
         foreach (ChartCondition condition in conditions)
