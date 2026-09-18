@@ -273,6 +273,11 @@ public sealed class WatchedInstrument
 
     private Error? ValidateChangeTimestamp(Instant changedAt)
     {
-        return changedAt < LastChangedAt ? WatchedInstrumentErrors.ChangePrecedesLatestChange : null;
+        if (changedAt < LastChangedAt)
+        {
+            return WatchedInstrumentErrors.ChangePrecedesLatestChange;
+        }
+
+        return null;
     }
 }

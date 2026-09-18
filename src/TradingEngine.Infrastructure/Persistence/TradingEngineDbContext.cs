@@ -9,9 +9,15 @@ public sealed class TradingEngineDbContext : DbContext
     {
     }
 
-    internal DbSet<WatchedInstrumentRow> WatchedInstruments => Set<WatchedInstrumentRow>();
+    internal DbSet<WatchedInstrumentRow> WatchedInstruments
+    {
+        get { return Set<WatchedInstrumentRow>(); }
+    }
 
-    internal DbSet<ChartAnalysisDefinitionRow> ChartAnalysisDefinitions => Set<ChartAnalysisDefinitionRow>();
+    internal DbSet<ChartAnalysisDefinitionRow> ChartAnalysisDefinitions
+    {
+        get { return Set<ChartAnalysisDefinitionRow>(); }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -28,7 +28,7 @@ A unique index `UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency` on `(Exchan
 | `WatchedInstrumentId` | `uniqueidentifier` | Primary key and foreign key to `WatchedInstruments.Id` (cascade delete). |
 | `DefinitionXml` | `xml` | Required; the canonical XML produced by `ChartAnalysisDefinitionXmlSerializer`. |
 
-The shared key means each instrument has exactly one current chart-analysis definition, and the definition row cannot exist without its instrument.
+The non-nullable shared primary key and foreign key guarantee that every definition row belongs to exactly one instrument, and the primary key guarantees at most one definition per instrument. A relational foreign key cannot require every principal row to have a dependent row, so the schema alone does not prevent an instrument without a definition. The application store closes that gap by inserting both rows in a single atomic `SaveChangesAsync`, so a complete configuration is the only state the store can write.
 
 ## Timestamps
 
@@ -69,7 +69,7 @@ dotnet ef database update --project src/TradingEngine.Infrastructure --startup-p
 dotnet ef migrations bundle --project src/TradingEngine.Infrastructure --startup-project src/TradingEngine.Infrastructure --output efbundle.exe
 ```
 
-The generated bundle is a self-contained deployment artefact; run it against a target server with `efbundle.exe --connection "<connection string>"`.
+The documented command produces a single-file, framework-dependent bundle; run it against a target server with `efbundle.exe --connection "<connection string>"`. A self-contained bundle additionally requires `--self-contained` and an appropriate target runtime (for example `--runtime win-x64`).
 
 ## Testing
 
@@ -79,4 +79,4 @@ The generated bundle is a self-contained deployment artefact; run it against a t
 dotnet test tests/TradingEngine.Infrastructure.IntegrationTests --configuration Release
 ```
 
-A Docker engine must be running for these tests; they are skipped from environments without one only in the sense that they will fail fast when the container cannot start.
+The SQL integration tests require Docker. They fail when Docker is unavailable; they are not silently skipped.
