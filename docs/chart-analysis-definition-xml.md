@@ -1,14 +1,14 @@
 # Chart-analysis definition XML
 
-**Status:** v1 contract implemented by `ChartAnalysisDefinitionXmlSerializer` in `TradingEngine.Infrastructure`
+**Status:** Canonical contract implemented by `ChartAnalysisDefinitionXmlSerializer` in `TradingEngine.Infrastructure`
 
-**Related issue:** [#3](https://github.com/carndog/TradingEngine/issues/3)
+**Related issues:** [#3](https://github.com/carndog/TradingEngine/issues/3), [#55](https://github.com/carndog/TradingEngine/issues/55)
 
 ## Purpose
 
 `ChartAnalysisDefinition` is the canonical XML persistence format for the variable chart-analysis definition held by a monitoring-rule revision. It describes configured chart annotations and the generic conditions to observe. It does not contain observed prices, generated signals, trading strategy, risk decisions or execution state.
 
-The name is deliberately concerned with chart analysis rather than transport or trading. Later schema versions may represent other generic analytical inputs, such as moving averages or volatility bands, without changing the role of the document.
+The name is deliberately concerned with chart analysis rather than transport or trading. The document may later represent other generic analytical inputs, such as moving averages or volatility bands, without changing its role.
 
 ## Architectural boundary
 
@@ -27,7 +27,7 @@ An XML import capability may be added separately. Imported XML must be parsed se
 
 ## Relationship to the revision timeline
 
-Each relational monitoring-rule revision owns one `ChartAnalysisDefinition` document. The effective timeline selects the applicable relational revision for an `Instant`; its XML is then deserialized using the schema version declared by the document.
+Each relational monitoring-rule revision owns one `ChartAnalysisDefinition` document. The effective timeline selects the applicable relational revision for an `Instant`; its XML is then deserialized by the Infrastructure adapter into the Domain model.
 
 | Concern | Representation |
 | --- | --- |
@@ -41,15 +41,12 @@ Each relational monitoring-rule revision owns one `ChartAnalysisDefinition` docu
 
 An effective or superseded revision is immutable. A change creates a new draft revision rather than rewriting the historical XML.
 
-## Version 1 document
+## Canonical document
 
-The v1 namespace is `urn:carndog:trading-engine:chart-analysis:v1`. The root `schemaVersion` must also be `1`; the namespace and attribute must agree.
+The document has no XML namespace and carries no schema-version attribute. The root element is `ChartAnalysisDefinition` with a required `priceScale` attribute.
 
 ```xml
-<ChartAnalysisDefinition
-    xmlns="urn:carndog:trading-engine:chart-analysis:v1"
-    schemaVersion="1"
-    priceScale="4">
+<ChartAnalysisDefinition priceScale="4">
   <SupportZones>
     <SupportZone id="support-a" lower="95.0000" level="100.0000" upper="105.0000">
       <Condition type="buy-zone" actionId="publish-signal" />
@@ -91,7 +88,7 @@ Conditions describe generic chart events. They do not decide position size, orde
 
 Equality with a boundary remains within the zone. A first observation establishes state and does not produce a crossing condition. Later evaluation work will own deduplication and the durable record of each observation and decision.
 
-Each zone has a stable `id` so a resulting signal can identify the chart feature that produced it. Each condition has a stable `actionId` resolved by an application action registry. The only public v1 example action is `publish-signal`; strategy-specific or execution-specific actions and parameters remain private.
+Each zone has a stable `id` so a resulting signal can identify the chart feature that produced it. Each condition has a stable `actionId` resolved by an application action registry. The only public example action is `publish-signal`; strategy-specific or execution-specific actions and parameters remain private.
 
 A support zone must contain one `buy-zone` condition followed by one `support-loss` condition. A resistance zone must contain one `breakout` condition. Conditions cannot be duplicated or placed under the wrong zone type.
 
@@ -113,22 +110,19 @@ Consumers must compare the parsed meaning rather than depending on attribute ord
 Before persistence, the Infrastructure adapter must:
 
 1. Parse with DTD processing prohibited and external resource resolution disabled.
-2. Read the root namespace and `schemaVersion`.
-3. Reject malformed XML, a mismatched namespace/version pair or an unsupported version.
-4. Validate against the embedded XSD for that version.
-5. Map to the version-specific XML DTO and then the Domain model.
-6. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap.
-7. Canonically serialize the validated Domain model.
+2. Reject malformed XML and a missing, unexpected or namespace-qualified root element.
+3. Validate the document against the single embedded XSD.
+4. Map the structurally valid document to the Domain model.
+5. Apply semantic validation, including price scale, boundary ordering, condition placement, uniqueness and zone overlap.
+6. Canonically serialize the validated Domain model and validate the generated document against the same XSD before returning it for persistence.
 
-The v1 XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/V1/chart-analysis-definition-v1.xsd` and is embedded in that assembly for validation.
+The XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infrastructure/MonitoringRules/Xml/chart-analysis-definition.xsd` and is embedded in that assembly for validation.
 
-## Schema evolution
+## Schema versioning
 
-`ChartAnalysisDefinitionXmlSerializer` dispatches deserialization on the document's namespace and `schemaVersion` pair. Each supported version has a dedicated embedded XSD and a version-specific reader that maps the document to the current Domain model. A namespace/version pair with no registered reader is rejected with `UnsupportedChartAnalysisSchemaVersionException` before persistence.
+The contract is deliberately unversioned. No production or Azure SQL data exists, so no XML migration or backward reader is required. If a real compatibility requirement arises after persisted releases exist, schema versioning will be introduced from evidence at that point.
 
-Introducing a new schema version means adding a new `vN` namespace, XSD and reader while retaining every previous reader. Supported historical readers remain available so an old revision can be evaluated without altering its stored document.
-
-When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision using the latest schema version. It never upgrades the XML held by an effective or superseded revision in place. Changing only the XML schema therefore never permits a historical rule definition to be overwritten.
+When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision. It never rewrites the XML held by an effective or superseded revision in place.
 
 ## Azure SQL persistence
 
@@ -138,9 +132,9 @@ EF Core maps a `string` property to the Azure SQL `xml` type via `HasColumnType(
 
 Future indicators remain descriptive chart-analysis inputs. Dynamic stop-loss or take-profit changes depend on current evaluation, risk and execution state and therefore belong in later signal, risk and order workflows rather than being written repeatedly into this immutable XML. Sampling cadence remains a relational sampling-policy concern and can change without an XML schema change.
 
-## Version 1 scope
+## Scope
 
-Version 1 deliberately contains only:
+The document deliberately contains only:
 
 - Support and resistance zones.
 - `buy-zone`, `support-loss` and `breakout` conditions.

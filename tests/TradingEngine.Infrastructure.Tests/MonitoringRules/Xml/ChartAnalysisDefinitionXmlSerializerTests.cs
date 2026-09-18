@@ -1,4 +1,5 @@
 using System.Xml;
+using System.Xml.Linq;
 using System.Xml.Schema;
 using TradingEngine.Domain;
 using TradingEngine.Domain.MonitoringRules;
@@ -55,12 +56,28 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(xml, Does.StartWith("<ChartAnalysisDefinition xmlns=\"urn:carndog:trading-engine:chart-analysis:v1\" schemaVersion=\"1\" priceScale=\"4\">"));
+            Assert.That(xml, Does.StartWith("<ChartAnalysisDefinition priceScale=\"4\">"));
             Assert.That(xml.IndexOf("support-b", StringComparison.Ordinal), Is.LessThan(xml.IndexOf("support-a", StringComparison.Ordinal)));
             Assert.That(xml.IndexOf("SupportZones", StringComparison.Ordinal), Is.LessThan(xml.IndexOf("ResistanceZones", StringComparison.Ordinal)));
             Assert.That(xml, Does.Contain("lower=\"50.0000\""));
             Assert.That(xml, Does.Not.Contain("<?xml"));
         });
+    }
+
+    [Test]
+    public void Serialize_WithValidDefinition_GeneratesXmlValidatingAgainstEmbeddedSchema()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
+            4,
+            [CreateSupportZone("support-a", 95m, 100m, 105m)],
+            [CreateResistanceZone("resistance-a", 120m, 125m, 130m)]);
+
+        string xml = _serializer.Serialize(definition);
+        XDocument document = XDocument.Parse(xml);
+        List<string> failures = [];
+        document.Validate(LoadEmbeddedSchemas(), (_, args) => failures.Add(args.Message), true);
+
+        Assert.That(failures, Is.Empty);
     }
 
     [Test]
@@ -85,7 +102,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     [Test]
     public void Deserialize_WithPriceOutsideDecimalRange_ThrowsInvalidDataException()
     {
-        string xml = "<ChartAnalysisDefinition xmlns=\"urn:carndog:trading-engine:chart-analysis:v1\" schemaVersion=\"1\" priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"100.0000\" upper=\"79228162514264337593543950336\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
+        string xml = "<ChartAnalysisDefinition priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"100.0000\" upper=\"79228162514264337593543950336\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
 
         InvalidDataException? exception = Assert.Throws<InvalidDataException>(
             () => _serializer.Deserialize(xml));
@@ -104,19 +121,33 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     }
 
     [Test]
-    public void Deserialize_WithUnsupportedSchemaVersion_ThrowsUnsupportedChartAnalysisSchemaVersionException()
+    public void Deserialize_WithNamespaceQualifiedDocument_ThrowsInvalidDataException()
     {
-        string xml = ReadExample("invalid-unsupported-version.xml");
+        string xml = "<ChartAnalysisDefinition xmlns=\"urn:carndog:trading-engine:chart-analysis:v1\" priceScale=\"4\" />";
 
-        Assert.Throws<UnsupportedChartAnalysisSchemaVersionException>(() => _serializer.Deserialize(xml));
+        Assert.Throws<InvalidDataException>(() => _serializer.Deserialize(xml));
     }
 
     [Test]
-    public void Deserialize_WithUnsupportedNamespace_ThrowsUnsupportedChartAnalysisSchemaVersionException()
+    public void Deserialize_WithSchemaVersionAttribute_ThrowsXmlSchemaValidationException()
     {
-        string xml = "<ChartAnalysisDefinition xmlns=\"urn:carndog:trading-engine:chart-analysis:v9\" schemaVersion=\"9\" priceScale=\"4\" />";
+        string xml = "<ChartAnalysisDefinition schemaVersion=\"1\" priceScale=\"4\"><ResistanceZones><ResistanceZone id=\"resistance-a\" lower=\"120.0000\" level=\"125.0000\" upper=\"130.0000\"><Condition type=\"breakout\" actionId=\"publish-signal\" /></ResistanceZone></ResistanceZones></ChartAnalysisDefinition>";
 
-        Assert.Throws<UnsupportedChartAnalysisSchemaVersionException>(() => _serializer.Deserialize(xml));
+        Assert.Throws<XmlSchemaValidationException>(() => _serializer.Deserialize(xml));
+    }
+
+    [Test]
+    public void Deserialize_WithDocumentTypeDefinition_ThrowsXmlException()
+    {
+        string xml = "<!DOCTYPE ChartAnalysisDefinition [<!ENTITY external SYSTEM \"file:///c:/windows/win.ini\">]><ChartAnalysisDefinition priceScale=\"4\" />";
+
+        Assert.Throws<XmlException>(() => _serializer.Deserialize(xml));
+    }
+
+    [Test]
+    public void Deserialize_WithoutRootElement_ThrowsXmlException()
+    {
+        Assert.Throws<XmlException>(() => _serializer.Deserialize("<?xml version=\"1.0\"?>"));
     }
 
     [Test]
@@ -133,7 +164,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     [Test]
     public void Deserialize_WithSchemaViolation_ThrowsXmlSchemaValidationException()
     {
-        string xml = "<ChartAnalysisDefinition xmlns=\"urn:carndog:trading-engine:chart-analysis:v1\" schemaVersion=\"1\" priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"100.0000\" upper=\"105.0000\"><Condition type=\"unknown\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
+        string xml = "<ChartAnalysisDefinition priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"100.0000\" upper=\"105.0000\"><Condition type=\"unknown\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
 
         Assert.Throws<XmlSchemaValidationException>(() => _serializer.Deserialize(xml));
     }
@@ -141,7 +172,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     [Test]
     public void Deserialize_WithUnexpectedRootElement_ThrowsInvalidDataException()
     {
-        string xml = "<Other xmlns=\"urn:carndog:trading-engine:chart-analysis:v1\" />";
+        string xml = "<Other />";
 
         Assert.Throws<InvalidDataException>(() => _serializer.Deserialize(xml));
     }
@@ -176,9 +207,21 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
             "docs",
             "examples",
             "chart-analysis",
-            "v1",
             fileName);
 
         return File.ReadAllText(path);
+    }
+
+    private static XmlSchemaSet LoadEmbeddedSchemas()
+    {
+        using Stream stream = typeof(ChartAnalysisDefinitionXmlSerializer).Assembly
+            .GetManifestResourceStream("TradingEngine.Infrastructure.MonitoringRules.Xml.chart-analysis-definition.xsd")
+            ?? throw new InvalidOperationException("The embedded schema resource was not found.");
+        using XmlReader reader = XmlReader.Create(stream);
+
+        XmlSchemaSet schemas = new();
+        schemas.Add(null, reader);
+
+        return schemas;
     }
 }
