@@ -114,6 +114,21 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     }
 
     [Test]
+    public void Deserialize_WithNonNumericPrice_ThrowsXmlSchemaValidationException()
+    {
+        string xml = "<ChartAnalysisDefinition priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"95.0000\" level=\"abc\" upper=\"105.0000\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
+
+        XmlSchemaValidationException? exception = Assert.Throws<XmlSchemaValidationException>(
+            () => _serializer.Deserialize(xml));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception!.Message, Does.Contain("not a valid decimal"));
+            Assert.That(exception.InnerException, Is.TypeOf<FormatException>());
+        });
+    }
+
+    [Test]
     public void Deserialize_WithMalformedXml_ThrowsXmlException()
     {
         Assert.Throws<XmlException>(() => _serializer.Deserialize("<ChartAnalysisDefinition"));
