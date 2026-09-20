@@ -66,7 +66,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
                 $"Unexpected root element '{root.Name}'. Expected 'ChartAnalysisDefinition' with no namespace.");
         }
 
-        EnsurePricesWithinDecimalRange(root);
+        EnsurePricesCanBeMapped(root);
         ValidateAgainstSchema(document);
 
         return Map(root);
@@ -96,7 +96,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         }
     }
 
-    private static void EnsurePricesWithinDecimalRange(XElement root)
+    private static void EnsurePricesCanBeMapped(XElement root)
     {
         IEnumerable<XElement> zones = root
             .Descendants("SupportZone")
@@ -123,8 +123,11 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
                         $"The '{attributeName}' price is outside the supported decimal range.",
                         exception);
                 }
-                catch (FormatException)
+                catch (FormatException exception)
                 {
+                    throw new XmlSchemaValidationException(
+                        $"The '{attributeName}' price is not a valid decimal.",
+                        exception);
                 }
             }
         }
