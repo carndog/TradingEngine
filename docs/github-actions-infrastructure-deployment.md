@@ -8,8 +8,8 @@ Application build, test and deployment remain the responsibility of `.github/wor
 
 The workflow triggers only when `infra/**` or the workflow file itself changes:
 
-- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then previews the subscription-scope deployment against the `development-infrastructure-preview` environment and writes the change list to the workflow summary.
-- **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` against the `development` environment and records the commit, deployment name and Bicep outputs in the workflow summary.
+- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then runs **two** previews against the `development-infrastructure-preview` environment and writes both change lists to the workflow summary: a *safe merge preview* with `provisionAzureSql=false` (the change set merging actually applies — no Azure SQL resources) and a *planned SQL deployment preview* that forces `provisionAzureSql=true` with the Entra administrator values from environment variables (what a later issue-35 change would create — never deployed).
+- **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` against the `development` environment and records the commit, deployment name and Bicep outputs in the workflow summary. The deploy command passes `--parameters provisionAzureSql=false` explicitly, so the main-branch path cannot create Azure SQL even if the parameter file is later edited; enabling SQL is a deliberate issue-35 change.
 - **Manual `workflow_dispatch`**: recovery option. The `deploy` job still requires `refs/heads/main`, so a manual run only deploys when started from `main`.
 
 The `validate` job holds only `contents: read` and receives no Azure OIDC token or environment secrets, so it is safe on fork pull requests. The `whatif` job is additionally gated on `github.event.pull_request.head.repo.full_name == github.repository`, so fork pull requests never reach the `development-infrastructure-preview` environment or receive an OIDC token. The `deploy` job uses the `development` environment — restricted to `main` — plus a `deploy-infrastructure-development` concurrency group with `cancel-in-progress: false` so overlapping deployments queue rather than cancel halfway through.
@@ -62,6 +62,11 @@ Secrets and variables:
 | `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Secret | Target development subscription |
 | `AZURE_DEPLOYMENT_LOCATION` | Variable | `ukwest` |
+| `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Variable | Login/display name of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
+| `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Variable | Object ID of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
+| `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Variable | `User`, `Group` or `ServicePrincipal` |
+
+The three `AZURE_SQL_ENTRA_ADMIN_*` entries are **variables**, not secrets — they are identifiers, not credentials — and are used only by the SQL-enabled what-if preview. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository and are not used by the real `deploy` job.
 
 The environments are the trust boundary that prevents untrusted code from obtaining an Azure token.
 
@@ -243,7 +248,7 @@ Run what-if (locally or via a pull request) and confirm the result reports no ch
 
 ## First run after merging
 
-Merging the pull request that introduces this workflow changes a file under the workflow's own path filter, so the merge push to `main` triggers a real `deploy` run. That run reconciles the existing paid B1 App Service Plan and Web App in `rg-tradingengine-dev` against the template — expected changes are limited to tag or configuration drift. The template contains no database resources; the deployment must not create Azure SQL or any other new resource type. Review the what-if output on the pull request before merging to confirm the expected change set.
+Merging a pull request that changes `infra/**` or this workflow triggers a real `deploy` run on the merge push to `main`. That run reconciles the existing paid B1 App Service Plan and Web App in `rg-tradingengine-dev` against the template — expected changes are limited to tag or configuration drift. The Azure SQL modules exist in the template but are gated behind `provisionAzureSql`, which is `false` in the template default, in `dev.bicepparam` and as an explicit command-line override in the deploy step, so the deployment must not create Azure SQL or any other new resource type. Review the safe-merge what-if output on the pull request before merging to confirm the expected change set.
 
 ## Revocation and teardown
 
