@@ -2,7 +2,9 @@
 
 This document describes how to build, validate, deploy and tear down the minimal TradingEngine development platform defined in `infra/`.
 
-The deployment creates a dedicated development resource group containing a low-cost Linux App Service Plan and a Web App that hosts the existing `TradingEngine.Api` shell (`/health` and `/version` only). No database, Key Vault, Application Insights, authentication or trading infrastructure is provisioned.
+The deployment creates a dedicated development resource group containing a low-cost Linux App Service Plan and a Web App that hosts the existing `TradingEngine.Api` shell (`/health` and `/version` only). No Key Vault, Application Insights, authentication or trading infrastructure is provisioned.
+
+Azure SQL infrastructure (a logical server and a free-offer serverless database) is **defined in the template but disabled** behind the `provisionAzureSql` gate, which is `false` in the template default, the dev parameter file and the deployment workflow. No Azure SQL resources are created by any current deployment path. See [Azure SQL development database](azure-sql-development-database.md).
 
 ## Prerequisites
 
@@ -141,11 +143,15 @@ Invoke-RestMethod "https://$hostName/version"
 
 ## Teardown
 
-Delete only the generated development resource group. This removes the App Service Plan, Web App and Managed Identity created by this deployment and nothing else.
+**Full platform teardown** — when deliberately removing the entire development platform, delete only the generated development resource group. This removes the App Service Plan, Web App, Managed Identity and (if it has ever been provisioned) the Azure SQL server and database, and nothing else.
 
 ```powershell
 az group delete --name $resourceGroupName --subscription $subscription --yes --no-wait
 ```
+
+**SQL-only teardown** — to remove only the Azure SQL database and logical server while preserving the App Service, delete those two resources explicitly; see [Azure SQL development database](azure-sql-development-database.md#rollback-and-teardown). Do not delete the resource group for this purpose.
+
+Note that an incremental Bicep deployment does not delete a resource merely because its module is removed or disabled — teardown of provisioned SQL resources is always an explicit `az sql` delete.
 
 ## Notes
 
@@ -153,5 +159,5 @@ az group delete --name $resourceGroupName --subscription $subscription --yes --n
 - The Web App runs the `DOTNETCORE|10.0` Linux runtime, matching the repository's .NET 10 target.
 - HTTPS only, minimum TLS 1.2, FTPS disabled, `alwaysOn` enabled and `/health` configured as the App Service health-check path.
 - FTP and SCM basic publishing credentials are disabled; deployments must use Microsoft Entra authentication.
-- A system-assigned Managed Identity is enabled for future use (for example Azure SQL access in a later story); nothing consumes it yet.
+- A system-assigned Managed Identity is enabled for future Azure SQL access; its principal ID is exported as the `managedIdentityPrincipalId` deployment output. Nothing consumes it yet — the contained-user bootstrap that maps it into the database is documented in [Azure SQL development database](azure-sql-development-database.md) and runs only after issue #35 provisions SQL.
 - The `appServicePlanFreeOfferExpirationTime` parameter preserves the subscription-assigned temporary App Service Plan free offer already present on the plan (`2026-10-15T17:51:34.82` for dev). Without it, a deployment would remove the expiry. Reassess the parameter after the offer expires.

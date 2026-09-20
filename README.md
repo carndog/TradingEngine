@@ -53,7 +53,7 @@ For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`
 
 See [Solution boundaries and dependency rules](docs/architecture.md) for the Hexagonal Architecture conventions enforced by the architecture tests, and [Current configuration persistence](docs/current-configuration-persistence.md) for the EF Core SQL Server schema, migrations and integration testing.
 
-Pushes to `main` are built, tested and deployed to the development App Service by GitHub Actions; see [GitHub Actions development deployment](docs/github-actions-development-deployment.md). The supporting Bicep infrastructure is validated and deployed by a separate workflow; see [GitHub Actions infrastructure deployment](docs/github-actions-infrastructure-deployment.md).
+Pushes to `main` are built, tested and deployed to the development App Service by GitHub Actions; see [GitHub Actions development deployment](docs/github-actions-development-deployment.md). The supporting Bicep infrastructure is validated and deployed by a separate workflow; see [GitHub Actions infrastructure deployment](docs/github-actions-infrastructure-deployment.md). Azure SQL infrastructure for the development database is defined in Bicep but disabled behind an explicit gate; see [Azure SQL development database](docs/azure-sql-development-database.md).
 
 ## Delivery roadmap
 
