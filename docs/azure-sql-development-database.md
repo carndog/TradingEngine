@@ -19,7 +19,7 @@ Three distinct identities are involved. None uses a password.
 
 - **GitHub OIDC infrastructure identity** (`tradingengine-github-infrastructure-development`) — authenticates the workflow to Azure Resource Manager for what-if and deployments. It operates at the ARM control plane only; it is not a SQL principal and cannot read data.
 - **Web App system-assigned managed identity** — the runtime identity the API will use to connect to the database. Bicep exposes its principal ID as the `managedIdentityPrincipalId` deployment output. It becomes a SQL principal only through the contained-user bootstrap below.
-- **Microsoft Entra SQL administrator** — a user, group or service principal configured on the logical server via the `sqlEntraAdminLogin`, `sqlEntraAdminObjectId` and `sqlEntraAdminPrincipalType` parameters. The server uses **Microsoft Entra-only authentication**: there is no SQL administrator login or password, and SQL authentication is disabled entirely. The administrator performs the one-time bootstrap and any future schema migrations.
+- **Microsoft Entra SQL administrator** — a user, group or application configured on the logical server via the `sqlEntraAdminLogin`, `sqlEntraAdminObjectId` and `sqlEntraAdminPrincipalType` parameters. The server uses **Microsoft Entra-only authentication**: there is no SQL administrator login or password, and SQL authentication is disabled entirely. The administrator performs the one-time bootstrap and any future schema migrations.
 
 The tenant ID is resolved at deploy time with `tenant().tenantId`; it is never committed.
 
@@ -100,11 +100,11 @@ The pull-request workflow runs both automatically; see [GitHub Actions infrastru
 
 Issue #35 will deliberately flip the gate after Jason approves the cost. Until then, no path — merge, manual dispatch or parameter-file edit alone — provisions SQL.
 
-**Known limitation:** the template cannot itself reject an enabled-but-incomplete configuration at compile time. Bicep `assert` declarations require the experimental Assertions feature in the installed Bicep version, so they are not used. Instead, the workflow fails fast when the `AZURE_SQL_ENTRA_ADMIN_*` preview variables are absent, the `sql-server.bicep` module constrains `entraAdminPrincipalType` to `User`, `Group` or `ServicePrincipal` at deploy time, and Azure rejects an empty administrator login or object ID during deployment validation.
+**Known limitation:** the template cannot itself reject an enabled-but-incomplete configuration at compile time. Bicep `assert` declarations require the experimental Assertions feature in the installed Bicep version, so they are not used. Instead, the workflow fails fast when the `AZURE_SQL_ENTRA_ADMIN_*` preview secrets are absent, the `sql-server.bicep` module constrains `entraAdminPrincipalType` to `User`, `Group` or `Application` at deploy time, and Azure rejects an empty administrator login or object ID during deployment validation.
 
 ## Future deployment (issue #35)
 
-When approved, enabling SQL is a deliberate change: set `provisionAzureSql = true` in `dev.bicepparam`, remove the `--parameters provisionAzureSql=false` override from the deploy step, and supply the Entra administrator values through GitHub environment configuration — never in source control. Confirm free-offer eligibility and `Microsoft.Sql` provider registration first.
+When approved, enabling SQL is a deliberate change: set `provisionAzureSql = true` in `dev.bicepparam`, remove the `--parameters provisionAzureSql=false` override from the deploy step, and supply the Entra administrator values through GitHub environment secrets — never in source control. Confirm free-offer eligibility and `Microsoft.Sql` provider registration first.
 
 ## Contained-user bootstrap (after provisioning)
 

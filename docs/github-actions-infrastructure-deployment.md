@@ -8,7 +8,7 @@ Application build, test and deployment remain the responsibility of `.github/wor
 
 The workflow triggers only when `infra/**` or the workflow file itself changes:
 
-- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then runs **two** previews against the `development-infrastructure-preview` environment and writes both change lists to the workflow summary: a *safe merge preview* with `provisionAzureSql=false` (the change set merging actually applies — no Azure SQL resources) and a *planned SQL deployment preview* that forces `provisionAzureSql=true` with the Entra administrator values from environment variables (what a later issue-35 change would create — never deployed).
+- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then runs **two** previews against the `development-infrastructure-preview` environment and writes both change lists to the workflow summary: a *safe merge preview* with `provisionAzureSql=false` (the change set merging actually applies — no Azure SQL resources) and a *planned SQL deployment preview* that forces `provisionAzureSql=true` with the Entra administrator values from environment secrets (what a later issue-35 change would create — never deployed).
 - **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` against the `development` environment and records the commit, deployment name and Bicep outputs in the workflow summary. The deploy command passes `--parameters provisionAzureSql=false` explicitly, so the main-branch path cannot create Azure SQL even if the parameter file is later edited; enabling SQL is a deliberate issue-35 change.
 - **Manual `workflow_dispatch`**: recovery option. The `deploy` job still requires `refs/heads/main`, so a manual run only deploys when started from `main`.
 
@@ -62,11 +62,11 @@ Secrets and variables:
 | `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Secret | Target development subscription |
 | `AZURE_DEPLOYMENT_LOCATION` | Variable | `ukwest` |
-| `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Variable | Login/display name of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
-| `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Variable | Object ID of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
-| `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Variable | `User`, `Group` or `ServicePrincipal` |
+| `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Secret | Login/display name of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
+| `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Secret | Object ID of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
+| `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Secret | `User`, `Group` or `Application` |
 
-The three `AZURE_SQL_ENTRA_ADMIN_*` entries are **variables**, not secrets — they are identifiers, not credentials — and are used only by the SQL-enabled what-if preview. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository and are not used by the real `deploy` job.
+The three `AZURE_SQL_ENTRA_ADMIN_*` entries are **secrets** on the `development-infrastructure-preview` environment and are used only by the SQL-enabled what-if preview. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository and are not used by the real `deploy` job.
 
 The environments are the trust boundary that prevents untrusted code from obtaining an Azure token.
 

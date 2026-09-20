@@ -14,7 +14,7 @@ param entraAdminObjectId string
 @allowed([
   'User'
   'Group'
-  'ServicePrincipal'
+  'Application'
 ])
 param entraAdminPrincipalType string
 

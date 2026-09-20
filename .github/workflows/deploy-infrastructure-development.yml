@@ -46,9 +46,9 @@ jobs:
     env:
       DEPLOYMENT_NAME: tradingengine-dev-whatif-${{ github.run_id }}
       SQL_PREVIEW_DEPLOYMENT_NAME: tradingengine-dev-whatif-sql-${{ github.run_id }}
-      AZURE_SQL_ENTRA_ADMIN_LOGIN: ${{ vars.AZURE_SQL_ENTRA_ADMIN_LOGIN }}
-      AZURE_SQL_ENTRA_ADMIN_OBJECT_ID: ${{ vars.AZURE_SQL_ENTRA_ADMIN_OBJECT_ID }}
-      AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ vars.AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE }}
+      AZURE_SQL_ENTRA_ADMIN_LOGIN: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_LOGIN }}
+      AZURE_SQL_ENTRA_ADMIN_OBJECT_ID: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_OBJECT_ID }}
+      AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -71,17 +71,17 @@ jobs:
             --no-pretty-print \
             --output json > what-if.json
 
-      - name: Check SQL preview variables
+      - name: Check SQL preview secrets
         run: |
           missing=0
           for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE; do
             if [ -z "${!name}" ]; then
-              echo "::error::Required preview variable $name is not set on the development-infrastructure-preview environment."
+              echo "::error::Required preview secret $name is not set on the development-infrastructure-preview environment."
               missing=1
             fi
           done
           if [ "$missing" = "1" ]; then
-            echo "Set the AZURE_SQL_ENTRA_ADMIN_* variables on the development-infrastructure-preview environment. Values are never printed."
+            echo "Set the AZURE_SQL_ENTRA_ADMIN_* secrets on the development-infrastructure-preview environment. Values are never printed."
             exit 1
           fi
 
@@ -146,7 +146,7 @@ jobs:
             echo ""
             echo "## Planned SQL deployment preview — Azure SQL enabled"
             echo ""
-            echo "This preview forces \`provisionAzureSql=true\` with the Entra administrator values from the \`development-infrastructure-preview\` environment variables. It shows what a later issue-35 change would create; it is never deployed by this workflow."
+            echo "This preview forces \`provisionAzureSql=true\` with the Entra administrator values from the \`development-infrastructure-preview\` environment secrets. It shows what a later issue-35 change would create; it is never deployed by this workflow."
             echo ""
             echo "### What-if: \`$SQL_PREVIEW_DEPLOYMENT_NAME\`"
             echo ""
