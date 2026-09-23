@@ -34,7 +34,7 @@ $outputs = az deployment sub show `
 
 Bicep cannot create contained database users — that is a data-plane operation performed once by the Entra SQL administrator.
 
-1. **Inspect identities.** In the portal, open the SQL server → **Microsoft Entra ID** blade to confirm the configured administrator. Open the Web App → **Identity** → **System assigned** to confirm the managed identity is on; its object (principal) ID matches the `managedIdentityPrincipalId` deployment output. The contained user name for a system-assigned identity is the Web App name itself (`app-tradingengine-dev-<suffix>`).
+1. **Inspect identities.** In the portal, open the SQL server → **Microsoft Entra ID** blade to confirm the configured administrator. Open the Web App → **Identity** → **System assigned** to confirm the managed identity is on; its object (principal) ID matches the `managedIdentityPrincipalId` deployment output. The Web App's system-assigned identity has an Entra principal (object) ID and an application (client) ID. When the principal name is unique, use the Web App name (`app-tradingengine-dev-<suffix>`) as the SQL contained user name.
 2. **Allow your operator IP.** The server allows Azure services only. Portal: SQL server → **Networking** → add your client IP. CLI equivalent (remove it afterwards — see step 7):
 
 ```powershell
@@ -54,7 +54,7 @@ ALTER ROLE db_datareader ADD MEMBER [app-tradingengine-dev-<suffix>];
 ALTER ROLE db_datawriter ADD MEMBER [app-tradingengine-dev-<suffix>];
 ```
 
-Do **not** grant `db_owner` or `db_ddladmin` to the Web App identity — the runtime must not change schema.
+If an alias is needed, create it with `FROM EXTERNAL PROVIDER WITH OBJECT_ID = '<web-app-principal-id>'` and grant the roles to that alias. In the current development database, the verified alias ends in `-runtime`. For application principals, the GUID obtained with `CAST(sid AS uniqueidentifier)` can be the application (client) ID rather than the principal (object) ID; compare it with the Enterprise application's Application ID. Do **not** grant `db_owner` or `db_ddladmin` to the Web App identity — the runtime must not change schema.
 
 5. **Create the migration identity contained user** (after step 4 creates the Entra application):
 
@@ -75,7 +75,7 @@ Azure resource roles and SQL permissions are deliberately distinct: the identity
 
 ### 4.1 Entra application and federated credential
 
-Portal: **Microsoft Entra ID → App registrations → New registration** named `tradingengine-github-migration-development`, then **Certificates & secrets → Federated credentials → Add credential** → *GitHub Actions deploying Azure resources*:
+Portal: **Microsoft Entra ID → App registrations → New registration** named `tradingengine-github-migration-development`, then **Certificates & secrets → Federated credentials → Add credential** → *Other issuer*. Enter these values explicitly: the GitHub Actions preset may generate a name-only subject without the immutable repository IDs:
 
 - **Issuer**: `https://token.actions.githubusercontent.com`
 - **Audience**: `api://AzureADTokenExchange`
@@ -103,18 +103,18 @@ Remove-Item $credPath
 
 ### 4.2 ARM role: firewall-rule management only
 
-The workflow reads the server (`az sql server list`), verifies the named database (`az sql db show`), and adds/removes a temporary firewall rule for the runner IP. Grant a custom role scoped to the SQL server resource covering exactly those actions — nothing broader, and no Contributor:
+The workflow lists SQL servers in `rg-tradingengine-dev`, verifies the named database (`az sql db show`), and adds/removes a temporary firewall rule for the runner IP. Make the custom role assignable at the development resource group and assign it to the migration principal at that resource group scope, with only these five SQL management actions:
 
 ```powershell
-$sqlServerId = az sql server show `
-  --name <sql-server-name> --resource-group rg-tradingengine-dev `
+$resourceGroupId = az group show `
+  --name rg-tradingengine-dev `
   --query id -o tsv
 
 $rolePath = Join-Path $env:TEMP 'migration-firewall-role.json'
 @{
     Name = 'TradingEngine migration firewall manager'
     Description = 'Create and delete firewall rules on the development SQL server for migration runs.'
-    AssignableScopes = @($sqlServerId)
+    AssignableScopes = @($resourceGroupId)
     Actions = @(
         'Microsoft.Sql/servers/read'
         'Microsoft.Sql/servers/databases/read'
@@ -132,7 +132,7 @@ az role assignment create `
   --assignee-object-id $migrationSpObjectId `
   --assignee-principal-type ServicePrincipal `
   --role 'TradingEngine migration firewall manager' `
-  --scope $sqlServerId
+  --scope $resourceGroupId
 ```
 
 ### 4.3 GitHub environment
@@ -151,7 +151,7 @@ Created in step 3.5 above. The contained user name is the service principal disp
 
 ## 5. Run the migration
 
-**Actions → Migrate development database → Run workflow** from `main`. The run resolves the server and database names, adds a temporary firewall rule for the runner, builds `efbundle` from the #44 migration, applies it with `Authentication=Active Directory Default` (the OIDC workload identity), and removes the firewall rule even on failure.
+**Actions → Migrate development database → Run workflow** from `main`. The run resolves the server and database names, adds a temporary firewall rule for the runner, restores the infrastructure project and builds `efbundle` from the #44 migration, then applies it with `Authentication=Active Directory Default` (the OIDC workload identity). The cleanup step attempts to remove the firewall rule even on failure; verify it is absent as described in step 7.
 
 ## 6. Smoke test and verification
 
