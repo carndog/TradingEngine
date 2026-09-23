@@ -31,6 +31,10 @@ app.MapHealthChecks(
         })
     .AllowAnonymous();
 
+app.UseWhen(
+    context => context.Request.Path.StartsWithSegments("/health/database"),
+    branch => branch.UseMiddleware<DatabaseProbeKeyMiddleware>());
+
 app.MapHealthChecks(
         "/health/database",
         new HealthCheckOptions

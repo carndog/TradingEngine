@@ -16,6 +16,10 @@ param appServicePlanFreeOfferExpirationTime string
 @description('Passwordless Azure SQL connection string exposed as the ConnectionStrings__TradingEngine app setting. Empty means no database is configured.')
 param tradingEngineConnectionString string = ''
 
+@description('Shared key required in the X-Database-Probe-Key header for the /health/database endpoint, exposed as the Diagnostics__DatabaseProbeKey app setting. Empty disables the endpoint.')
+@secure()
+param databaseProbeKey string = ''
+
 @description('Tags applied to the resources.')
 param tags object
 
@@ -59,6 +63,7 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
   name: 'appsettings'
   properties: {
     ConnectionStrings__TradingEngine: tradingEngineConnectionString
+    Diagnostics__DatabaseProbeKey: databaseProbeKey
   }
 }
 

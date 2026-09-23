@@ -30,6 +30,10 @@ param sqlEntraAdminObjectId string = ''
 @description('Principal type of the Microsoft Entra administrator for the SQL logical server. Required only when provisionAzureSql is true.')
 param sqlEntraAdminPrincipalType string = ''
 
+@description('Shared key required in the X-Database-Probe-Key header for the /health/database endpoint. Required only when provisionAzureSql is true; never commit a live value.')
+@secure()
+param databaseProbeKey string = ''
+
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'
 var appServicePlanName = 'asp-${namingPrefix}-${environmentName}'
 var webAppName = 'app-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
@@ -59,6 +63,7 @@ module appService 'modules/app-service.bicep' = {
     appServiceSkuName: appServiceSkuName
     appServicePlanFreeOfferExpirationTime: appServicePlanFreeOfferExpirationTime
     tradingEngineConnectionString: tradingEngineConnectionString
+    databaseProbeKey: databaseProbeKey
     tags: tags
   }
   dependsOn: [

@@ -48,8 +48,9 @@ New entries to add for the infrastructure `deploy` job:
 | `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Secret | Login/display name of the Microsoft Entra SQL administrator configured on the logical server |
 | `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Secret | Object ID of the Microsoft Entra SQL administrator |
 | `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Secret | `User`, `Group` or `Application` |
+| `AZURE_DATABASE_PROBE_KEY` | Secret | Generated shared key published as the `Diagnostics__DatabaseProbeKey` app setting; gates `/health/database` |
 
-The three `AZURE_SQL_ENTRA_ADMIN_*` secrets are required because `provisionAzureSql` is `true` in `dev.bicepparam`; the deploy job fails fast without them. They are never committed to the repository.
+The `AZURE_SQL_ENTRA_ADMIN_*` and `AZURE_DATABASE_PROBE_KEY` secrets are required because `provisionAzureSql` is `true` in `dev.bicepparam`; the deploy job fails fast without them. They are never committed to the repository.
 
 ### `development-infrastructure-preview` (new — pull-request what-if only)
 
@@ -70,8 +71,9 @@ Secrets and variables:
 | `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Secret | Login/display name of the Microsoft Entra SQL administrator used by the merge what-if preview |
 | `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Secret | Object ID of the Microsoft Entra SQL administrator used by the merge what-if preview |
 | `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Secret | `User`, `Group` or `Application` |
+| `AZURE_DATABASE_PROBE_KEY` | Secret | Same generated probe key as `development`, so the preview renders the real app-settings change |
 
-The three `AZURE_SQL_ENTRA_ADMIN_*` entries are **secrets** on the `development-infrastructure-preview` environment and are used by the merge what-if preview so it renders the real SQL administrator configuration. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository.
+The `AZURE_SQL_ENTRA_ADMIN_*` and `AZURE_DATABASE_PROBE_KEY` entries are **secrets** on the `development-infrastructure-preview` environment and are used by the merge what-if preview so it renders the real SQL administrator and app-settings configuration. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository.
 
 The environments are the trust boundary that prevents untrusted code from obtaining an Azure token.
 

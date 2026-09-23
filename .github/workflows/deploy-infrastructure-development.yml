@@ -48,6 +48,7 @@ jobs:
       AZURE_SQL_ENTRA_ADMIN_LOGIN: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_LOGIN }}
       AZURE_SQL_ENTRA_ADMIN_OBJECT_ID: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_OBJECT_ID }}
       AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE }}
+      AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -62,14 +63,14 @@ jobs:
       - name: Check SQL Entra administrator secrets
         run: |
           missing=0
-          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE; do
+          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE AZURE_DATABASE_PROBE_KEY; do
             if [ -z "${!name}" ]; then
               echo "::error::Required secret $name is not set on the development-infrastructure-preview environment."
               missing=1
             fi
           done
           if [ "$missing" = "1" ]; then
-            echo "Set the AZURE_SQL_ENTRA_ADMIN_* secrets on the development-infrastructure-preview environment. Values are never printed."
+            echo "Set the AZURE_SQL_ENTRA_ADMIN_* and AZURE_DATABASE_PROBE_KEY secrets on the development-infrastructure-preview environment. Values are never printed."
             exit 1
           fi
 
@@ -84,6 +85,7 @@ jobs:
             --parameters sqlEntraAdminLogin="$AZURE_SQL_ENTRA_ADMIN_LOGIN" \
             --parameters sqlEntraAdminObjectId="$AZURE_SQL_ENTRA_ADMIN_OBJECT_ID" \
             --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE" \
+            --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
             --no-pretty-print \
             --output json > what-if.json
 
@@ -153,6 +155,7 @@ jobs:
       AZURE_SQL_ENTRA_ADMIN_LOGIN: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_LOGIN }}
       AZURE_SQL_ENTRA_ADMIN_OBJECT_ID: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_OBJECT_ID }}
       AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE }}
+      AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -167,14 +170,14 @@ jobs:
       - name: Check SQL Entra administrator secrets
         run: |
           missing=0
-          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE; do
+          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE AZURE_DATABASE_PROBE_KEY; do
             if [ -z "${!name}" ]; then
               echo "::error::Required secret $name is not set on the development environment."
               missing=1
             fi
           done
           if [ "$missing" = "1" ]; then
-            echo "Set the AZURE_SQL_ENTRA_ADMIN_* secrets on the development environment. Values are never printed."
+            echo "Set the AZURE_SQL_ENTRA_ADMIN_* and AZURE_DATABASE_PROBE_KEY secrets on the development environment. Values are never printed."
             exit 1
           fi
 
@@ -188,7 +191,8 @@ jobs:
             --parameters infra/environments/dev.bicepparam \
             --parameters sqlEntraAdminLogin="$AZURE_SQL_ENTRA_ADMIN_LOGIN" \
             --parameters sqlEntraAdminObjectId="$AZURE_SQL_ENTRA_ADMIN_OBJECT_ID" \
-            --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE"
+            --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE" \
+            --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY"
 
       - name: Write deployment summary
         run: |

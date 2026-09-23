@@ -96,6 +96,10 @@ Server=tcp:<server>.database.windows.net,1433;Database=sqldb-tradingengine-dev;A
 
 `Authentication=Active Directory Default` uses the `DefaultAzureCredential` chain in Microsoft.Data.SqlClient: the Web App's system-assigned managed identity in Azure, and developer credentials (Azure CLI, Visual Studio) locally. The pinned Microsoft.Data.SqlClient 6.1.6 supports this mode natively — the extension-package split only applies from version 7.0. The setting is non-secret (no password) and Bicep is its source of truth; the what-if shows it as a `Microsoft.Web/sites/config` change on the Web App. When `provisionAzureSql` is `false` the app setting is not emitted at all.
 
+**Bicep owns the Web App's application-settings collection.** The `sites/config` `appsettings` resource replaces the entire collection on each deployment. It currently owns exactly two settings — `ConnectionStrings__TradingEngine` and `Diagnostics__DatabaseProbeKey` — and the live app has no other settings, so nothing is lost. Any setting added out of band (portal or CLI) will be removed by the next deployment; add new settings to `app-service.bicep` instead.
+
+`Diagnostics__DatabaseProbeKey` is a generated shared key (the `databaseProbeKey` secure parameter, supplied from the `AZURE_DATABASE_PROBE_KEY` environment secret). The API requires it as the `X-Database-Probe-Key` header on `/health/database`, so anonymous internet requests cannot wake the serverless database or consume its monthly free allowance. `/health` remains anonymous and never touches SQL.
+
 ## Contained-user bootstrap (after provisioning)
 
 Bicep cannot create contained database users — that is a data-plane operation. After the deployment provisions the server, an operator performs the bootstrap once, as the configured Entra SQL administrator:

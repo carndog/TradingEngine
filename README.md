@@ -47,7 +47,7 @@ dotnet run --project src/TradingEngine.Api
 The API exposes three deployment-safe smoke-test endpoints:
 
 - `GET /health`
-- `GET /health/database` — database readiness check; independent of `/health` so platform probes never touch SQL
+- `GET /health/database` — database readiness check; requires the `X-Database-Probe-Key` header (returns 404 without it) and is independent of `/health` so platform probes never touch SQL
 - `GET /version`
 
 For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`.

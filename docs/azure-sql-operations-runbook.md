@@ -103,7 +103,7 @@ Remove-Item $credPath
 
 ### 4.2 ARM role: firewall-rule management only
 
-The workflow adds a temporary firewall rule for the runner IP and removes it afterwards. Grant a custom role scoped to the SQL server resource — nothing broader:
+The workflow reads the server (`az sql server list`), verifies the named database (`az sql db show`), and adds/removes a temporary firewall rule for the runner IP. Grant a custom role scoped to the SQL server resource covering exactly those actions — nothing broader, and no Contributor:
 
 ```powershell
 $sqlServerId = az sql server show `
@@ -117,6 +117,7 @@ $rolePath = Join-Path $env:TEMP 'migration-firewall-role.json'
     AssignableScopes = @($sqlServerId)
     Actions = @(
         'Microsoft.Sql/servers/read'
+        'Microsoft.Sql/servers/databases/read'
         'Microsoft.Sql/servers/firewallRules/read'
         'Microsoft.Sql/servers/firewallRules/write'
         'Microsoft.Sql/servers/firewallRules/delete'
@@ -142,6 +143,8 @@ az role assignment create `
 - **Deployment branches and tags**: restrict to `main` only.
 - Secrets: `AZURE_MIGRATION_CLIENT_ID` (the app/client ID above), `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
 
+Separately, the `development` and `development-infrastructure-preview` environments each need an `AZURE_DATABASE_PROBE_KEY` secret — a generated shared key that Bicep publishes as the `Diagnostics__DatabaseProbeKey` app setting. It gates `/health/database` so anonymous internet requests cannot wake the serverless database or consume its free allowance; the smoke test in step 6 supplies it as the `X-Database-Probe-Key` header.
+
 ### 4.4 Contained SQL user
 
 Created in step 3.5 above. The contained user name is the service principal display name, `tradingengine-github-migration-development`.
@@ -165,9 +168,13 @@ az sql server show --name <sql-server-name> --resource-group rg-tradingengine-de
 # Applied migration (connect as the Entra admin)
 # SELECT * FROM __EFMigrationsHistory ORDER BY MigrationId;
 
-# Managed-identity connectivity — the deployed API readiness check
-Invoke-RestMethod "https://<web-app-hostname>/health/database"
-# Expect {"status":"Healthy"}. /health stays Healthy regardless — it never touches SQL.
+# Managed-identity connectivity — the deployed API readiness check.
+# /health/database is not anonymous: it requires the X-Database-Probe-Key header
+# matching the Diagnostics__DatabaseProbeKey app setting (the AZURE_DATABASE_PROBE_KEY
+# environment secret). Without the key it returns 404; /health stays Healthy regardless.
+Invoke-RestMethod "https://<web-app-hostname>/health/database" `
+  -Headers @{ 'X-Database-Probe-Key' = '<probe-key>' }
+# Expect {"status":"Healthy"}.
 ```
 
 **Negative check:** connect with an identity that has no contained database user (for example a second test Entra account or a service principal without a `CREATE USER` entry). The connection must fail with a login/permission error — Entra-only authentication plus contained users means no network path alone grants access.

@@ -20,6 +20,7 @@ jobs:
       cancel-in-progress: false
     env:
       RESOURCE_GROUP: rg-tradingengine-dev
+      SQL_DATABASE_NAME: sqldb-tradingengine-dev
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -39,7 +40,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Resolve SQL server and database
+      - name: Resolve SQL server and verify database
         run: |
           server_count=$(az sql server list --resource-group "$RESOURCE_GROUP" --query "length(@)" -o tsv)
           if [ "$server_count" != "1" ]; then
@@ -48,15 +49,13 @@ jobs:
           fi
           SQL_SERVER_NAME=$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv)
           SQL_SERVER_FQDN=$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[0].fullyQualifiedDomainName" -o tsv)
-          db_count=$(az sql db list --resource-group "$RESOURCE_GROUP" --server "$SQL_SERVER_NAME" --query "length(@)" -o tsv)
-          if [ "$db_count" != "1" ]; then
-            echo "::error::Expected exactly one database on the server, found $db_count."
+          resolved_db=$(az sql db show --resource-group "$RESOURCE_GROUP" --server "$SQL_SERVER_NAME" --name "$SQL_DATABASE_NAME" --query name -o tsv)
+          if [ "$resolved_db" != "$SQL_DATABASE_NAME" ]; then
+            echo "::error::Expected database $SQL_DATABASE_NAME on $SQL_SERVER_NAME was not found."
             exit 1
           fi
-          SQL_DATABASE_NAME=$(az sql db list --resource-group "$RESOURCE_GROUP" --server "$SQL_SERVER_NAME" --query "[0].name" -o tsv)
           echo "SQL_SERVER_NAME=$SQL_SERVER_NAME" >> "$GITHUB_ENV"
           echo "SQL_SERVER_FQDN=$SQL_SERVER_FQDN" >> "$GITHUB_ENV"
-          echo "SQL_DATABASE_NAME=$SQL_DATABASE_NAME" >> "$GITHUB_ENV"
 
       - name: Add temporary firewall rule for runner
         run: |
