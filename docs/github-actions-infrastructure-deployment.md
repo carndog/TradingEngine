@@ -8,8 +8,8 @@ Application build, test and deployment remain the responsibility of `.github/wor
 
 The workflow triggers only when `infra/**` or the workflow file itself changes:
 
-- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then runs **two** previews against the `development-infrastructure-preview` environment and writes both change lists to the workflow summary: a *safe merge preview* with `provisionAzureSql=false` (the change set merging actually applies — no Azure SQL resources) and a *planned SQL deployment preview* that forces `provisionAzureSql=true` with the Entra administrator values from environment secrets (what a later issue-35 change would create — never deployed).
-- **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` against the `development` environment and records the commit, deployment name and Bicep outputs in the workflow summary. The deploy command passes `--parameters provisionAzureSql=false` explicitly, so the main-branch path cannot create Azure SQL even if the parameter file is later edited; enabling SQL is a deliberate issue-35 change.
+- **Pull requests targeting `main`**: the `validate` job runs `az bicep build --stdout` and `az bicep lint` against `infra/main.bicep`. For pull requests originating from this repository, a `whatif` job then runs a single merge preview against the `development-infrastructure-preview` environment and writes the change list to the workflow summary. Since issue #35, `provisionAzureSql` is `true` in `dev.bicepparam`, so the preview shows the Azure SQL server, free-offer database and `ConnectionStrings__TradingEngine` app setting that merging will create; the Entra administrator values come from the preview environment's secrets.
+- **Pushes to `main`** (including merged pull requests): `validate` runs, then `deploy` runs `az deployment sub create` against the `development` environment and records the commit, deployment name and Bicep outputs in the workflow summary. The deploy command supplies the Entra administrator parameters from the `development` environment secrets (`AZURE_SQL_ENTRA_ADMIN_*`) and fails fast if any is absent — the values are never committed. Merging an infrastructure change therefore provisions Azure SQL; issue #35 requires Jason's explicit cost approval immediately before that deployment.
 - **Manual `workflow_dispatch`**: recovery option. The `deploy` job still requires `refs/heads/main`, so a manual run only deploys when started from `main`.
 
 The `validate` job holds only `contents: read` and receives no Azure OIDC token or environment secrets, so it is safe on fork pull requests. The `whatif` job is additionally gated on `github.event.pull_request.head.repo.full_name == github.repository`, so fork pull requests never reach the `development-infrastructure-preview` environment or receive an OIDC token. The `deploy` job uses the `development` environment — restricted to `main` — plus a `deploy-infrastructure-development` concurrency group with `cancel-in-progress: false` so overlapping deployments queue rather than cancel halfway through.
@@ -45,6 +45,12 @@ New entries to add for the infrastructure `deploy` job:
 | --- | --- | --- |
 | `AZURE_INFRA_CLIENT_ID` | Secret | Application (client) ID of `tradingengine-github-infrastructure-development` |
 | `AZURE_DEPLOYMENT_LOCATION` | Variable | `ukwest` — the Azure region used as the subscription-scope deployment location |
+| `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Secret | Login/display name of the Microsoft Entra SQL administrator configured on the logical server |
+| `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Secret | Object ID of the Microsoft Entra SQL administrator |
+| `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Secret | `User`, `Group` or `Application` |
+| `AZURE_DATABASE_PROBE_KEY` | Secret | Generated shared key published as the `Diagnostics__DatabaseProbeKey` app setting; gates `/health/database` |
+
+The `AZURE_SQL_ENTRA_ADMIN_*` and `AZURE_DATABASE_PROBE_KEY` secrets are required because `provisionAzureSql` is `true` in `dev.bicepparam`; the deploy job fails fast without them. They are never committed to the repository.
 
 ### `development-infrastructure-preview` (new — pull-request what-if only)
 
@@ -62,11 +68,12 @@ Secrets and variables:
 | `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Secret | Target development subscription |
 | `AZURE_DEPLOYMENT_LOCATION` | Variable | `ukwest` |
-| `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Secret | Login/display name of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
-| `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Secret | Object ID of the Microsoft Entra SQL administrator used by the SQL-enabled what-if preview |
+| `AZURE_SQL_ENTRA_ADMIN_LOGIN` | Secret | Login/display name of the Microsoft Entra SQL administrator used by the merge what-if preview |
+| `AZURE_SQL_ENTRA_ADMIN_OBJECT_ID` | Secret | Object ID of the Microsoft Entra SQL administrator used by the merge what-if preview |
 | `AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE` | Secret | `User`, `Group` or `Application` |
+| `AZURE_DATABASE_PROBE_KEY` | Secret | Same generated probe key as `development`, so the preview renders the real app-settings change |
 
-The three `AZURE_SQL_ENTRA_ADMIN_*` entries are **secrets** on the `development-infrastructure-preview` environment and are used only by the SQL-enabled what-if preview. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository and are not used by the real `deploy` job.
+The `AZURE_SQL_ENTRA_ADMIN_*` and `AZURE_DATABASE_PROBE_KEY` entries are **secrets** on the `development-infrastructure-preview` environment and are used by the merge what-if preview so it renders the real SQL administrator and app-settings configuration. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository.
 
 The environments are the trust boundary that prevents untrusted code from obtaining an Azure token.
 
@@ -248,7 +255,7 @@ Run what-if (locally or via a pull request) and confirm the result reports no ch
 
 ## First run after merging
 
-Merging a pull request that changes `infra/**` or this workflow triggers a real `deploy` run on the merge push to `main`. That run reconciles the existing paid B1 App Service Plan and Web App in `rg-tradingengine-dev` against the template — expected changes are limited to tag or configuration drift. The Azure SQL modules exist in the template but are gated behind `provisionAzureSql`, which is `false` in the template default, in `dev.bicepparam` and as an explicit command-line override in the deploy step, so the deployment must not create Azure SQL or any other new resource type. Review the safe-merge what-if output on the pull request before merging to confirm the expected change set.
+Merging a pull request that changes `infra/**` or this workflow triggers a real `deploy` run on the merge push to `main`. Since issue #35, that run creates the Azure SQL logical server and free-offer database and sets `ConnectionStrings__TradingEngine` on the Web App, in addition to reconciling the existing paid B1 App Service Plan and Web App in `rg-tradingengine-dev`. Review the merge what-if output on the pull request before merging to confirm the expected change set, and obtain Jason's explicit cost approval immediately before the provisioning deployment.
 
 ## Revocation and teardown
 

@@ -13,6 +13,13 @@ param appServiceSkuName string
 @description('Expiry of the subscription-assigned temporary App Service Plan free offer, preserved so deployments do not remove it.')
 param appServicePlanFreeOfferExpirationTime string
 
+@description('Passwordless Azure SQL connection string exposed as the ConnectionStrings__TradingEngine app setting. Empty means no database is configured.')
+param tradingEngineConnectionString string = ''
+
+@description('Shared key required in the X-Database-Probe-Key header for the /health/database endpoint, exposed as the Diagnostics__DatabaseProbeKey app setting. Empty disables the endpoint.')
+@secure()
+param databaseProbeKey string = ''
+
 @description('Tags applied to the resources.')
 param tags object
 
@@ -48,6 +55,15 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       healthCheckPath: '/health'
       alwaysOn: true
     }
+  }
+}
+
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '') {
+  parent: webApp
+  name: 'appsettings'
+  properties: {
+    ConnectionStrings__TradingEngine: tradingEngineConnectionString
+    Diagnostics__DatabaseProbeKey: databaseProbeKey
   }
 }
 
