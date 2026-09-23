@@ -1,10 +1,24 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using TradingEngine.Api.Diagnostics;
+using TradingEngine.Infrastructure;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHealthChecks();
+string? connectionString = builder.Configuration.GetConnectionString("TradingEngine");
+
+builder.Services.AddHealthChecks()
+    .Add(new HealthCheckRegistration(
+        "database",
+        _ => new DatabaseReadinessHealthCheck(connectionString),
+        failureStatus: null,
+        tags: ["database"]));
 builder.Services.AddSingleton<ApplicationVersionProvider>();
+
+if (string.IsNullOrWhiteSpace(connectionString) is false)
+{
+    builder.Services.AddTradingEngineInfrastructure(connectionString);
+}
 
 WebApplication app = builder.Build();
 
@@ -12,6 +26,16 @@ app.MapHealthChecks(
         "/health",
         new HealthCheckOptions
         {
+            Predicate = check => check.Tags.Contains("database") is false,
+            ResponseWriter = HealthResponseWriter.WriteAsync
+        })
+    .AllowAnonymous();
+
+app.MapHealthChecks(
+        "/health/database",
+        new HealthCheckOptions
+        {
+            Predicate = check => check.Tags.Contains("database"),
             ResponseWriter = HealthResponseWriter.WriteAsync
         })
     .AllowAnonymous();

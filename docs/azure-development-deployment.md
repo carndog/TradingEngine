@@ -4,7 +4,7 @@ This document describes how to build, validate, deploy and tear down the minimal
 
 The deployment creates a dedicated development resource group containing a low-cost Linux App Service Plan and a Web App that hosts the existing `TradingEngine.Api` shell (`/health` and `/version` only). No Key Vault, Application Insights, authentication or trading infrastructure is provisioned.
 
-Azure SQL infrastructure (a logical server and a free-offer serverless database) is **defined in the template but disabled** behind the `provisionAzureSql` gate, which is `false` in the template default, the dev parameter file and the deployment workflow. No Azure SQL resources are created by any current deployment path. See [Azure SQL development database](azure-sql-development-database.md).
+Azure SQL infrastructure (a logical server and a free-offer serverless database) is enabled for the development environment: `provisionAzureSql` is `true` in `dev.bicepparam` since issue #35, so the next deployment creates the SQL resources and sets the `ConnectionStrings__TradingEngine` app setting on the Web App. The Entra administrator parameters are supplied at deploy time and never committed. See [Azure SQL development database](azure-sql-development-database.md) and the [operations runbook](azure-sql-operations-runbook.md).
 
 ## Prerequisites
 
@@ -91,8 +91,13 @@ az deployment sub create `
   --subscription $subscription `
   --location ukwest `
   --template-file infra/main.bicep `
-  --parameters infra/environments/dev.bicepparam
+  --parameters infra/environments/dev.bicepparam `
+  --parameters sqlEntraAdminLogin='<entra-admin-display-name>' `
+  --parameters sqlEntraAdminObjectId='<entra-admin-object-id>' `
+  --parameters sqlEntraAdminPrincipalType='User'
 ```
+
+The Entra administrator parameters are required because `provisionAzureSql` is `true`; supply them at the command line and never commit them.
 
 The deployment outputs the resource group name, Web App name, default hostname and Managed Identity principal ID. Capture them for the publish step:
 
@@ -159,5 +164,6 @@ Note that an incremental Bicep deployment does not delete a resource merely beca
 - The Web App runs the `DOTNETCORE|10.0` Linux runtime, matching the repository's .NET 10 target.
 - HTTPS only, minimum TLS 1.2, FTPS disabled, `alwaysOn` enabled and `/health` configured as the App Service health-check path.
 - FTP and SCM basic publishing credentials are disabled; deployments must use Microsoft Entra authentication.
-- A system-assigned Managed Identity is enabled for future Azure SQL access; its principal ID is exported as the `managedIdentityPrincipalId` deployment output. Nothing consumes it yet — the contained-user bootstrap that maps it into the database is documented in [Azure SQL development database](azure-sql-development-database.md) and runs only after issue #35 provisions SQL.
-- The `appServicePlanFreeOfferExpirationTime` parameter preserves the subscription-assigned temporary App Service Plan free offer already present on the plan (`2026-10-15T17:51:34.82` for dev). Without it, a deployment would remove the expiry. Reassess the parameter after the offer expires.
+- A system-assigned Managed Identity is enabled for Azure SQL access; its principal ID is exported as the `managedIdentityPrincipalId` deployment output. The contained-user bootstrap that maps it into the database is documented in the [operations runbook](azure-sql-operations-runbook.md) and runs once after the SQL deployment.
+- The `ConnectionStrings__TradingEngine` app setting is managed by Bicep (`app-service.bicep` emits a `Microsoft.Web/sites/config` resource when SQL is enabled). It contains no secret — `Authentication=Active Directory Default` uses the managed identity. The API exposes `/health` (platform probe, never touches SQL) and `/health/database` (explicit database readiness check).
+- The `appServicePlanFreeOfferExpirationTime` parameter preserves the subscription-assigned temporary App Service Plan free offer already present on the plan (`2026-10-15T17:51:00` for dev, matching the live value reported by what-if). Without it, a deployment would remove the expiry. Reassess the parameter after the offer expires.

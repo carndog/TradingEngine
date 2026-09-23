@@ -44,16 +44,17 @@ dotnet test TradingEngine.sln --configuration Release --no-build
 dotnet run --project src/TradingEngine.Api
 ```
 
-The API exposes two deployment-safe smoke-test endpoints:
+The API exposes three deployment-safe smoke-test endpoints:
 
 - `GET /health`
+- `GET /health/database` — database readiness check; independent of `/health` so platform probes never touch SQL
 - `GET /version`
 
 For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`.
 
 See [Solution boundaries and dependency rules](docs/architecture.md) for the Hexagonal Architecture conventions enforced by the architecture tests, and [Current configuration persistence](docs/current-configuration-persistence.md) for the EF Core SQL Server schema, migrations and integration testing.
 
-Pushes to `main` are built, tested and deployed to the development App Service by GitHub Actions; see [GitHub Actions development deployment](docs/github-actions-development-deployment.md). The supporting Bicep infrastructure is validated and deployed by a separate workflow; see [GitHub Actions infrastructure deployment](docs/github-actions-infrastructure-deployment.md). Azure SQL infrastructure for the development database is defined in Bicep but disabled behind an explicit gate; see [Azure SQL development database](docs/azure-sql-development-database.md).
+Pushes to `main` are built, tested and deployed to the development App Service by GitHub Actions; see [GitHub Actions development deployment](docs/github-actions-development-deployment.md). The supporting Bicep infrastructure is validated and deployed by a separate workflow; see [GitHub Actions infrastructure deployment](docs/github-actions-infrastructure-deployment.md). Azure SQL infrastructure for the development database is provisioned through Bicep with a passwordless managed-identity connection; see [Azure SQL development database](docs/azure-sql-development-database.md) and the [operations runbook](docs/azure-sql-operations-runbook.md).
 
 ## Delivery roadmap
 

@@ -39,6 +39,38 @@ public sealed class DiagnosticsEndpointTests
     }
 
     [Test]
+    public async Task HealthDatabase_WhenDatabaseNotConfigured_ReturnsUnhealthy()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/health/database");
+        HealthResponse? body = await response.Content.ReadFromJsonAsync<HealthResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(body, Is.Not.Null);
+            Assert.That(body!.Status, Is.EqualTo("Unhealthy"));
+        });
+    }
+
+    [Test]
+    public async Task Health_WhenDatabaseNotConfigured_ReturnsHealthy()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/health");
+        HealthResponse? body = await response.Content.ReadFromJsonAsync<HealthResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(body, Is.Not.Null);
+            Assert.That(body!.Status, Is.EqualTo("Healthy"));
+        });
+    }
+
+    [Test]
     public async Task Version_WhenRequested_ReturnsBuildIdentityWithoutConfiguration()
     {
         HttpClient client = _factory.CreateClient();

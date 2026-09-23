@@ -57,7 +57,7 @@ dotnet tool restore
 
 ## Connection string
 
-The runtime connection string is supplied by the composition root through `AddTradingEngineInfrastructure(connectionString)`. The conventional configuration key is `ConnectionStrings:TradingEngine`, settable through the `ConnectionStrings__TradingEngine` environment variable. The design-time factory `TradingEngineDbContextFactory` reads the same environment variable and falls back to a localdb placeholder so that `dotnet ef` commands work without a live server.
+The runtime connection string is supplied by the composition root through `AddTradingEngineInfrastructure(connectionString)`. The conventional configuration key is `ConnectionStrings:TradingEngine`, settable through the `ConnectionStrings__TradingEngine` environment variable. In the deployed development environment, Bicep sets that app setting to a passwordless `Authentication=Active Directory Default` connection string so the Web App connects through its system-assigned managed identity; see [Azure SQL development database](azure-sql-development-database.md). The design-time factory `TradingEngineDbContextFactory` reads the same environment variable and falls back to a localdb placeholder so that `dotnet ef` commands work without a live server.
 
 ## Migrations
 
@@ -70,6 +70,8 @@ dotnet ef migrations bundle --project src/TradingEngine.Infrastructure --startup
 ```
 
 The documented command produces a single-file, framework-dependent bundle; run it against a target server with `efbundle.exe --connection "<connection string>"`. A self-contained bundle additionally requires `--self-contained` and an appropriate target runtime (for example `--target-runtime win-x64`).
+
+Migrations never run at application startup. Against the development Azure SQL database they are applied by the manually triggered `Migrate development database` workflow, which builds the bundle on the runner and executes it as a dedicated migration identity over OIDC; see the [operations runbook](azure-sql-operations-runbook.md).
 
 ## Testing
 

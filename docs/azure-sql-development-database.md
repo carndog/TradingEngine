@@ -1,8 +1,8 @@
 # Azure SQL development database
 
-This document describes the Azure SQL infrastructure defined for the TradingEngine development environment: the logical server, the free-offer serverless database, the managed-identity authentication model and the safety gate that keeps SQL disabled until issue #35 deliberately enables it.
+This document describes the Azure SQL infrastructure for the TradingEngine development environment: the logical server, the free-offer serverless database, the managed-identity authentication model and the deployment gate that issue #35 deliberately enabled.
 
-**Current state: the SQL infrastructure is defined in Bicep but disabled.** No Azure SQL resources exist. Nothing in this repository creates them; see [Deployment safety gate](#deployment-safety-gate).
+**Current state: SQL provisioning is enabled for the development environment.** `provisionAzureSql` is `true` in `infra/environments/dev.bicepparam`, so the next infrastructure deployment creates the logical server and free-offer database and sets the `ConnectionStrings__TradingEngine` app setting on the Web App. Provisioning still requires Jason's explicit cost approval immediately before deployment; see [Deployment gate](#deployment-gate) and the [operations runbook](azure-sql-operations-runbook.md).
 
 ## Logical server versus database
 
@@ -25,7 +25,7 @@ The tenant ID is resolved at deploy time with `tenant().tenantId`; it is never c
 
 ## Free-tier cost controls
 
-The database targets the Azure SQL Database **free offer** (General Purpose serverless), which provides 100,000 vCore-seconds of compute and 32 GB of storage per month at no charge:
+The database targets the Azure SQL Database **free offer** (General Purpose serverless), which provides 100,000 vCore-seconds of compute, 32 GB of data storage and 32 GB of backup storage per month at no charge:
 
 | Setting | Value | Reason |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ The database targets the Azure SQL Database **free offer** (General Purpose serv
 
 `useFreeLimit` and `freeLimitExhaustionBehavior` are hard-coded in `sql-database.bicep` rather than parameterised, so the template cannot be coaxed into a bill-over-usage configuration by a parameter override.
 
-**Eligibility caveat:** the free offer is limited per subscription and is not available in every region or subscription type. Region and subscription eligibility for `ukwest` on the target subscription must be confirmed immediately before issue #35 enables the deployment. The `Microsoft.Sql` resource provider must also be registered on the subscription first — it is currently not registered, which is expected while SQL is disabled.
+**Eligibility caveat:** the free offer allows up to 10 General Purpose databases per subscription and is not available in every region or subscription type. Region and subscription eligibility for `ukwest` on the target subscription must be confirmed immediately before the deployment that provisions SQL. The `Microsoft.Sql` resource provider must also be registered on the subscription first.
 
 ## Development network access
 
@@ -58,11 +58,9 @@ az bicep build --file infra/main.bicep --stdout | Out-Null
 az bicep lint --file infra/main.bicep
 ```
 
-## What-if previews
+## What-if preview
 
-Two previews exist, and they answer different questions.
-
-**Safe merge preview (SQL disabled)** — what merging actually deploys today:
+With `provisionAzureSql = true` in `dev.bicepparam`, the merge preview is the SQL-enabled preview — what merging actually deploys. The Entra administrator values are supplied at the command line and are never committed:
 
 ```powershell
 az deployment sub what-if `
@@ -70,48 +68,37 @@ az deployment sub what-if `
   --subscription $subscription `
   --location ukwest `
   --template-file infra/main.bicep `
-  --parameters infra/environments/dev.bicepparam
-```
-
-**Planned SQL preview (SQL enabled)** — what issue #35 would create. The Entra administrator values are supplied at the command line and are never committed:
-
-```powershell
-az deployment sub what-if `
-  --name tradingengine-dev-whatif-sql `
-  --subscription $subscription `
-  --location ukwest `
-  --template-file infra/main.bicep `
   --parameters infra/environments/dev.bicepparam `
-  --parameters provisionAzureSql=true `
   --parameters sqlEntraAdminLogin='<entra-admin-display-name>' `
   --parameters sqlEntraAdminObjectId='<entra-admin-object-id>' `
   --parameters sqlEntraAdminPrincipalType='User'
 ```
 
-The pull-request workflow runs both automatically; see [GitHub Actions infrastructure deployment](github-actions-infrastructure-deployment.md).
+The pull-request workflow runs this preview automatically against the `development-infrastructure-preview` environment; see [GitHub Actions infrastructure deployment](github-actions-infrastructure-deployment.md).
 
-## Deployment safety gate
+## Deployment gate
 
-`provisionAzureSql` is `false` in three independent places, so merging this story cannot create Azure SQL:
+Issue #35 deliberately changed the gate: `provisionAzureSql` is now `true` in `infra/environments/dev.bicepparam`, so merging the issue-35 change provisions Azure SQL on the next infrastructure deployment. The remaining controls are:
 
-- `infra/main.bicep` declares `param provisionAzureSql bool = false`, and both SQL modules are wrapped in `if (provisionAzureSql)` — with `false` the resources are not even part of the compiled deployment.
-- `infra/environments/dev.bicepparam` sets `param provisionAzureSql = false` explicitly.
-- The `deploy` job in the infrastructure workflow passes `--parameters provisionAzureSql=false` on the command line, which overrides the parameter file even if it is later edited.
+- `infra/main.bicep` still declares `param provisionAzureSql bool = false`, so the template default stays safe for any other parameter file or ad-hoc deployment.
+- The Entra administrator parameters are never committed. Both the `whatif` job (`development-infrastructure-preview` environment) and the `deploy` job (`development` environment) fail fast when the `AZURE_SQL_ENTRA_ADMIN_*` secrets are absent, and the `deploy` job supplies them to `az deployment sub create` from the `development` environment secrets.
+- The `deploy` job runs only on pushes to `main` or a manual dispatch from `main`, against the protected `development` environment.
 
-Issue #35 will deliberately flip the gate after Jason approves the cost. Until then, no path — merge, manual dispatch or parameter-file edit alone — provisions SQL.
+**Known limitation:** the template cannot itself reject an enabled-but-incomplete configuration at compile time. Bicep `assert` declarations require the experimental Assertions feature in the installed Bicep version, so they are not used. Instead, the workflow fails fast when the `AZURE_SQL_ENTRA_ADMIN_*` secrets are absent, the `sql-server.bicep` module constrains `entraAdminPrincipalType` to `User`, `Group` or `Application` at deploy time, and Azure rejects an empty administrator login or object ID during deployment validation.
 
-**Known limitation:** the template cannot itself reject an enabled-but-incomplete configuration at compile time. Bicep `assert` declarations require the experimental Assertions feature in the installed Bicep version, so they are not used. Instead, the workflow fails fast when the `AZURE_SQL_ENTRA_ADMIN_*` preview secrets are absent, the `sql-server.bicep` module constrains `entraAdminPrincipalType` to `User`, `Group` or `Application` at deploy time, and Azure rejects an empty administrator login or object ID during deployment validation.
+## Runtime connection string
 
-## Future deployment (issue #35)
+When `provisionAzureSql` is `true`, `main.bicep` composes the passwordless connection string and the `app-service.bicep` module publishes it as the `ConnectionStrings__TradingEngine` app setting on the Web App:
 
-When approved, enabling SQL is a deliberate change: set `provisionAzureSql = true` in `dev.bicepparam`, remove the `--parameters provisionAzureSql=false` override from the deploy step, and supply the Entra administrator values through GitHub environment secrets — never in source control. Confirm free-offer eligibility and `Microsoft.Sql` provider registration first.
+```
+Server=tcp:<server>.database.windows.net,1433;Database=sqldb-tradingengine-dev;Authentication=Active Directory Default;Encrypt=True;
+```
+
+`Authentication=Active Directory Default` uses the `DefaultAzureCredential` chain in Microsoft.Data.SqlClient: the Web App's system-assigned managed identity in Azure, and developer credentials (Azure CLI, Visual Studio) locally. The pinned Microsoft.Data.SqlClient 6.1.6 supports this mode natively — the extension-package split only applies from version 7.0. The setting is non-secret (no password) and Bicep is its source of truth; the what-if shows it as a `Microsoft.Web/sites/config` change on the Web App. When `provisionAzureSql` is `false` the app setting is not emitted at all.
 
 ## Contained-user bootstrap (after provisioning)
 
-Bicep cannot create a contained database user for the managed identity — that is a data-plane operation. After issue #35 provisions the server, an operator performs this once:
-
-1. Connect to `sqldb-tradingengine-dev` as the configured Entra SQL administrator (for example with `sqlcmd` or Azure Data Studio using Microsoft Entra authentication). A temporary firewall rule for the operator IP may be needed and must be removed afterwards.
-2. Create a contained user mapped to the Web App managed identity:
+Bicep cannot create contained database users — that is a data-plane operation. After the deployment provisions the server, an operator performs the bootstrap once, as the configured Entra SQL administrator:
 
 ```sql
 CREATE USER [app-tradingengine-dev-<suffix>] FROM EXTERNAL PROVIDER;
@@ -119,16 +106,9 @@ ALTER ROLE db_datareader ADD MEMBER [app-tradingengine-dev-<suffix>];
 ALTER ROLE db_datawriter ADD MEMBER [app-tradingengine-dev-<suffix>];
 ```
 
-3. Grant **only** `db_datareader` and `db_datawriter` to the runtime identity. Do not grant `db_owner` or `db_ddladmin` — the Web App must not be able to change schema.
-4. Run EF Core migrations separately under an explicitly authorised migration/admin identity, not under the Web App identity.
+Grant **only** `db_datareader` and `db_datawriter` to the runtime identity. Do not grant `db_owner` or `db_ddladmin` — the Web App must not be able to change schema. EF Core migrations run separately under an explicitly authorised migration identity (`db_ddladmin` + `db_datareader` + `db_datawriter`), never under the Web App identity and never at application startup.
 
-The future passwordless connection-string shape is:
-
-```
-Server=tcp:<server>.database.windows.net,1433;Database=sqldb-tradingengine-dev;Authentication=Active Directory Default;Encrypt=True;
-```
-
-The application setting is **not** configured by this story; that belongs to issue #35.
+The full portal-first procedure — including the temporary operator firewall rule, the migration identity's Entra application, federated credential, GitHub environment and contained user — is in the [Azure SQL operations runbook](azure-sql-operations-runbook.md).
 
 ## Verification after provisioning
 
@@ -137,7 +117,7 @@ az sql server show --name $sqlServerName --resource-group rg-tradingengine-dev -
 az sql db show --name sqldb-tradingengine-dev --server $sqlServerName --resource-group rg-tradingengine-dev -o table
 ```
 
-Confirm `administrators.azureADOnlyAuthentication` is `true`, `minimalTlsVersion` is `1.2`, the SKU is `GP_S_Gen5`, `useFreeLimit` is `true` and `freeLimitExhaustionBehavior` is `AutoPause`.
+Confirm `administrators.azureADOnlyAuthentication` is `true`, `minimalTlsVersion` is `1.2`, the SKU is `GP_S_Gen5`, `useFreeLimit` is `true` and `freeLimitExhaustionBehavior` is `AutoPause`. The full smoke test — `__EFMigrationsHistory`, the `/health/database` readiness check through the Web App managed identity, and a failed connection by an identity without a contained user — is in the [operations runbook](azure-sql-operations-runbook.md).
 
 ## Rollback and teardown
 
