@@ -44,7 +44,7 @@ There is no secret to store, rotate or leak. If a client secret were ever requir
 
 ## Azure configuration (portal)
 
-Performed once by Jason; nothing here is committed.
+Steps 1–6 were performed in the Azure portal. Step 7 is optional and has not been enabled in development. None of these portal settings is committed.
 
 1. **App registration** — Entra → App registrations → New registration. Single tenant ("Accounts in this organizational directory only"). Web redirect URI: `https://<web-app-default-hostname>/.auth/login/aad/callback`.
 2. **Enable ID tokens** — In the app registration, open Authentication → Settings → Implicit grant and hybrid flows. Select **ID tokens** and Save; leave **Access tokens** unselected. During live verification, Easy Auth requested `response_type=id_token`; without this setting Entra returned AADSTS700054 and login could not complete.
@@ -52,7 +52,7 @@ Performed once by Jason; nothing here is committed.
 4. **Owner object ID** — Entra → Users → the owner → Object ID. Goes into the `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` GitHub secret as a JSON array, e.g. `["<object-id>"]`.
 5. **GitHub environment secrets** — `AZURE_ENTRA_AUTH_CLIENT_ID` (the app registration's client ID) and `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` on both `development` and `development-infrastructure-preview`.
 6. **Federated credential** — after the Bicep deployment creates `id-tradingengine-easyauth-dev`: app registration → Certificates & secrets → Federated credentials → Add credential → **Managed Identity** scenario → select `id-tradingengine-easyauth-dev`.
-7. **Assignment required (recommended hardening)** — Entra → Enterprise applications → `tradingengine-api-dev-auth` → Properties → *Assignment required?* = Yes, then Users and groups → add the owner. Entra then refuses sign-in for anyone not explicitly assigned, in front of the Easy Auth allowlist.
+7. **Assignment required (optional extra Entra restriction; currently No)** — Entra → Enterprise applications → `tradingengine-api-dev-auth` → Properties → *Assignment required?*. The development application currently uses **No**; App Service still applies the owner allowlist and rejected a signed-in, non-allowlisted tenant user with HTTP 403. If you later set this to **Yes**, assign the owner under Users and groups and grant the application the required admin consent before testing sign-in. Entra then blocks unassigned users before they reach the App Service allowlist.
 
 Between the deployment (step 6 prerequisite) and the federated credential, Easy Auth is enabled but cannot complete sign-ins — the API fails closed (401/403 for everything non-excluded), which is safe for the development environment.
 
