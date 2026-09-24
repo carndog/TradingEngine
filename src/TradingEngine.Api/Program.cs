@@ -49,4 +49,6 @@ app.MapGet(
         (ApplicationVersionProvider versionProvider) => TypedResults.Ok(versionProvider.GetCurrent()))
     .AllowAnonymous();
 
+app.MapGet("/auth-check", () => TypedResults.NoContent());
+
 app.Run();
