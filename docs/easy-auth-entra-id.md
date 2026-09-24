@@ -24,10 +24,10 @@ These are separate principals with separate jobs. None can substitute for anothe
 
 | Endpoint | Policy | Reason |
 | --- | --- | --- |
-| `GET /health` | Anonymous (`excludedPaths`) | App Service Health Check (`siteConfig.healthCheckPath`) probes it without credentials; a 401 would mark every instance unhealthy. Response is `{"status":"Healthy"}` — no sensitive detail, and it never touches SQL. |
+| `GET /health` | Anonymous (`excludedPaths`) | Explicitly available to outside smoke checks. App Service Health Check integrates with built-in authentication and does not require this public exception. Response contains only `{"status":"Healthy"}` and never touches SQL. |
 | `GET /version` | Anonymous (`excludedPaths`) | The deploy workflow verifies the deployed commit with an unauthenticated `curl`. Response is application name, version and commit SHA — all public-repository facts. |
 | `GET /health/database` | Anonymous (`excludedPaths`) **plus** probe key | Kept anonymous so readiness probes do not need an Entra token, but still gated by `X-Database-Probe-Key`: without the header it returns 404, with it only `{"status":"..."}`. The key stays a deploy-time secret. |
-| Everything else (including future administration endpoints from #4) | Owner allowlist | Any non-excluded path requires a valid token whose principal is in `allowedPrincipals.identities`. |
+| `GET /auth-check` and future administration endpoints from #4 | Owner allowlist | `/auth-check` returns 204 with no data when an owner request reaches the API. Every non-excluded path requires an allowed principal. |
 
 `excludedPaths` entries are listed explicitly rather than relying on prefix matching, so the policy does not depend on undocumented matching behaviour.
 
@@ -61,30 +61,27 @@ Easy Auth does not exist locally. `dotnet run --project src/TradingEngine.Api` s
 
 ## Verification (deployed)
 
-Set `deployedHost`, `bearerToken` and `databaseProbeKey` in `src/TradingEngine.Api/http-client.private.env.json` (gitignored), then use `src/TradingEngine.Api/TradingEngine.Api.http`. To get an owner token:
+After the Bicep deployment creates the managed identity, add its federated credential to the app registration. In a private browser window, open `https://<web-app-default-hostname>/auth-check` to confirm an anonymous request receives 401. Then open `https://<web-app-default-hostname>/.auth/login/aad?post_login_redirect_uri=/auth-check`, sign in as the owner and confirm `/auth-check` returns 204. This uses the App Service browser sign-in endpoint and needs no Azure CLI command. A 204 proves the request reached the ASP.NET API without exposing claims or tokens.
 
-```powershell
-az login --tenant <tenant-id>
-az account get-access-token --resource api://<app-registration-client-id> --query accessToken -o tsv
-```
+For Rider, set `deployedHost`, `bearerToken` and `databaseProbeKey` in `src/TradingEngine.Api/http-client.private.env.json` (gitignored), then use `src/TradingEngine.Api/TradingEngine.Api.http`. The bearer token must be an access token for this API acquired by an approved client application. Configuring a native client and delegated API scope for that flow is a separate step; do not assume a generic Azure CLI token has the right audience or consent.
 
 | Check | Expected |
 | --- | --- |
-| `GET /` anonymously | 401 — anonymous rejected |
+| `GET /auth-check` anonymously | 401 — anonymous rejected |
 | `GET /health`, `/version` anonymously | 200 — documented anonymous policy |
 | `GET /health/database` without probe key | 404 — probe-key gate intact |
-| `GET /.auth/me` with owner token | 200 with claims — owner reaches the app |
-| Same-tenant non-owner token on any protected path | 403 — allowlist rejects |
+| `GET /auth-check` with owner session or API bearer token | 204 — request reached the API |
+| Same-tenant non-owner on `/auth-check` | 403 — allowlist rejects |
 | Token from another tenant | 401 — issuer rejected |
 
-If a second same-tenant user or a second tenant is unavailable, record that check as unverified rather than claiming it passed.
+If a second same-tenant user, a second tenant or a supported Rider token flow is unavailable, record that check as unverified rather than claiming it passed.
 
 ## Rotation and revocation
 
 - **Nothing to rotate** — there is no client secret or certificate. The managed-identity assertion is short-lived and platform-managed.
 - **Revoke a person** — remove their object ID from `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` and redeploy (or remove their Enterprise application assignment).
 - **Revoke the credential path** — delete the federated credential on the app registration; Easy Auth can then no longer complete sign-ins.
-- **Revoke everything** — set `configureEntraAuth = false` and redeploy, or delete the app registration.
+- **Emergency stop of all access** — in the Azure portal, stop the Web App. Remove the federated credential to prevent new sign-ins and revoke allowed assignments as appropriate before restarting. Existing sessions may continue until invalidated, so removing the credential alone is not an immediate all-access shutdown. Do not use `configureEntraAuth = false` as revocation: incremental deployment leaves the existing `authsettingsV2` resource in place, and turning authentication off directly would expose the API.
 - **Compromise of the Easy Auth identity** — delete `id-tradingengine-easyauth-dev` and redeploy; the federated credential then points at nothing.
 
 ## What the Bicep changes
