@@ -18,7 +18,7 @@ Accept: application/json
 // {
 //   "dev": {
 //     "deployedHost": "https://<web-app-default-hostname>",
-//     "bearerToken": "<paste token from: az account get-access-token --resource api://<app-registration-client-id> --query accessToken -o tsv>",
+//     "bearerToken": "<API access token from an approved client application>",
 //     "databaseProbeKey": "<probe key>"
 //   }
 // }
@@ -34,14 +34,14 @@ Accept: application/json
 
 ###
 
-// Anonymous request to a protected path: expect 401 from Easy Auth.
-GET {{deployedHost}}/
+// Anonymous request to the protected API check: expect 401 from Easy Auth.
+GET {{deployedHost}}/auth-check
 Accept: application/json
 
 ###
 
-// Authenticated identity check: expect 200 with the owner's claims.
-GET {{deployedHost}}/.auth/me
+// Owner request to the protected API check: expect 204 with no body.
+GET {{deployedHost}}/auth-check
 Accept: application/json
 Authorization: Bearer {{bearerToken}}
 
