@@ -2,7 +2,7 @@
 
 This document describes how to build, validate, deploy and tear down the minimal TradingEngine development platform defined in `infra/`.
 
-The deployment creates a dedicated development resource group containing a low-cost Linux App Service Plan and a Web App that hosts the existing `TradingEngine.Api` shell (`/health` and `/version` only). No Key Vault, Application Insights, authentication or trading infrastructure is provisioned.
+The deployment creates a dedicated development resource group containing a low-cost Linux App Service Plan and a Web App that hosts the existing `TradingEngine.Api` shell (`/health` and `/version` only). No Key Vault, Application Insights or trading infrastructure is provisioned. Since issue #38 the Web App is protected by App Service Easy Auth with Microsoft Entra ID; see [Entra ID Easy Auth for the deployed API](easy-auth-entra-id.md).
 
 Azure SQL infrastructure (a logical server and a free-offer serverless database) is enabled for the development environment: `provisionAzureSql` is `true` in `dev.bicepparam` since issue #35, so the next deployment creates the SQL resources and sets the `ConnectionStrings__TradingEngine` app setting on the Web App. The Entra administrator parameters are supplied at deploy time and never committed. See [Azure SQL development database](azure-sql-development-database.md) and the [operations runbook](azure-sql-operations-runbook.md).
 
@@ -137,7 +137,7 @@ az webapp deploy `
 
 ## Verify the endpoints
 
-Both endpoints are anonymous and safe to call from outside Azure:
+`/health` and `/version` remain anonymously reachable by policy (they are Easy Auth `excludedPaths` returning non-sensitive payloads); every other path requires an owner token — see [Entra ID Easy Auth for the deployed API](easy-auth-entra-id.md).
 
 ```powershell
 Invoke-RestMethod "https://$hostName/health"
@@ -167,3 +167,4 @@ Note that an incremental Bicep deployment does not delete a resource merely beca
 - A system-assigned Managed Identity is enabled for Azure SQL access; its principal ID is exported as the `managedIdentityPrincipalId` deployment output. The contained-user bootstrap that maps it into the database is documented in the [operations runbook](azure-sql-operations-runbook.md) and runs once after the SQL deployment.
 - The Web App's application-settings collection is owned by Bicep (`app-service.bicep` emits a `Microsoft.Web/sites/config` resource when SQL is enabled, which replaces the whole collection). It currently owns `ConnectionStrings__TradingEngine` — non-secret, `Authentication=Active Directory Default` uses the managed identity — and `Diagnostics__DatabaseProbeKey`, a shared key gating `/health/database`. The API exposes `/health` (anonymous platform probe, never touches SQL) and `/health/database` (explicit readiness check requiring the `X-Database-Probe-Key` header).
 - The `appServicePlanFreeOfferExpirationTime` parameter preserves the subscription-assigned temporary App Service Plan free offer already present on the plan (`2026-10-15T17:51:00` for dev, matching the live value reported by what-if). Without it, a deployment would remove the expiry. Reassess the parameter after the offer expires.
+- `configureEntraAuth` enables App Service Easy Auth (issue #38): a dedicated user-assigned managed identity backs the Entra app registration through a federated credential (no client secret), the issuer is pinned to the single deployment tenant and `defaultAuthorizationPolicy.allowedPrincipals.identities` restricts access to the owner allowlist supplied at deploy time. The app registration client ID and allowlist are deploy-time secrets, never committed.

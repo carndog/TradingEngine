@@ -50,6 +50,8 @@ The API exposes three deployment-safe smoke-test endpoints:
 - `GET /health/database` — database readiness check; requires the `X-Database-Probe-Key` header (returns 404 without it) and is independent of `/health` so platform probes never touch SQL
 - `GET /version`
 
+On the deployed App Service these three stay anonymously reachable by policy while every other path requires a Microsoft Entra ID owner token through Easy Auth; see [Entra ID Easy Auth for the deployed API](docs/easy-auth-entra-id.md).
+
 For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`.
 
 See [Solution boundaries and dependency rules](docs/architecture.md) for the Hexagonal Architecture conventions enforced by the architecture tests, and [Current configuration persistence](docs/current-configuration-persistence.md) for the EF Core SQL Server schema, migrations and integration testing.

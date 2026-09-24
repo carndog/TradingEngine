@@ -49,6 +49,8 @@ jobs:
       AZURE_SQL_ENTRA_ADMIN_OBJECT_ID: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_OBJECT_ID }}
       AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE }}
       AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
+      AZURE_ENTRA_AUTH_CLIENT_ID: ${{ secrets.AZURE_ENTRA_AUTH_CLIENT_ID }}
+      AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS: ${{ secrets.AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -60,17 +62,26 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check SQL Entra administrator secrets
+      - name: Check deployment secrets
         run: |
           missing=0
-          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE AZURE_DATABASE_PROBE_KEY; do
+          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE AZURE_DATABASE_PROBE_KEY AZURE_ENTRA_AUTH_CLIENT_ID AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS; do
             if [ -z "${!name}" ]; then
               echo "::error::Required secret $name is not set on the development-infrastructure-preview environment."
               missing=1
             fi
           done
           if [ "$missing" = "1" ]; then
-            echo "Set the AZURE_SQL_ENTRA_ADMIN_* and AZURE_DATABASE_PROBE_KEY secrets on the development-infrastructure-preview environment. Values are never printed."
+            echo "Set the AZURE_SQL_ENTRA_ADMIN_*, AZURE_DATABASE_PROBE_KEY and AZURE_ENTRA_AUTH_* secrets on the development-infrastructure-preview environment. Values are never printed."
+            exit 1
+          fi
+          guid_regex='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          if [[ ! "$AZURE_ENTRA_AUTH_CLIENT_ID" =~ $guid_regex ]]; then
+            echo "::error::AZURE_ENTRA_AUTH_CLIENT_ID must be an application client ID (GUID)."
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"))' <<< "$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" > /dev/null 2>&1; then
+            echo "::error::AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS must be a nonempty JSON array of Entra object-ID GUIDs."
             exit 1
           fi
 
@@ -86,17 +97,19 @@ jobs:
             --parameters sqlEntraAdminObjectId="$AZURE_SQL_ENTRA_ADMIN_OBJECT_ID" \
             --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE" \
             --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
+            --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
+            --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" \
             --no-pretty-print \
             --output json > what-if.json
 
       - name: Write what-if summary
         run: |
           {
-            echo "## Merge preview — Azure SQL enabled"
+            echo "## Merge preview — Azure SQL and Easy Auth enabled"
             echo ""
-            echo "This is the change set that merging this pull request applies to the development environment. \`provisionAzureSql\` is \`true\` in \`dev.bicepparam\`, so merging provisions the Azure SQL logical server and free-offer database and sets the \`ConnectionStrings__TradingEngine\` app setting on the Web App. The Entra administrator values come from the \`development-infrastructure-preview\` environment secrets and are never printed."
+            echo "This is the change set that merging this pull request applies to the development environment. Azure SQL was provisioned under issue #35; inspect the resource rows below for unintended changes. \`configureEntraAuth\` is \`true\`, so the change enables App Service Easy Auth with Microsoft Entra ID, creates the dedicated user-assigned identity and applies the owner principal allowlist. The Entra administrator, app registration and allowlist values come from the \`development-infrastructure-preview\` environment secrets; their values are omitted from this summary."
             echo ""
-            echo "**Cost gate:** merging triggers the real deployment, which provisions Azure SQL. Issue #35 requires Jason's explicit cost approval immediately before that deployment; review this what-if and the free-offer settings in \`infra/modules/sql-database.bicep\` first."
+            echo "**Cost context:** Jason approved and provisioned Azure SQL under issue #35. Before merging, confirm the SQL server, database and App Service Plan are \`NoChange\` in this preview. If that changes in a later preview, review the new cost impact before deploying."
             echo ""
             echo "### What-if: \`$DEPLOYMENT_NAME\`"
             echo ""
@@ -156,6 +169,8 @@ jobs:
       AZURE_SQL_ENTRA_ADMIN_OBJECT_ID: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_OBJECT_ID }}
       AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE: ${{ secrets.AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE }}
       AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
+      AZURE_ENTRA_AUTH_CLIENT_ID: ${{ secrets.AZURE_ENTRA_AUTH_CLIENT_ID }}
+      AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS: ${{ secrets.AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -167,17 +182,26 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check SQL Entra administrator secrets
+      - name: Check deployment secrets
         run: |
           missing=0
-          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE AZURE_DATABASE_PROBE_KEY; do
+          for name in AZURE_SQL_ENTRA_ADMIN_LOGIN AZURE_SQL_ENTRA_ADMIN_OBJECT_ID AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE AZURE_DATABASE_PROBE_KEY AZURE_ENTRA_AUTH_CLIENT_ID AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS; do
             if [ -z "${!name}" ]; then
               echo "::error::Required secret $name is not set on the development environment."
               missing=1
             fi
           done
           if [ "$missing" = "1" ]; then
-            echo "Set the AZURE_SQL_ENTRA_ADMIN_* and AZURE_DATABASE_PROBE_KEY secrets on the development environment. Values are never printed."
+            echo "Set the AZURE_SQL_ENTRA_ADMIN_*, AZURE_DATABASE_PROBE_KEY and AZURE_ENTRA_AUTH_* secrets on the development environment. Values are never printed."
+            exit 1
+          fi
+          guid_regex='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          if [[ ! "$AZURE_ENTRA_AUTH_CLIENT_ID" =~ $guid_regex ]]; then
+            echo "::error::AZURE_ENTRA_AUTH_CLIENT_ID must be an application client ID (GUID)."
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"))' <<< "$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" > /dev/null 2>&1; then
+            echo "::error::AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS must be a nonempty JSON array of Entra object-ID GUIDs."
             exit 1
           fi
 
@@ -192,7 +216,9 @@ jobs:
             --parameters sqlEntraAdminLogin="$AZURE_SQL_ENTRA_ADMIN_LOGIN" \
             --parameters sqlEntraAdminObjectId="$AZURE_SQL_ENTRA_ADMIN_OBJECT_ID" \
             --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE" \
-            --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY"
+            --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
+            --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
+            --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS"
 
       - name: Write deployment summary
         run: |
