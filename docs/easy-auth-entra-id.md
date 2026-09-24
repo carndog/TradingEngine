@@ -47,13 +47,14 @@ There is no secret to store, rotate or leak. If a client secret were ever requir
 Performed once by Jason; nothing here is committed.
 
 1. **App registration** — Entra → App registrations → New registration. Single tenant ("Accounts in this organizational directory only"). Web redirect URI: `https://<web-app-default-hostname>/.auth/login/aad/callback`.
-2. **Application ID URI** — Expose an API → Set → accept `api://<application-client-id>`.
-3. **Owner object ID** — Entra → Users → the owner → Object ID. Goes into the `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` GitHub secret as a JSON array, e.g. `["<object-id>"]`.
-4. **GitHub environment secrets** — `AZURE_ENTRA_AUTH_CLIENT_ID` (the app registration's client ID) and `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` on both `development` and `development-infrastructure-preview`.
-5. **Federated credential** — after the Bicep deployment creates `id-tradingengine-easyauth-dev`: app registration → Certificates & secrets → Federated credentials → Add credential → **Managed Identity** scenario → select `id-tradingengine-easyauth-dev`.
-6. **Assignment required (recommended hardening)** — Entra → Enterprise applications → `tradingengine-api-dev-auth` → Properties → *Assignment required?* = Yes, then Users and groups → add the owner. Entra then refuses sign-in for anyone not explicitly assigned, in front of the Easy Auth allowlist.
+2. **Enable ID tokens** — In the app registration, open Authentication → Settings → Implicit grant and hybrid flows. Select **ID tokens** and Save; leave **Access tokens** unselected. During live verification, Easy Auth requested `response_type=id_token`; without this setting Entra returned AADSTS700054 and login could not complete.
+3. **Application ID URI** — Expose an API → Set → accept `api://<application-client-id>`.
+4. **Owner object ID** — Entra → Users → the owner → Object ID. Goes into the `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` GitHub secret as a JSON array, e.g. `["<object-id>"]`.
+5. **GitHub environment secrets** — `AZURE_ENTRA_AUTH_CLIENT_ID` (the app registration's client ID) and `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` on both `development` and `development-infrastructure-preview`.
+6. **Federated credential** — after the Bicep deployment creates `id-tradingengine-easyauth-dev`: app registration → Certificates & secrets → Federated credentials → Add credential → **Managed Identity** scenario → select `id-tradingengine-easyauth-dev`.
+7. **Assignment required (recommended hardening)** — Entra → Enterprise applications → `tradingengine-api-dev-auth` → Properties → *Assignment required?* = Yes, then Users and groups → add the owner. Entra then refuses sign-in for anyone not explicitly assigned, in front of the Easy Auth allowlist.
 
-Between the deployment (step 5 prerequisite) and the federated credential, Easy Auth is enabled but cannot complete sign-ins — the API fails closed (401/403 for everything non-excluded), which is safe for the development environment.
+Between the deployment (step 6 prerequisite) and the federated credential, Easy Auth is enabled but cannot complete sign-ins — the API fails closed (401/403 for everything non-excluded), which is safe for the development environment.
 
 ## Local development
 
