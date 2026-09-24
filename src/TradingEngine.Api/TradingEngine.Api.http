@@ -7,3 +7,48 @@ Accept: application/json
 
 GET {{host}}/version
 Accept: application/json
+
+###
+
+// Deployed API (Easy Auth). Define deployedHost, bearerToken and databaseProbeKey
+// in http-client.private.env.json next to this file; that file is gitignored.
+// See docs/easy-auth-entra-id.md for how to obtain a token as the owner.
+//
+// http-client.private.env.json example:
+// {
+//   "dev": {
+//     "deployedHost": "https://<web-app-default-hostname>",
+//     "bearerToken": "<paste token from: az account get-access-token --resource api://<app-registration-client-id> --query accessToken -o tsv>",
+//     "databaseProbeKey": "<probe key>"
+//   }
+// }
+
+// Anonymous smoke-test endpoints: expect 200 without any token.
+GET {{deployedHost}}/health
+Accept: application/json
+
+###
+
+GET {{deployedHost}}/version
+Accept: application/json
+
+###
+
+// Anonymous request to a protected path: expect 401 from Easy Auth.
+GET {{deployedHost}}/
+Accept: application/json
+
+###
+
+// Authenticated identity check: expect 200 with the owner's claims.
+GET {{deployedHost}}/.auth/me
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+###
+
+// Database readiness probe: anonymous by policy but gated by the probe key.
+// Without the header expect 404; with it expect 200 and {"status":"Healthy"}.
+GET {{deployedHost}}/health/database
+Accept: application/json
+X-Database-Probe-Key: {{databaseProbeKey}}

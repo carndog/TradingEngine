@@ -23,6 +23,7 @@ Thumbs.db
 !.env.example
 appsettings.*.local.json
 secrets.json
+http-client.private.env.json
 
 ## Packages and logs
 *.nupkg

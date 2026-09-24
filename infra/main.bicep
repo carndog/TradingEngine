@@ -34,12 +34,22 @@ param sqlEntraAdminPrincipalType string = ''
 @secure()
 param databaseProbeKey string = ''
 
+@description('Enable App Service Easy Auth with Microsoft Entra ID on the Web App. When true, entraAuthClientId and entraAuthAllowedPrincipalIds are required at deploy time.')
+param configureEntraAuth bool = false
+
+@description('Application (client) ID of the single-tenant Entra app registration backing Easy Auth. Required when configureEntraAuth is true; never commit a live value.')
+param entraAuthClientId string = ''
+
+@description('Object IDs of the Entra principals allowed through Easy Auth (the owner allowlist). Required when configureEntraAuth is true; never commit live values.')
+param entraAuthAllowedPrincipalIds array = []
+
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'
 var appServicePlanName = 'asp-${namingPrefix}-${environmentName}'
 var webAppName = 'app-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
 var sqlServerName = 'sql-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
 var sqlDatabaseName = 'sqldb-${namingPrefix}-${environmentName}'
 var sqlServerFullyQualifiedDomainName = '${sqlServerName}${environment().suffixes.sqlServerHostname}'
+var easyAuthIdentityName = 'id-${namingPrefix}-easyauth-${environmentName}'
 var tradingEngineConnectionString = provisionAzureSql
   ? 'Server=tcp:${sqlServerFullyQualifiedDomainName},1433;Database=${sqlDatabaseName};Authentication=Active Directory Default;Encrypt=True;'
   : ''
@@ -64,6 +74,10 @@ module appService 'modules/app-service.bicep' = {
     appServicePlanFreeOfferExpirationTime: appServicePlanFreeOfferExpirationTime
     tradingEngineConnectionString: tradingEngineConnectionString
     databaseProbeKey: databaseProbeKey
+    configureEntraAuth: configureEntraAuth
+    entraAuthClientId: entraAuthClientId
+    entraAuthAllowedPrincipalIds: entraAuthAllowedPrincipalIds
+    easyAuthIdentityName: easyAuthIdentityName
     tags: tags
   }
   dependsOn: [
@@ -105,6 +119,8 @@ output resourceGroupName string = resourceGroup.outputs.resourceGroupName
 output webAppName string = appService.outputs.webAppName
 output defaultHostName string = appService.outputs.defaultHostName
 output managedIdentityPrincipalId string = appService.outputs.principalId
+output easyAuthIdentityName string = appService.outputs.easyAuthIdentityName
+output easyAuthIdentityPrincipalId string = appService.outputs.easyAuthIdentityPrincipalId
 output sqlServerName string = sqlServer.?outputs.sqlServerName ?? ''
 output sqlServerFullyQualifiedDomainName string = sqlServer.?outputs.fullyQualifiedDomainName ?? ''
 output sqlDatabaseName string = sqlDatabase.?outputs.databaseName ?? ''
