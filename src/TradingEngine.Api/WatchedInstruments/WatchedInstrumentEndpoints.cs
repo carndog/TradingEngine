@@ -48,7 +48,6 @@ internal static class WatchedInstrumentEndpoints
         }
 
         RegisterWatchedInstrument command = new(
-            Guid.NewGuid(),
             request.Symbol ?? string.Empty,
             request.Exchange ?? string.Empty,
             request.QuoteCurrency ?? string.Empty,

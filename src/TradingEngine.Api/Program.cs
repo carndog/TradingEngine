@@ -23,7 +23,8 @@ builder.Services.AddSingleton<IClock>(SystemClock.Instance);
 builder.Services.AddScoped<RegisterWatchedInstrumentHandler>(provider =>
     new RegisterWatchedInstrumentHandler(
         provider.GetRequiredService<IClock>(),
-        provider.GetRequiredService<IWatchedInstrumentStore>()));
+        provider.GetRequiredService<IWatchedInstrumentStore>(),
+        provider.GetRequiredService<IWatchedInstrumentIdGenerator>()));
 builder.Services.AddScoped<GetWatchedInstrumentHandler>(provider =>
     new GetWatchedInstrumentHandler(provider.GetRequiredService<IWatchedInstrumentStore>()));
 

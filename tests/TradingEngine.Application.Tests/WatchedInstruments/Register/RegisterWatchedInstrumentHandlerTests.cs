@@ -16,10 +16,11 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
         FakeClock clock = new(now);
         CapturingWatchedInstrumentStore store = new();
-        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        Guid generatedId = Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1");
+        FixedWatchedInstrumentIdGenerator idGenerator = new(generatedId);
+        RegisterWatchedInstrumentHandler handler = new(clock, store, idGenerator);
         ChartAnalysisDefinition definition = CreateDefinition();
         RegisterWatchedInstrument command = new(
-            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"),
             "demo-2",
             "xtest",
             "gbp",
@@ -32,6 +33,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Assert.That(result.IsSuccess, Is.True);
         Assert.Multiple(() =>
         {
+            Assert.That(result.Value.Id, Is.EqualTo(generatedId));
             Assert.That(result.Value, Is.SameAs(store.AddedConfiguration!.Instrument));
             Assert.That(store.AddedConfiguration.Definition, Is.SameAs(definition));
             Assert.That(result.Value.Symbol, Is.EqualTo("DEMO-2"));
@@ -50,10 +52,11 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
         FakeClock clock = new(now);
         CapturingWatchedInstrumentStore store = new();
-        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        FixedWatchedInstrumentIdGenerator idGenerator = new(
+            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));
+        RegisterWatchedInstrumentHandler handler = new(clock, store, idGenerator);
         RegisterWatchedInstrument command = new(
-            Guid.Empty,
-            "demo-2",
+            "",
             "xtest",
             "gbp",
             60,
@@ -65,7 +68,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Assert.Multiple(() =>
         {
             Assert.That(result.IsFailure, Is.True);
-            Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.IdRequired));
+            Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.SymbolRequired));
             Assert.That(store.AddedConfiguration, Is.Null);
         });
     }
@@ -77,9 +80,10 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         FakeClock clock = new(now);
         CapturingWatchedInstrumentStore store = new(
             Result.Failure(WatchedInstrumentErrors.DuplicateBusinessKey));
-        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        FixedWatchedInstrumentIdGenerator idGenerator = new(
+            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));
+        RegisterWatchedInstrumentHandler handler = new(clock, store, idGenerator);
         RegisterWatchedInstrument command = new(
-            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"),
             "demo-2",
             "xtest",
             "gbp",
@@ -102,9 +106,10 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
         FakeClock clock = new(now);
         CapturingWatchedInstrumentStore store = new();
-        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        FixedWatchedInstrumentIdGenerator idGenerator = new(
+            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));
+        RegisterWatchedInstrumentHandler handler = new(clock, store, idGenerator);
         RegisterWatchedInstrument command = new(
-            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"),
             "demo-2",
             "xtest",
             "gbp",
@@ -124,9 +129,10 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
         FakeClock clock = new(now);
         CapturingWatchedInstrumentStore store = new();
-        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        FixedWatchedInstrumentIdGenerator idGenerator = new(
+            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));
+        RegisterWatchedInstrumentHandler handler = new(clock, store, idGenerator);
         RegisterWatchedInstrument command = new(
-            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"),
             "demo-2",
             "xtest",
             "gbp",

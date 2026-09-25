@@ -20,11 +20,13 @@ public sealed class WatchedInstrumentEndpointTests
 {
     private WebApplicationFactory<Program> _factory = null!;
     private StubWatchedInstrumentStore _store = null!;
+    private StubWatchedInstrumentIdGenerator _idGenerator = null!;
 
     [SetUp]
     public void SetUp()
     {
         _store = new StubWatchedInstrumentStore();
+        _idGenerator = new StubWatchedInstrumentIdGenerator();
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -36,7 +38,10 @@ public sealed class WatchedInstrumentEndpointTests
                                 "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False"
                         }));
                 builder.ConfigureServices(services =>
-                    services.AddSingleton<IWatchedInstrumentStore>(_store));
+                {
+                    services.AddSingleton<IWatchedInstrumentStore>(_store);
+                    services.AddSingleton<IWatchedInstrumentIdGenerator>(_idGenerator);
+                });
             });
     }
 
@@ -62,7 +67,7 @@ public sealed class WatchedInstrumentEndpointTests
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
             Assert.That(body, Is.Not.Null);
-            Assert.That(body!.Id, Is.Not.EqualTo(Guid.Empty));
+            Assert.That(body!.Id, Is.EqualTo(_idGenerator.NextId));
             Assert.That(
                 response.Headers.Location?.OriginalString,
                 Is.EqualTo($"/api/watched-instruments/{body.Id}"));
@@ -303,6 +308,41 @@ public sealed class WatchedInstrumentEndpointTests
                 Is.EqualTo("publish-signal"));
             Assert.That(body.ResistanceZones, Has.Count.EqualTo(1));
             Assert.That(body.ResistanceZones[0].Conditions![0].Type, Is.EqualTo("breakout"));
+        });
+    }
+
+    [Test]
+    public async Task GetWatchedInstrument_AfterCreate_ReturnsCreatedConfiguration()
+    {
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage created = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            CreateRequest());
+        WatchedInstrumentResponse? createdBody = await created.Content
+            .ReadFromJsonAsync<WatchedInstrumentResponse>();
+        _store.GetResult = _store.AddedConfiguration!;
+
+        HttpResponseMessage response = await client.GetAsync(created.Headers.Location);
+        WatchedInstrumentResponse? body = await response.Content
+            .ReadFromJsonAsync<WatchedInstrumentResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(body, Is.Not.Null);
+            Assert.That(body!.Id, Is.EqualTo(createdBody!.Id));
+            Assert.That(body.Symbol, Is.EqualTo(createdBody.Symbol));
+            Assert.That(body.Exchange, Is.EqualTo(createdBody.Exchange));
+            Assert.That(body.QuoteCurrency, Is.EqualTo(createdBody.QuoteCurrency));
+            Assert.That(body.MonitoringState, Is.EqualTo(createdBody.MonitoringState));
+            Assert.That(body.SamplingIntervalSeconds, Is.EqualTo(createdBody.SamplingIntervalSeconds));
+            Assert.That(body.CreatedAt, Is.EqualTo(createdBody.CreatedAt));
+            Assert.That(body.SupportZones, Has.Count.EqualTo(1));
+            Assert.That(body.SupportZones[0].Id, Is.EqualTo("support-a"));
+            Assert.That(body.ResistanceZones, Has.Count.EqualTo(1));
+            Assert.That(body.ResistanceZones[0].Id, Is.EqualTo("resistance-a"));
         });
     }
 

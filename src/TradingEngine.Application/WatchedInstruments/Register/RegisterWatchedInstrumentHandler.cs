@@ -9,11 +9,16 @@ public sealed class RegisterWatchedInstrumentHandler
 {
     private readonly IClock _clock;
     private readonly IWatchedInstrumentStore _store;
+    private readonly IWatchedInstrumentIdGenerator _idGenerator;
 
-    public RegisterWatchedInstrumentHandler(IClock clock, IWatchedInstrumentStore store)
+    public RegisterWatchedInstrumentHandler(
+        IClock clock,
+        IWatchedInstrumentStore store,
+        IWatchedInstrumentIdGenerator idGenerator)
     {
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _idGenerator = idGenerator ?? throw new ArgumentNullException(nameof(idGenerator));
     }
 
     public async Task<Result<WatchedInstrument>> HandleAsync(
@@ -25,7 +30,7 @@ public sealed class RegisterWatchedInstrumentHandler
 
         Instant occurredAt = _clock.GetCurrentInstant();
         Result<WatchedInstrument> created = WatchedInstrument.Create(
-            command.Id,
+            _idGenerator.NewId(),
             command.Symbol,
             command.Exchange,
             command.QuoteCurrency,
