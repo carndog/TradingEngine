@@ -120,8 +120,7 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
     private static bool IsUniqueViolation(DbUpdateException exception)
     {
-        return exception.InnerException is SqlException sqlException
-            && sqlException.Number is 2601 or 2627;
+        return exception.InnerException is SqlException { Number: 2601 or 2627 };
     }
 
     private static bool IsBusinessKeyViolation(DbUpdateException exception)
