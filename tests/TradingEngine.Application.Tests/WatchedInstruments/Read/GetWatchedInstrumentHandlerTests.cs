@@ -15,7 +15,9 @@ public sealed class GetWatchedInstrumentHandlerTests
     public async Task HandleAsync_WithKnownId_ReturnsStoredConfiguration()
     {
         WatchedInstrumentConfiguration configuration = CreateConfiguration();
-        CapturingWatchedInstrumentStore store = new(Result.Success(), configuration);
+        CapturingWatchedInstrumentStore store = new(
+            CapturingWatchedInstrumentStore.DefaultGeneratedId,
+            configuration);
         GetWatchedInstrumentHandler handler = new(store);
         GetWatchedInstrument query = new(configuration.Instrument.Id);
 
@@ -35,7 +37,7 @@ public sealed class GetWatchedInstrumentHandlerTests
     public async Task HandleAsync_WithUnknownId_ReturnsNotFound()
     {
         CapturingWatchedInstrumentStore store = new(
-            Result.Success(),
+            CapturingWatchedInstrumentStore.DefaultGeneratedId,
             WatchedInstrumentErrors.ConfigurationNotFound);
         GetWatchedInstrumentHandler handler = new(store);
         GetWatchedInstrument query = new(Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));

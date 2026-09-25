@@ -20,13 +20,11 @@ public sealed class WatchedInstrumentEndpointTests
 {
     private WebApplicationFactory<Program> _factory = null!;
     private StubWatchedInstrumentStore _store = null!;
-    private StubWatchedInstrumentIdGenerator _idGenerator = null!;
 
     [SetUp]
     public void SetUp()
     {
         _store = new StubWatchedInstrumentStore();
-        _idGenerator = new StubWatchedInstrumentIdGenerator();
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -38,10 +36,7 @@ public sealed class WatchedInstrumentEndpointTests
                                 "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False"
                         }));
                 builder.ConfigureServices(services =>
-                {
-                    services.AddSingleton<IWatchedInstrumentStore>(_store);
-                    services.AddSingleton<IWatchedInstrumentIdGenerator>(_idGenerator);
-                });
+                    services.AddSingleton<IWatchedInstrumentStore>(_store));
             });
     }
 
@@ -67,7 +62,7 @@ public sealed class WatchedInstrumentEndpointTests
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
             Assert.That(body, Is.Not.Null);
-            Assert.That(body!.Id, Is.EqualTo(_idGenerator.NextId));
+            Assert.That(body!.Id, Is.EqualTo(_store.GeneratedId));
             Assert.That(
                 response.Headers.Location?.OriginalString,
                 Is.EqualTo($"/api/watched-instruments/{body.Id}"));
@@ -83,10 +78,9 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(body.ResistanceZones, Has.Count.EqualTo(1));
             Assert.That(body.ResistanceZones[0].Conditions![0].Type, Is.EqualTo("breakout"));
             Assert.That(body.CreatedAt, Is.EqualTo(body.LastChangedAt));
-            Assert.That(_store.AddedConfiguration, Is.Not.Null);
-            Assert.That(_store.AddedConfiguration!.Instrument.Id, Is.EqualTo(body.Id));
+            Assert.That(_store.AddedRegistration, Is.Not.Null);
             Assert.That(
-                _store.AddedConfiguration.Instrument.MonitoringState,
+                _store.AddedRegistration!.MonitoringState,
                 Is.EqualTo(MonitoringState.Configured));
         });
     }
@@ -112,7 +106,7 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(body, Is.Not.Null);
             Assert.That(body!.MonitoringState, Is.EqualTo("monitored"));
             Assert.That(
-                _store.AddedConfiguration!.Instrument.MonitoringState,
+                _store.AddedRegistration!.MonitoringState,
                 Is.EqualTo(MonitoringState.Monitored));
         });
     }
@@ -141,7 +135,7 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(
                 ProblemCode(problem),
                 Is.EqualTo("watched_instrument.sampling_interval_out_of_range"));
-            Assert.That(_store.AddedConfiguration, Is.Null);
+            Assert.That(_store.AddedRegistration, Is.Null);
         });
     }
 
@@ -171,7 +165,7 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(
                 ProblemCode(problem),
                 Is.EqualTo("chart_analysis.zone_invalid_boundary_order"));
-            Assert.That(_store.AddedConfiguration, Is.Null);
+            Assert.That(_store.AddedRegistration, Is.Null);
         });
     }
 
@@ -202,7 +196,7 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(
                 ProblemCode(problem),
                 Is.EqualTo("chart_analysis.condition_type_undefined"));
-            Assert.That(_store.AddedConfiguration, Is.Null);
+            Assert.That(_store.AddedRegistration, Is.Null);
         });
     }
 
@@ -226,7 +220,7 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(
                 ProblemCode(problem),
                 Is.EqualTo("watched_instrument.monitoring_state_undefined"));
-            Assert.That(_store.AddedConfiguration, Is.Null);
+            Assert.That(_store.AddedRegistration, Is.Null);
         });
     }
 
@@ -246,14 +240,14 @@ public sealed class WatchedInstrumentEndpointTests
             Assert.That(
                 ProblemCode(problem),
                 Is.EqualTo("watched_instrument.request_required"));
-            Assert.That(_store.AddedConfiguration, Is.Null);
+            Assert.That(_store.AddedRegistration, Is.Null);
         });
     }
 
     [Test]
     public async Task PostWatchedInstrument_WithDuplicateBusinessKey_ReturnsConflictProblem()
     {
-        _store.AddResult = Result.Failure(WatchedInstrumentErrors.DuplicateBusinessKey);
+        _store.AddResult = WatchedInstrumentErrors.DuplicateBusinessKey;
         HttpClient client = _factory.CreateClient();
         RegisterWatchedInstrumentRequest request = CreateRequest();
 
@@ -321,7 +315,9 @@ public sealed class WatchedInstrumentEndpointTests
             CreateRequest());
         WatchedInstrumentResponse? createdBody = await created.Content
             .ReadFromJsonAsync<WatchedInstrumentResponse>();
-        _store.GetResult = _store.AddedConfiguration!;
+        _store.GetResult = CreateConfiguration(
+            _store.GeneratedId,
+            _store.AddedRegistration!);
 
         HttpResponseMessage response = await client.GetAsync(created.Headers.Location);
         WatchedInstrumentResponse? body = await response.Content
@@ -435,6 +431,30 @@ public sealed class WatchedInstrumentEndpointTests
             ]).Value;
 
         return new WatchedInstrumentConfiguration(instrument, definition);
+    }
+
+    private static WatchedInstrumentConfiguration CreateConfiguration(
+        Guid id,
+        WatchedInstrumentRegistration registration)
+    {
+        WatchedInstrument instrument = WatchedInstrument
+            .Create(
+                id,
+                registration.Fields.Symbol,
+                registration.Fields.Exchange,
+                registration.Fields.QuoteCurrency,
+                registration.Fields.SamplingIntervalSeconds,
+                registration.CreatedAt)
+            .Value;
+
+        if (registration.MonitoringState == MonitoringState.Monitored)
+        {
+            instrument.StartMonitoring(
+                registration.Fields.SamplingIntervalSeconds,
+                registration.CreatedAt);
+        }
+
+        return new WatchedInstrumentConfiguration(instrument, registration.Definition);
     }
 
     private static string? ProblemCode(ProblemDetails? problem)

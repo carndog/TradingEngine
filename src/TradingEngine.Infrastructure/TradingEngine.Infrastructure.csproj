@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <EmbeddedResource Include="MonitoringRules/Xml/chart-analysis-definition.xsd" />
+    <InternalsVisibleTo Include="TradingEngine.Infrastructure.Tests" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" />

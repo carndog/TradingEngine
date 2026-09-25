@@ -59,6 +59,32 @@ public sealed class WatchedInstrument
             return WatchedInstrumentErrors.IdRequired;
         }
 
+        Result<WatchedInstrumentFields> fields = Validate(
+            symbol,
+            exchange,
+            quoteCurrency,
+            samplingIntervalSeconds);
+        if (fields.IsFailure)
+        {
+            return fields.Error;
+        }
+
+        WatchedInstrumentFields value = fields.Value;
+        return new WatchedInstrument(
+            id,
+            value.Symbol,
+            value.Exchange,
+            value.QuoteCurrency,
+            value.SamplingIntervalSeconds,
+            createdAt);
+    }
+
+    public static Result<WatchedInstrumentFields> Validate(
+        string? symbol,
+        string? exchange,
+        string? quoteCurrency,
+        int samplingIntervalSeconds)
+    {
         Result<string> symbolResult = NormalizeSymbol(symbol);
         if (symbolResult.IsFailure)
         {
@@ -82,13 +108,11 @@ public sealed class WatchedInstrument
             return WatchedInstrumentErrors.SamplingIntervalOutOfRange;
         }
 
-        return new WatchedInstrument(
-            id,
+        return new WatchedInstrumentFields(
             symbolResult.Value,
             exchangeResult.Value,
             quoteCurrencyResult.Value,
-            samplingIntervalSeconds,
-            createdAt);
+            samplingIntervalSeconds);
     }
 
     public static Result<WatchedInstrument> Restore(

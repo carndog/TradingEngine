@@ -24,27 +24,25 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
     }
 
-    public async Task<Result> AddAsync(
-        WatchedInstrumentConfiguration configuration,
+    public async Task<Result<Guid>> AddAsync(
+        WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(registration);
 
-        WatchedInstrument instrument = configuration.Instrument;
+        WatchedInstrumentFields fields = registration.Fields;
         WatchedInstrumentRow row = new()
         {
-            Id = instrument.Id,
-            Symbol = instrument.Symbol,
-            Exchange = instrument.Exchange,
-            QuoteCurrency = instrument.QuoteCurrency,
-            MonitoringState = instrument.MonitoringState.ToString(),
-            SamplingIntervalSeconds = instrument.SamplingIntervalSeconds,
-            CreatedAt = instrument.CreatedAt,
-            LastChangedAt = instrument.LastChangedAt,
+            Symbol = fields.Symbol,
+            Exchange = fields.Exchange,
+            QuoteCurrency = fields.QuoteCurrency,
+            MonitoringState = registration.MonitoringState.ToString(),
+            SamplingIntervalSeconds = fields.SamplingIntervalSeconds,
+            CreatedAt = registration.CreatedAt,
+            LastChangedAt = registration.CreatedAt,
             ChartAnalysisDefinition = new ChartAnalysisDefinitionRow
             {
-                WatchedInstrumentId = instrument.Id,
-                DefinitionXml = _serializer.Serialize(configuration.Definition)
+                DefinitionXml = _serializer.Serialize(registration.Definition)
             }
         };
 
@@ -61,7 +59,7 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
                 : WatchedInstrumentErrors.DuplicateId;
         }
 
-        return Result.Success();
+        return row.Id;
     }
 
     public async Task<Result<WatchedInstrumentConfiguration>> GetAsync(

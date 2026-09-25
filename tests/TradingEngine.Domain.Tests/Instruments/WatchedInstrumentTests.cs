@@ -460,6 +460,38 @@ public sealed class WatchedInstrumentTests
         Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.ChangePrecedesLatestChange));
     }
 
+    [Test]
+    public void Validate_WithValidValues_ReturnsNormalizedFields()
+    {
+        Result<WatchedInstrumentFields> fields = WatchedInstrument.Validate(
+            "  demo-1  ",
+            "xtest",
+            "gbp",
+            60);
+
+        Assert.That(fields.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(fields.Value.Symbol, Is.EqualTo("DEMO-1"));
+            Assert.That(fields.Value.Exchange, Is.EqualTo("XTEST"));
+            Assert.That(fields.Value.QuoteCurrency, Is.EqualTo("GBP"));
+            Assert.That(fields.Value.SamplingIntervalSeconds, Is.EqualTo(60));
+        });
+    }
+
+    [Test]
+    public void Validate_WithInvalidSymbol_ReturnsError()
+    {
+        Result<WatchedInstrumentFields> fields = WatchedInstrument.Validate(
+            "demo 1",
+            "xtest",
+            "gbp",
+            60);
+
+        Assert.That(fields.IsFailure, Is.True);
+        Assert.That(fields.Error, Is.EqualTo(WatchedInstrumentErrors.SymbolContainsWhitespace));
+    }
+
     private static Result<WatchedInstrument> CreateInstrument()
     {
         return WatchedInstrument.Create(

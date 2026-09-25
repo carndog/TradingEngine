@@ -5,8 +5,8 @@ namespace TradingEngine.Application.Ports;
 
 public interface IWatchedInstrumentStore
 {
-    Task<Result> AddAsync(
-        WatchedInstrumentConfiguration configuration,
+    Task<Result<Guid>> AddAsync(
+        WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken);
 
     Task<Result<WatchedInstrumentConfiguration>> GetAsync(

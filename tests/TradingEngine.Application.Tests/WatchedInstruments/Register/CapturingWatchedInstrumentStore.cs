@@ -7,37 +7,40 @@ namespace TradingEngine.Application.Tests.WatchedInstruments.Register;
 
 internal sealed class CapturingWatchedInstrumentStore : IWatchedInstrumentStore
 {
-    private readonly Result _addResult;
+    internal static readonly Guid DefaultGeneratedId =
+        Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1");
+
+    private readonly Result<Guid> _addResult;
     private readonly Result<WatchedInstrumentConfiguration>? _getResult;
 
     public CapturingWatchedInstrumentStore()
-        : this(Result.Success(), null)
+        : this(DefaultGeneratedId, null)
     {
     }
 
-    public CapturingWatchedInstrumentStore(Result addResult)
+    public CapturingWatchedInstrumentStore(Result<Guid> addResult)
         : this(addResult, null)
     {
     }
 
     public CapturingWatchedInstrumentStore(
-        Result addResult,
+        Result<Guid> addResult,
         Result<WatchedInstrumentConfiguration>? getResult)
     {
         _addResult = addResult;
         _getResult = getResult;
     }
 
-    public WatchedInstrumentConfiguration? AddedConfiguration { get; private set; }
+    public WatchedInstrumentRegistration? AddedRegistration { get; private set; }
 
     public Guid? RequestedInstrumentId { get; private set; }
 
-    public Task<Result> AddAsync(
-        WatchedInstrumentConfiguration configuration,
+    public Task<Result<Guid>> AddAsync(
+        WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        AddedConfiguration = configuration;
+        AddedRegistration = registration;
         return Task.FromResult(_addResult);
     }
 

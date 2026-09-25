@@ -15,13 +15,7 @@ namespace TradingEngine.Infrastructure.IntegrationTests.Persistence;
 [TestFixture]
 public sealed class CurrentConfigurationPersistenceTests
 {
-    private static readonly Guid RoundTripInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e01");
     private static readonly Guid UnknownInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e02");
-    private static readonly Guid DuplicateInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e03");
-    private static readonly Guid FirstConflictingInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e04");
-    private static readonly Guid SecondConflictingInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e05");
-    private static readonly Guid CanonicalXmlInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e06");
-    private static readonly Guid CancelledAddInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e07");
     private static readonly Guid UnavailableDatabaseInstrumentId = Guid.Parse("2f6f9c1a-3b7e-4d5a-9c8b-1a2b3c4d5e08");
 
     private MsSqlContainer _container = null!;
@@ -49,47 +43,124 @@ public sealed class CurrentConfigurationPersistenceTests
     [Test]
     public async Task AddAsync_ThenGetAsync_RoundTripsConfiguration()
     {
-        Instant createdAt = Instant.FromUtc(2026, 1, 2, 9, 30).PlusNanoseconds(123456700);
-        Instant changedAt = createdAt.PlusNanoseconds(765432100);
-        WatchedInstrument instrument = WatchedInstrument
-            .Create(RoundTripInstrumentId, "demo-2", "xtest", "gbp", 60, createdAt)
-            .Value;
-        Assert.That(instrument.StartMonitoring(120, changedAt).IsSuccess, Is.True);
-        ChartAnalysisDefinition definition = CreateDefinition();
+        WatchedInstrumentRegistration registration = CreateRegistration(
+            "demo-2",
+            "xtest",
+            "gbp",
+            MonitoringState.Monitored);
 
+        Result<Guid> added;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
-            Result added = await store.AddAsync(
-                new WatchedInstrumentConfiguration(instrument, definition),
-                CancellationToken.None);
-            Assert.That(added.IsSuccess, Is.True);
+            added = await store.AddAsync(registration, CancellationToken.None);
         }
+
+        Assert.That(added.IsSuccess, Is.True);
 
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
             Result<WatchedInstrumentConfiguration> retrieved = await store.GetAsync(
-                instrument.Id,
+                added.Value,
                 CancellationToken.None);
 
             Assert.That(retrieved.IsSuccess, Is.True);
             WatchedInstrument restored = retrieved.Value.Instrument;
             Assert.Multiple(() =>
             {
-                Assert.That(restored.Id, Is.EqualTo(instrument.Id));
+                Assert.That(restored.Id, Is.EqualTo(added.Value));
                 Assert.That(restored.Symbol, Is.EqualTo("DEMO-2"));
                 Assert.That(restored.Exchange, Is.EqualTo("XTEST"));
                 Assert.That(restored.QuoteCurrency, Is.EqualTo("GBP"));
                 Assert.That(restored.MonitoringState, Is.EqualTo(MonitoringState.Monitored));
-                Assert.That(restored.SamplingIntervalSeconds, Is.EqualTo(120));
-                Assert.That(restored.CreatedAt, Is.EqualTo(createdAt));
-                Assert.That(restored.LastChangedAt, Is.EqualTo(changedAt));
+                Assert.That(restored.SamplingIntervalSeconds, Is.EqualTo(60));
+                Assert.That(restored.CreatedAt, Is.EqualTo(registration.CreatedAt));
+                Assert.That(restored.LastChangedAt, Is.EqualTo(registration.CreatedAt));
                 Assert.That(
                     _serializer.Serialize(retrieved.Value.Definition),
-                    Is.EqualTo(_serializer.Serialize(definition)));
+                    Is.EqualTo(_serializer.Serialize(registration.Definition)));
             });
         }
+    }
+
+    [Test]
+    public async Task AddAsync_AssignsSameGeneratedIdToBothRows()
+    {
+        Result<Guid> added;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            added = await store.AddAsync(
+                CreateRegistration("AAA", "XTEST", "USD", MonitoringState.Configured),
+                CancellationToken.None);
+        }
+
+        Assert.That(added.IsSuccess, Is.True);
+        Assert.That(added.Value, Is.Not.EqualTo(Guid.Empty));
+
+        int instrumentRows;
+        int definitionRows;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            instrumentRows = await context.Database
+                .SqlQuery<int>(
+                    $"SELECT COUNT(*) AS [Value] FROM WatchedInstruments WHERE Id = {added.Value}")
+                .SingleAsync();
+            definitionRows = await context.Database
+                .SqlQuery<int>(
+                    $"SELECT COUNT(*) AS [Value] FROM ChartAnalysisDefinitions WHERE WatchedInstrumentId = {added.Value}")
+                .SingleAsync();
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(instrumentRows, Is.EqualTo(1));
+            Assert.That(definitionRows, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task AddAsync_ConsecutiveAdds_GenerateSqlServerOrderedIds()
+    {
+        Result<Guid> first;
+        Result<Guid> second;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            first = await store.AddAsync(
+                CreateRegistration("SEQ-A", "XTEST", "USD", MonitoringState.Configured),
+                CancellationToken.None);
+            second = await store.AddAsync(
+                CreateRegistration("SEQ-B", "XTEST", "USD", MonitoringState.Configured),
+                CancellationToken.None);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.IsSuccess, Is.True);
+            Assert.That(second.IsSuccess, Is.True);
+            Assert.That(second.Value, Is.Not.EqualTo(first.Value));
+        });
+
+        List<Guid> ordered = new();
+        await using (SqlConnection connection = new(_connectionString))
+        {
+            await connection.OpenAsync();
+            await using SqlCommand command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT [Value] FROM (VALUES (@first), (@second)) AS ids([Value]) ORDER BY [Value]";
+            command.Parameters.AddWithValue("@first", first.Value);
+            command.Parameters.AddWithValue("@second", second.Value);
+
+            await using SqlDataReader reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                ordered.Add(reader.GetGuid(0));
+            }
+        }
+
+        Assert.That(ordered, Is.EqualTo(new[] { first.Value, second.Value }));
     }
 
     [Test]
@@ -111,71 +182,37 @@ public sealed class CurrentConfigurationPersistenceTests
     }
 
     [Test]
-    public async Task AddAsync_WithDuplicateId_ReturnsConflict()
-    {
-        WatchedInstrument first = CreateInstrument(DuplicateInstrumentId, "AAA", "XTEST", "USD");
-        WatchedInstrument second = CreateInstrument(DuplicateInstrumentId, "BBB", "XTEST", "USD");
-
-        Result firstAdd;
-        await using (TradingEngineDbContext context = CreateContext())
-        {
-            SqlServerWatchedInstrumentStore store = new(context, _serializer);
-            firstAdd = await store.AddAsync(
-                new WatchedInstrumentConfiguration(first, CreateDefinition()),
-                CancellationToken.None);
-        }
-
-        Result secondAdd;
-        await using (TradingEngineDbContext context = CreateContext())
-        {
-            SqlServerWatchedInstrumentStore store = new(context, _serializer);
-            secondAdd = await store.AddAsync(
-                new WatchedInstrumentConfiguration(second, CreateDefinition()),
-                CancellationToken.None);
-        }
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(firstAdd.IsSuccess, Is.True);
-            Assert.That(secondAdd.IsFailure, Is.True);
-            Assert.That(secondAdd.Error, Is.EqualTo(WatchedInstrumentErrors.DuplicateId));
-            Assert.That(secondAdd.Error.Type, Is.EqualTo(ErrorType.Conflict));
-        });
-    }
-
-    [Test]
     public async Task AddAsync_WithDuplicateBusinessKey_ReturnsConflictAndLeavesNoPartialRow()
     {
-        WatchedInstrument first = CreateInstrument(FirstConflictingInstrumentId, "CCC", "XTEST", "EUR");
-        WatchedInstrument second = CreateInstrument(SecondConflictingInstrumentId, "CCC", "XTEST", "EUR");
-
-        Result firstAdd;
+        Result<Guid> firstAdd;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
             firstAdd = await store.AddAsync(
-                new WatchedInstrumentConfiguration(first, CreateDefinition()),
+                CreateRegistration("CCC", "XTEST", "EUR", MonitoringState.Configured),
                 CancellationToken.None);
         }
 
-        Result secondAdd;
+        Result<Guid> secondAdd;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
             secondAdd = await store.AddAsync(
-                new WatchedInstrumentConfiguration(second, CreateDefinition()),
+                CreateRegistration("CCC", "XTEST", "EUR", MonitoringState.Configured),
                 CancellationToken.None);
         }
 
-        Result<WatchedInstrumentConfiguration> orphaned;
-        int persistedDefinitionRows;
+        int instrumentRows;
+        int orphanedDefinitionRows;
         await using (TradingEngineDbContext context = CreateContext())
         {
-            SqlServerWatchedInstrumentStore store = new(context, _serializer);
-            orphaned = await store.GetAsync(second.Id, CancellationToken.None);
-            persistedDefinitionRows = await context.Database
+            instrumentRows = await context.Database
                 .SqlQuery<int>(
-                    $"SELECT COUNT(*) AS [Value] FROM ChartAnalysisDefinitions WHERE WatchedInstrumentId = {second.Id}")
+                    $"SELECT COUNT(*) AS [Value] FROM WatchedInstruments WHERE Exchange = {"XTEST"} AND Symbol = {"CCC"} AND QuoteCurrency = {"EUR"}")
+                .SingleAsync();
+            orphanedDefinitionRows = await context.Database
+                .SqlQuery<int>(
+                    $"SELECT COUNT(*) AS [Value] FROM ChartAnalysisDefinitions d WHERE NOT EXISTS (SELECT 1 FROM WatchedInstruments w WHERE w.Id = d.WatchedInstrumentId)")
                 .SingleAsync();
         }
 
@@ -185,9 +222,8 @@ public sealed class CurrentConfigurationPersistenceTests
             Assert.That(secondAdd.IsFailure, Is.True);
             Assert.That(secondAdd.Error, Is.EqualTo(WatchedInstrumentErrors.DuplicateBusinessKey));
             Assert.That(secondAdd.Error.Type, Is.EqualTo(ErrorType.Conflict));
-            Assert.That(orphaned.IsFailure, Is.True);
-            Assert.That(orphaned.Error, Is.EqualTo(WatchedInstrumentErrors.ConfigurationNotFound));
-            Assert.That(persistedDefinitionRows, Is.EqualTo(0));
+            Assert.That(instrumentRows, Is.EqualTo(1));
+            Assert.That(orphanedDefinitionRows, Is.EqualTo(0));
         });
     }
 
@@ -210,14 +246,20 @@ public sealed class CurrentConfigurationPersistenceTests
     [Test]
     public async Task AddAsync_PersistsCanonicalXmlInDefinitionColumn()
     {
-        WatchedInstrument instrument = CreateInstrument(CanonicalXmlInstrumentId, "DDD", "XTEST", "JPY");
-        ChartAnalysisDefinition definition = CreateDefinition();
+        WatchedInstrumentRegistration registration = CreateRegistration(
+            "DDD",
+            "XTEST",
+            "JPY",
+            MonitoringState.Configured);
 
-        await using TradingEngineDbContext context = CreateContext();
-        SqlServerWatchedInstrumentStore store = new(context, _serializer);
-        await store.AddAsync(
-            new WatchedInstrumentConfiguration(instrument, definition),
-            CancellationToken.None);
+        Result<Guid> added;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            added = await store.AddAsync(registration, CancellationToken.None);
+        }
+
+        Assert.That(added.IsSuccess, Is.True);
 
         await using SqlConnection connection = new(_connectionString);
         await connection.OpenAsync();
@@ -225,20 +267,24 @@ public sealed class CurrentConfigurationPersistenceTests
         command.CommandText =
             "SELECT CONVERT(nvarchar(max), DefinitionXml) FROM ChartAnalysisDefinitions " +
             "WHERE WatchedInstrumentId = @id";
-        command.Parameters.AddWithValue("@id", instrument.Id);
+        command.Parameters.AddWithValue("@id", added.Value);
 
         string? storedXml = (string?)await command.ExecuteScalarAsync();
 
         Assert.That(storedXml, Is.Not.Null);
         Assert.That(
             XElement.Parse(storedXml!).ToString(),
-            Is.EqualTo(XElement.Parse(_serializer.Serialize(definition)).ToString()));
+            Is.EqualTo(XElement.Parse(_serializer.Serialize(registration.Definition)).ToString()));
     }
 
     [Test]
     public async Task AddAsync_WhenCancelled_PropagatesCancellation()
     {
-        WatchedInstrument instrument = CreateInstrument(CancelledAddInstrumentId, "EEE", "XTEST", "CHF");
+        WatchedInstrumentRegistration registration = CreateRegistration(
+            "EEE",
+            "XTEST",
+            "CHF",
+            MonitoringState.Configured);
 
         await using TradingEngineDbContext context = CreateContext();
         SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -246,9 +292,7 @@ public sealed class CurrentConfigurationPersistenceTests
         await cancellation.CancelAsync();
 
         Assert.CatchAsync<OperationCanceledException>(
-            () => store.AddAsync(
-                new WatchedInstrumentConfiguration(instrument, CreateDefinition()),
-                cancellation.Token));
+            () => store.AddAsync(registration, cancellation.Token));
     }
 
     [Test]
@@ -281,15 +325,21 @@ public sealed class CurrentConfigurationPersistenceTests
         return new TradingEngineDbContext(options);
     }
 
-    private static WatchedInstrument CreateInstrument(
-        Guid id,
+    private static WatchedInstrumentRegistration CreateRegistration(
         string symbol,
         string exchange,
-        string quoteCurrency)
+        string quoteCurrency,
+        MonitoringState monitoringState)
     {
-        return WatchedInstrument
-            .Create(id, symbol, exchange, quoteCurrency, 60, Instant.FromUtc(2026, 1, 2, 9, 30))
+        WatchedInstrumentFields fields = WatchedInstrument
+            .Validate(symbol, exchange, quoteCurrency, 60)
             .Value;
+
+        return new WatchedInstrumentRegistration(
+            fields,
+            monitoringState,
+            Instant.FromUtc(2026, 1, 2, 9, 30),
+            CreateDefinition());
     }
 
     private static ChartAnalysisDefinition CreateDefinition()

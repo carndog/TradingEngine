@@ -7,18 +7,25 @@ namespace TradingEngine.Api.IntegrationTests.WatchedInstruments;
 
 internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 {
-    public Result AddResult { get; set; } = Result.Success();
+    public Guid GeneratedId { get; set; } = Guid.Parse("9c7f2a31-84d5-4e6b-a1c2-3d4e5f607182");
+
+    public Result<Guid> AddResult { get; set; }
 
     public Result<WatchedInstrumentConfiguration>? GetResult { get; set; }
 
-    public WatchedInstrumentConfiguration? AddedConfiguration { get; private set; }
+    public WatchedInstrumentRegistration? AddedRegistration { get; private set; }
 
-    public Task<Result> AddAsync(
-        WatchedInstrumentConfiguration configuration,
+    public StubWatchedInstrumentStore()
+    {
+        AddResult = GeneratedId;
+    }
+
+    public Task<Result<Guid>> AddAsync(
+        WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        AddedConfiguration = configuration;
+        AddedRegistration = registration;
         return Task.FromResult(AddResult);
     }
 

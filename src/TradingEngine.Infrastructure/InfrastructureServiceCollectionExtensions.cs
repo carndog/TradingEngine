@@ -18,7 +18,6 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddDbContext<TradingEngineDbContext>(options =>
             options.UseSqlServer(connectionString));
         services.AddSingleton<ChartAnalysisDefinitionXmlSerializer>();
-        services.AddSingleton<IWatchedInstrumentIdGenerator, SqlServerWatchedInstrumentIdGenerator>();
         services.AddScoped<IWatchedInstrumentStore, SqlServerWatchedInstrumentStore>();
 
         return services;
