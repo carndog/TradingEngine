@@ -3,7 +3,7 @@ using TradingEngine.Infrastructure.Persistence;
 namespace TradingEngine.Infrastructure.Tests.Persistence;
 
 [TestFixture]
-public sealed class SequentialWatchedInstrumentIdGeneratorTests
+public sealed class SqlServerWatchedInstrumentIdGeneratorTests
 {
     private static readonly int[] SqlServerSegmentOrder =
         [10, 11, 12, 13, 14, 15, 8, 9, 6, 7, 4, 5, 0, 1, 2, 3];
@@ -11,7 +11,7 @@ public sealed class SequentialWatchedInstrumentIdGeneratorTests
     [Test]
     public void NewId_Always_GeneratesUniqueIdsOrderedForSqlServer()
     {
-        SequentialWatchedInstrumentIdGenerator generator = new();
+        SqlServerWatchedInstrumentIdGenerator generator = new();
 
         Guid[] ids = Enumerable
             .Range(0, 1024)
