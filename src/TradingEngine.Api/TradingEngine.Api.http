@@ -52,3 +52,130 @@ Authorization: Bearer {{bearerToken}}
 GET {{deployedHost}}/health/database
 Accept: application/json
 X-Database-Probe-Key: {{databaseProbeKey}}
+
+###
+
+// Local API: watched-instrument administration. Easy Auth does not exist
+// locally, so these requests do not verify Azure authorization.
+POST {{host}}/api/watched-instruments
+Content-Type: application/json
+
+{
+  "symbol": "DEMO-2",
+  "exchange": "XTEST",
+  "quoteCurrency": "GBP",
+  "samplingIntervalSeconds": 60,
+  "monitoringState": "configured",
+  "priceScale": 4,
+  "supportZones": [
+    {
+      "id": "support-a",
+      "lower": 95.0,
+      "level": 100.0,
+      "upper": 105.0,
+      "conditions": [
+        { "type": "buy-zone", "actionId": "publish-signal" },
+        { "type": "support-loss", "actionId": "publish-signal" }
+      ]
+    }
+  ],
+  "resistanceZones": [
+    {
+      "id": "resistance-a",
+      "lower": 120.0,
+      "level": 125.0,
+      "upper": 130.0,
+      "conditions": [
+        { "type": "breakout", "actionId": "publish-signal" }
+      ]
+    }
+  ]
+}
+
+> {%
+    client.global.set("createdInstrumentId", response.body.id);
+%}
+
+###
+
+// Replace the id with the value returned by the previous POST.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}
+Accept: application/json
+
+###
+
+// Deployed API: anonymous administration request, expect 401 from Easy Auth.
+POST {{deployedHost}}/api/watched-instruments
+Content-Type: application/json
+
+{
+  "symbol": "DEMO-2",
+  "exchange": "XTEST",
+  "quoteCurrency": "GBP",
+  "samplingIntervalSeconds": 60,
+  "monitoringState": "configured",
+  "priceScale": 4,
+  "supportZones": [
+    {
+      "id": "support-a",
+      "lower": 95.0,
+      "level": 100.0,
+      "upper": 105.0,
+      "conditions": [
+        { "type": "buy-zone", "actionId": "publish-signal" },
+        { "type": "support-loss", "actionId": "publish-signal" }
+      ]
+    }
+  ],
+  "resistanceZones": []
+}
+
+###
+
+// Deployed API: authenticated owner request, expect 201 with a Location header.
+POST {{deployedHost}}/api/watched-instruments
+Content-Type: application/json
+Authorization: Bearer {{bearerToken}}
+
+{
+  "symbol": "DEMO-2",
+  "exchange": "XTEST",
+  "quoteCurrency": "GBP",
+  "samplingIntervalSeconds": 60,
+  "monitoringState": "configured",
+  "priceScale": 4,
+  "supportZones": [
+    {
+      "id": "support-a",
+      "lower": 95.0,
+      "level": 100.0,
+      "upper": 105.0,
+      "conditions": [
+        { "type": "buy-zone", "actionId": "publish-signal" },
+        { "type": "support-loss", "actionId": "publish-signal" }
+      ]
+    }
+  ],
+  "resistanceZones": [
+    {
+      "id": "resistance-a",
+      "lower": 120.0,
+      "level": 125.0,
+      "upper": 130.0,
+      "conditions": [
+        { "type": "breakout", "actionId": "publish-signal" }
+      ]
+    }
+  ]
+}
+
+> {%
+    client.global.set("createdInstrumentId", response.body.id);
+%}
+
+###
+
+// Deployed API: authenticated owner read, expect 200; unknown ids return 404.
+GET {{deployedHost}}/api/watched-instruments/{{createdInstrumentId}}
+Accept: application/json
+Authorization: Bearer {{bearerToken}}

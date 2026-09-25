@@ -37,6 +37,18 @@ public sealed class RegisterWatchedInstrumentHandler
             return created;
         }
 
+        if (command.MonitoringState == MonitoringState.Monitored)
+        {
+            Result monitoring = created.Value.StartMonitoring(
+                command.SamplingIntervalSeconds,
+                occurredAt);
+
+            if (monitoring.IsFailure)
+            {
+                return monitoring.Error;
+            }
+        }
+
         Result stored = await _store.AddAsync(
             new WatchedInstrumentConfiguration(created.Value, command.Definition),
             cancellationToken);

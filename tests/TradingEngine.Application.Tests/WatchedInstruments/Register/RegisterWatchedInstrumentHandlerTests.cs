@@ -24,6 +24,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
             "xtest",
             "gbp",
             60,
+            MonitoringState.Configured,
             definition);
 
         Result<WatchedInstrument> result = await handler.HandleAsync(command, CancellationToken.None);
@@ -56,6 +57,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
             "xtest",
             "gbp",
             60,
+            MonitoringState.Configured,
             CreateDefinition());
 
         Result<WatchedInstrument> result = await handler.HandleAsync(command, CancellationToken.None);
@@ -82,6 +84,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
             "xtest",
             "gbp",
             60,
+            MonitoringState.Configured,
             CreateDefinition());
 
         Result<WatchedInstrument> result = await handler.HandleAsync(command, CancellationToken.None);
@@ -106,12 +109,40 @@ public sealed class RegisterWatchedInstrumentHandlerTests
             "xtest",
             "gbp",
             60,
+            MonitoringState.Configured,
             CreateDefinition());
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
 
         Assert.ThrowsAsync<OperationCanceledException>(
             () => handler.HandleAsync(command, cancellation.Token));
+    }
+
+    [Test]
+    public async Task HandleAsync_WithMonitoredState_StartsMonitoring()
+    {
+        Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
+        FakeClock clock = new(now);
+        CapturingWatchedInstrumentStore store = new();
+        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        RegisterWatchedInstrument command = new(
+            Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"),
+            "demo-2",
+            "xtest",
+            "gbp",
+            60,
+            MonitoringState.Monitored,
+            CreateDefinition());
+
+        Result<WatchedInstrument> result = await handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(result.Value.MonitoringState, Is.EqualTo(MonitoringState.Monitored));
+            Assert.That(result.Value.LastChangedAt, Is.EqualTo(now));
+            Assert.That(store.AddedConfiguration!.Instrument, Is.SameAs(result.Value));
+        });
     }
 
     private static ChartAnalysisDefinition CreateDefinition()
