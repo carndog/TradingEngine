@@ -41,3 +41,9 @@ The following rules are non-negotiable:
 - Keep tests deterministic and obtain time through an injected clock outside Domain.
 
 Before completing a change, run `dotnet build TradingEngine.sln` and `dotnet test TradingEngine.sln`, then review the complete diff against these instructions and the public-scope boundary.
+
+## Commit and push approval
+
+Agents must not run `git commit`, `git commit --amend`, `git push`, `git merge`, `git rebase`, `git reset` or any other command that writes history locally or to a remote, and must not create, edit, close or merge a pull request, without Jason's explicit approval for that specific action.
+
+Before requesting approval, present `git status`, the complete diff, test results and the proposed commit message or PR text, then wait. Local, uncommitted working-tree changes are permitted.

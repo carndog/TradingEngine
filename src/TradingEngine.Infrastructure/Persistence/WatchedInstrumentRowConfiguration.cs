@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.ValueGeneration;
 
 namespace TradingEngine.Infrastructure.Persistence;
 
@@ -10,7 +11,9 @@ internal sealed class WatchedInstrumentRowConfiguration : IEntityTypeConfigurati
         builder.ToTable("WatchedInstruments");
 
         builder.HasKey(row => row.Id);
-        builder.Property(row => row.Id).ValueGeneratedNever();
+        builder.Property(row => row.Id)
+            .ValueGeneratedOnAdd()
+            .HasValueGenerator<SequentialGuidValueGenerator>();
 
         builder.Property(row => row.Symbol)
             .IsRequired()

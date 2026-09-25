@@ -32,6 +32,14 @@ public static class ChartAnalysisErrors
         "chart_analysis.condition_type_undefined",
         "Unknown chart condition type.");
 
+    public static readonly Error ZoneRequired = Error.Validation(
+        "chart_analysis.zone_required",
+        "A zone entry cannot be null.");
+
+    public static readonly Error ConditionRequired = Error.Validation(
+        "chart_analysis.condition_required",
+        "A zone condition entry cannot be null.");
+
     public static readonly Error MissingZones = Error.Validation(
         "chart_analysis.missing_zones",
         "A chart-analysis definition requires at least one zone.");

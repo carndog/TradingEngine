@@ -76,6 +76,10 @@ public static class WatchedInstrumentErrors
         "watched_instrument.duplicate_business_key",
         "A watched instrument with the same exchange, symbol and quote currency already exists.");
 
+    public static readonly Error RequestRequired = Error.Validation(
+        "watched_instrument.request_required",
+        "A watched-instrument request body is required.");
+
     public static readonly Error ConfigurationNotFound = Error.NotFound(
         "watched_instrument.configuration_not_found",
         "No configuration exists for the requested watched instrument.");

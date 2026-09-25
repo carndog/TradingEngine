@@ -10,7 +10,9 @@ public sealed class RegisterWatchedInstrumentHandler
     private readonly IClock _clock;
     private readonly IWatchedInstrumentStore _store;
 
-    public RegisterWatchedInstrumentHandler(IClock clock, IWatchedInstrumentStore store)
+    public RegisterWatchedInstrumentHandler(
+        IClock clock,
+        IWatchedInstrumentStore store)
     {
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _store = store ?? throw new ArgumentNullException(nameof(store));
@@ -24,21 +26,28 @@ public sealed class RegisterWatchedInstrumentHandler
         ArgumentNullException.ThrowIfNull(command.Definition);
 
         Instant occurredAt = _clock.GetCurrentInstant();
-        Result<WatchedInstrument> created = WatchedInstrument.Create(
-            command.Id,
+        Result<WatchedInstrumentFields> fields = WatchedInstrument.Validate(
             command.Symbol,
             command.Exchange,
             command.QuoteCurrency,
-            command.SamplingIntervalSeconds,
-            occurredAt);
+            command.SamplingIntervalSeconds);
 
-        if (created.IsFailure)
+        if (fields.IsFailure)
         {
-            return created;
+            return fields.Error;
         }
 
-        Result stored = await _store.AddAsync(
-            new WatchedInstrumentConfiguration(created.Value, command.Definition),
+        if (Enum.IsDefined(command.MonitoringState) is false)
+        {
+            return WatchedInstrumentErrors.MonitoringStateUndefined;
+        }
+
+        Result<Guid> stored = await _store.AddAsync(
+            new WatchedInstrumentRegistration(
+                fields.Value,
+                command.MonitoringState,
+                occurredAt,
+                command.Definition),
             cancellationToken);
 
         if (stored.IsFailure)
@@ -46,6 +55,14 @@ public sealed class RegisterWatchedInstrumentHandler
             return stored.Error;
         }
 
-        return created;
+        return WatchedInstrument.Restore(
+            stored.Value,
+            fields.Value.Symbol,
+            fields.Value.Exchange,
+            fields.Value.QuoteCurrency,
+            command.MonitoringState,
+            fields.Value.SamplingIntervalSeconds,
+            occurredAt,
+            occurredAt);
     }
 }
