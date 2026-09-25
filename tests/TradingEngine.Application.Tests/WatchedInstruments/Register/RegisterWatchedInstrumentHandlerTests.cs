@@ -76,6 +76,31 @@ public sealed class RegisterWatchedInstrumentHandlerTests
     }
 
     [Test]
+    public async Task HandleAsync_WithUndefinedMonitoringState_ReturnsErrorAndSkipsStore()
+    {
+        Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);
+        FakeClock clock = new(now);
+        CapturingWatchedInstrumentStore store = new();
+        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        RegisterWatchedInstrument command = new(
+            "demo-2",
+            "xtest",
+            "gbp",
+            60,
+            (MonitoringState)99,
+            CreateDefinition());
+
+        Result<WatchedInstrument> result = await handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.MonitoringStateUndefined));
+            Assert.That(store.AddedRegistration, Is.Null);
+        });
+    }
+
+    [Test]
     public async Task HandleAsync_WhenStoreRejectsConfiguration_ReturnsStoreError()
     {
         Instant now = Instant.FromUtc(2026, 1, 2, 9, 30);

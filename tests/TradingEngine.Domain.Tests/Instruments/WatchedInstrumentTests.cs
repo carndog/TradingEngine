@@ -492,6 +492,14 @@ public sealed class WatchedInstrumentTests
         Assert.That(fields.Error, Is.EqualTo(WatchedInstrumentErrors.SymbolContainsWhitespace));
     }
 
+    [Test]
+    public void WatchedInstrumentFields_CanOnlyBeCreatedThroughDomainValidation()
+    {
+        Assert.That(
+            typeof(WatchedInstrumentFields).GetConstructors(),
+            Is.Empty);
+    }
+
     private static Result<WatchedInstrument> CreateInstrument()
     {
         return WatchedInstrument.Create(

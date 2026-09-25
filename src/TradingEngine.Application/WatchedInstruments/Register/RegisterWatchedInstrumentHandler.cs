@@ -37,6 +37,11 @@ public sealed class RegisterWatchedInstrumentHandler
             return fields.Error;
         }
 
+        if (Enum.IsDefined(command.MonitoringState) is false)
+        {
+            return WatchedInstrumentErrors.MonitoringStateUndefined;
+        }
+
         Result<Guid> stored = await _store.AddAsync(
             new WatchedInstrumentRegistration(
                 fields.Value,
@@ -50,31 +55,14 @@ public sealed class RegisterWatchedInstrumentHandler
             return stored.Error;
         }
 
-        Result<WatchedInstrument> created = WatchedInstrument.Create(
+        return WatchedInstrument.Restore(
             stored.Value,
             fields.Value.Symbol,
             fields.Value.Exchange,
             fields.Value.QuoteCurrency,
+            command.MonitoringState,
             fields.Value.SamplingIntervalSeconds,
+            occurredAt,
             occurredAt);
-
-        if (created.IsFailure)
-        {
-            return created;
-        }
-
-        if (command.MonitoringState == MonitoringState.Monitored)
-        {
-            Result monitoring = created.Value.StartMonitoring(
-                command.SamplingIntervalSeconds,
-                occurredAt);
-
-            if (monitoring.IsFailure)
-            {
-                return monitoring.Error;
-            }
-        }
-
-        return created;
     }
 }
