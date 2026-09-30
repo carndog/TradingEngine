@@ -43,6 +43,14 @@ param entraAuthClientId string = ''
 @description('Object IDs of the Entra principals allowed through Easy Auth (the owner allowlist). Required when configureEntraAuth is true; never commit live values.')
 param entraAuthAllowedPrincipalIds array = []
 
+@description('Retention in days for Application Insights and its Log Analytics workspace. 30 is the supported minimum and bounds development cost.')
+@minValue(30)
+@maxValue(730)
+param applicationInsightsRetentionDays int = 30
+
+@description('Daily ingestion cap in GB on the Log Analytics workspace, as a string to allow fractional values. Ingestion stops for the rest of the UTC day when reached; it is not a billing budget.')
+param logAnalyticsDailyDataCapGb string = '0.1'
+
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'
 var appServicePlanName = 'asp-${namingPrefix}-${environmentName}'
 var webAppName = 'app-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
@@ -50,6 +58,8 @@ var sqlServerName = 'sql-${namingPrefix}-${environmentName}-${uniqueString(subsc
 var sqlDatabaseName = 'sqldb-${namingPrefix}-${environmentName}'
 var sqlServerFullyQualifiedDomainName = '${sqlServerName}${environment().suffixes.sqlServerHostname}'
 var easyAuthIdentityName = 'id-${namingPrefix}-easyauth-${environmentName}'
+var applicationInsightsName = 'appi-${namingPrefix}-${environmentName}'
+var logAnalyticsWorkspaceName = 'log-${namingPrefix}-${environmentName}'
 var tradingEngineConnectionString = provisionAzureSql
   ? 'Server=tcp:${sqlServerFullyQualifiedDomainName},1433;Database=${sqlDatabaseName};Authentication=Active Directory Default;Encrypt=True;'
   : ''
@@ -78,6 +88,23 @@ module appService 'modules/app-service.bicep' = {
     entraAuthClientId: entraAuthClientId
     entraAuthAllowedPrincipalIds: entraAuthAllowedPrincipalIds
     easyAuthIdentityName: easyAuthIdentityName
+    applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
+    tags: tags
+  }
+  dependsOn: [
+    resourceGroup
+  ]
+}
+
+module monitoring 'modules/monitoring.bicep' = {
+  name: 'monitoring-${environmentName}'
+  scope: az.resourceGroup(resourceGroupName)
+  params: {
+    logAnalyticsWorkspaceName: logAnalyticsWorkspaceName
+    applicationInsightsName: applicationInsightsName
+    location: location
+    retentionInDays: applicationInsightsRetentionDays
+    dailyDataCapGb: logAnalyticsDailyDataCapGb
     tags: tags
   }
   dependsOn: [
@@ -121,6 +148,8 @@ output defaultHostName string = appService.outputs.defaultHostName
 output managedIdentityPrincipalId string = appService.outputs.principalId
 output easyAuthIdentityName string = appService.outputs.easyAuthIdentityName
 output easyAuthIdentityPrincipalId string = appService.outputs.easyAuthIdentityPrincipalId
+output applicationInsightsName string = monitoring.outputs.applicationInsightsName
+output logAnalyticsWorkspaceName string = monitoring.outputs.logAnalyticsWorkspaceName
 output sqlServerName string = sqlServer.?outputs.sqlServerName ?? ''
 output sqlServerFullyQualifiedDomainName string = sqlServer.?outputs.fullyQualifiedDomainName ?? ''
 output sqlDatabaseName string = sqlDatabase.?outputs.databaseName ?? ''

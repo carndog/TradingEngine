@@ -32,6 +32,10 @@ param entraAuthAllowedPrincipalIds array = []
 @description('Name of the dedicated user-assigned managed identity used as the Easy Auth federated credential. Created only when configureEntraAuth is true; it must not be assigned to any other resource.')
 param easyAuthIdentityName string = ''
 
+@description('Application Insights connection string resolved from the monitoring resources during deployment, exposed as the APPLICATIONINSIGHTS_CONNECTION_STRING app setting. Empty disables Azure Monitor telemetry export.')
+@secure()
+param applicationInsightsConnectionString string = ''
+
 @description('Tags applied to the resources.')
 param tags object
 
@@ -83,7 +87,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth) {
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '') {
   parent: webApp
   name: 'appsettings'
   properties: union(
@@ -96,6 +100,11 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
     configureEntraAuth
       ? {
           OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID: easyAuthIdentity.?properties.clientId ?? ''
+        }
+      : {},
+    applicationInsightsConnectionString != ''
+      ? {
+          APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsightsConnectionString
         }
       : {}
   )
@@ -159,6 +168,28 @@ resource webAppAuth 'Microsoft.Web/sites/config@2023-12-01' = if (configureEntra
       tokenStore: {
         enabled: true
       }
+    }
+  }
+}
+
+resource webAppLogs 'Microsoft.Web/sites/config@2023-12-01' = {
+  parent: webApp
+  name: 'logs'
+  properties: {
+    applicationLogs: {
+      fileSystem: {
+        level: 'Information'
+      }
+    }
+    httpLogs: {
+      fileSystem: {
+        enabled: true
+        retentionInDays: 7
+        retentionInMb: 35
+      }
+    }
+    detailedErrorMessages: {
+      enabled: true
     }
   }
 }

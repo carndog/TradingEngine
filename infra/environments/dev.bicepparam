@@ -18,6 +18,13 @@ param provisionAzureSql = true
 // must never be committed to this repository.
 param configureEntraAuth = true
 
+// Application Insights and its Log Analytics workspace for the development
+// environment (issue #36). Retention is the supported minimum and the daily
+// ingestion cap bounds telemetry cost; reaching the cap pauses ingestion for
+// the rest of the UTC day.
+param applicationInsightsRetentionDays = 30
+param logAnalyticsDailyDataCapGb = '0.1'
+
 param tags = {
   project: 'trading-engine'
   environment: 'dev'
