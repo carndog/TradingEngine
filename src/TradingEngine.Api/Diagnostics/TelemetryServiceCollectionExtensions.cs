@@ -1,4 +1,5 @@
 using Azure.Monitor.OpenTelemetry.AspNetCore;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using TradingEngine.Contracts.Diagnostics;
@@ -18,36 +19,40 @@ internal static class TelemetryServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentException.ThrowIfNullOrWhiteSpace(environmentName);
 
-        services.AddHostedService<StartupTelemetryHostedService>();
-
         string? connectionString = configuration[ConnectionStringConfigurationKey];
-        if (string.IsNullOrWhiteSpace(connectionString))
+
+        if (string.IsNullOrWhiteSpace(connectionString) is false)
         {
-            return services;
+            VersionResponse identity = new ApplicationVersionProvider().GetCurrent();
+
+            services
+                .AddOpenTelemetry()
+                .ConfigureResource(resource => resource
+                    .AddService(identity.Application, serviceVersion: identity.Version)
+                    .AddAttributes(
+                        new Dictionary<string, object>
+                        {
+                            [TelemetryEnrichmentProcessor.EnvironmentTag] = environmentName
+                        }))
+                .UseAzureMonitor(options =>
+                {
+                    options.ConnectionString = connectionString;
+                    options.SamplingRatio = 1.0F;
+                    options.EnableLiveMetrics = true;
+                });
+
+            services.ConfigureOpenTelemetryTracerProvider((_, tracerProviderBuilder) =>
+                tracerProviderBuilder
+                    .AddProcessor(new TelemetryEnrichmentProcessor(identity, environmentName))
+                    .AddProcessor(new SensitiveDataTelemetryProcessor()));
+
+            services.ConfigureOpenTelemetryLoggerProvider((_, loggerProviderBuilder) =>
+                loggerProviderBuilder
+                    .AddProcessor(new TelemetryEnrichmentLogProcessor(identity, environmentName))
+                    .AddProcessor(new SensitiveDataLogProcessor()));
         }
 
-        VersionResponse identity = new ApplicationVersionProvider().GetCurrent();
-
-        services
-            .AddOpenTelemetry()
-            .ConfigureResource(resource => resource
-                .AddService(identity.Application, serviceVersion: identity.Version)
-                .AddAttributes(
-                    new Dictionary<string, object>
-                    {
-                        [TelemetryEnrichmentProcessor.EnvironmentTag] = environmentName
-                    }))
-            .UseAzureMonitor(options =>
-            {
-                options.ConnectionString = connectionString;
-                options.SamplingRatio = 1.0F;
-                options.EnableLiveMetrics = true;
-            });
-
-        services.ConfigureOpenTelemetryTracerProvider((_, tracerProviderBuilder) =>
-            tracerProviderBuilder
-                .AddProcessor(new TelemetryEnrichmentProcessor(identity, environmentName))
-                .AddProcessor(new SensitiveDataTelemetryProcessor()));
+        services.AddHostedService<StartupTelemetryHostedService>();
 
         return services;
     }

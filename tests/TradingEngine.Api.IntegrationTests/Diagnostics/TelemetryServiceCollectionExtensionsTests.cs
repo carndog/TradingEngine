@@ -55,6 +55,37 @@ public sealed class TelemetryServiceCollectionExtensionsTests
             Is.True);
     }
 
+    [Test]
+    public void AddApiTelemetry_WhenConnectionStringPresent_RegistersStartupTelemetryAfterExporters()
+    {
+        ServiceCollection services = CreateServices();
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    [TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey] =
+                        "InstrumentationKey=00000000-0000-0000-0000-000000000000"
+                })
+            .Build();
+
+        services.AddApiTelemetry(configuration, "Test");
+        using ServiceProvider provider = services.BuildServiceProvider();
+        List<IHostedService> hostedServices = provider.GetServices<IHostedService>().ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                hostedServices[^1],
+                Is.TypeOf<StartupTelemetryHostedService>());
+            Assert.That(
+                hostedServices.Any(service => service.GetType().Name == "TelemetryHostedService"),
+                Is.True);
+            Assert.That(
+                hostedServices.Any(service => service.GetType().Name == "ExporterRegistrationHostedService"),
+                Is.True);
+        });
+    }
+
     private static ServiceCollection CreateServices()
     {
         ServiceCollection services = new();
