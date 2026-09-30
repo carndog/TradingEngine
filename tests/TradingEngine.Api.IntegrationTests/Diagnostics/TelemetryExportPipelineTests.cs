@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Net;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -37,14 +37,10 @@ public sealed class TelemetryExportPipelineTests
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.ConfigureAppConfiguration((_, configuration) =>
-                    configuration.AddInMemoryCollection(
-                        new Dictionary<string, string?>
-                        {
-                            [TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey] =
-                                "InstrumentationKey=00000000-0000-0000-0000-000000000000;" +
-                                "IngestionEndpoint=https://localhost/"
-                        }));
+                builder.UseSetting(
+                    TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
+                    "InstrumentationKey=00000000-0000-0000-0000-000000000000;" +
+                    "IngestionEndpoint=https://localhost/");
                 builder.ConfigureServices(services =>
                 {
                     services.ConfigureOpenTelemetryTracerProvider((_, tracerProviderBuilder) =>
@@ -98,11 +94,7 @@ public sealed class TelemetryExportPipelineTests
 
         using HttpResponseMessage response = await client.SendAsync(request);
 
-        Activity? span = _activities.Items
-            .LastOrDefault(activity =>
-                activity.DisplayName.Contains("health", StringComparison.OrdinalIgnoreCase)
-                || activity.TagObjects.Any(tag =>
-                    tag.Value?.ToString()?.Contains("/health") is true));
+        Activity? span = await WaitForServerSpanAsync(TimeSpan.FromSeconds(10));
 
         Assert.Multiple(() =>
         {
@@ -280,9 +272,27 @@ public sealed class TelemetryExportPipelineTests
     }
 
     [Test]
-    public void Debug_DumpPipelineState()
+    public async Task Debug_DumpPipelineState()
     {
-        _ = _factory.CreateClient();
+        List<string> seen = [];
+        using ActivityListener listener = new()
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStarted = activity => seen.Add(
+                $"STARTED:{activity.Source.Name}|{activity.DisplayName}|{activity.Kind}"),
+            ActivityStopped = activity => seen.Add(
+                $"{activity.Source.Name}|{activity.DisplayName}|{activity.Kind}")
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        List<string> diagnosticEvents = [];
+        using IDisposable subscription = DiagnosticListener.AllListeners.Subscribe(
+            new AnonymousDiagnosticObserver(diagnosticEvents));
+
+        HttpClient client = _factory.CreateClient();
+        using HttpResponseMessage response = await client.GetAsync("/health?probe=x");
 
         object? tracerProvider = _factory.Services.GetService<TracerProvider>();
         object? loggerProvider = _factory.Services.GetService<LoggerProvider>();
@@ -292,8 +302,58 @@ public sealed class TelemetryExportPipelineTests
 
         Assert.Fail(
             $"tracer={tracerProvider is not null}, logger={loggerProvider is not null}, " +
+            $"status={response.StatusCode}, " +
             $"activities={_activities.Items.Count}, logs={_logRecords.Items.Count}, " +
+            $"seen=[{string.Join(", ", seen)}], " +
+            $"diag=[{string.Join(", ", diagnosticEvents)}], " +
             $"hosted=[{hostedServices}]");
+    }
+
+    private async Task<Activity?> WaitForServerSpanAsync(TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            Activity? span = _activities.Items.LastOrDefault(IsServerSpan);
+            if (span is not null)
+            {
+                return span;
+            }
+
+            await Task.Delay(50);
+        }
+
+        return _activities.Items.LastOrDefault(IsServerSpan);
+    }
+
+    private static bool IsServerSpan(Activity activity)
+    {
+        return activity.Kind == ActivityKind.Server;
+    }
+
+    private sealed class AnonymousDiagnosticObserver(List<string> events)
+        : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>
+    {
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "Microsoft.AspNetCore")
+            {
+                listener.Subscribe(this);
+            }
+        }
+
+        public void OnNext(KeyValuePair<string, object?> value)
+        {
+            events.Add(value.Key);
+        }
+
+        public void OnError(Exception error)
+        {
+        }
+
+        public void OnCompleted()
+        {
+        }
     }
 
     private static bool HasStartedEventName(CapturedLogRecord record)

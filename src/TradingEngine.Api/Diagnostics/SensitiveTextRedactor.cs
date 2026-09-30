@@ -54,10 +54,10 @@ internal static class SensitiveTextRedactor
 
     public static string Redact(string value)
     {
-        string redacted = CredentialPairPattern.Replace(
-            value,
+        string redacted = BearerPattern.Replace(value, $"Bearer {RedactedMarker}");
+        redacted = CredentialPairPattern.Replace(
+            redacted,
             match => $"{match.Groups[1].Value}{match.Groups[2].Value}{RedactedMarker}");
-        redacted = BearerPattern.Replace(redacted, $"Bearer {RedactedMarker}");
         redacted = ChartAnalysisDocumentPattern.Replace(redacted, "<redacted chart-analysis document>");
 
         return redacted;
