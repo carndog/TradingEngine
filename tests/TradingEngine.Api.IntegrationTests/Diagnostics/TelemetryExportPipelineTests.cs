@@ -3,6 +3,7 @@ using System.Net;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
@@ -276,6 +277,23 @@ public sealed class TelemetryExportPipelineTests
                     pair.Key == CustomEventNameAttribute
                     && pair.Value?.ToString() == StartupTelemetryHostedService.StartupEventName)),
             Is.True);
+    }
+
+    [Test]
+    public void Debug_DumpPipelineState()
+    {
+        _ = _factory.CreateClient();
+
+        object? tracerProvider = _factory.Services.GetService<TracerProvider>();
+        object? loggerProvider = _factory.Services.GetService<LoggerProvider>();
+        string hostedServices = string.Join(
+            ", ",
+            _factory.Services.GetServices<IHostedService>().Select(s => s.GetType().Name));
+
+        Assert.Fail(
+            $"tracer={tracerProvider is not null}, logger={loggerProvider is not null}, " +
+            $"activities={_activities.Items.Count}, logs={_logRecords.Items.Count}, " +
+            $"hosted=[{hostedServices}]");
     }
 
     private static bool HasStartedEventName(CapturedLogRecord record)
