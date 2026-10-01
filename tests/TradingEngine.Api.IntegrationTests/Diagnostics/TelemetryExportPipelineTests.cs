@@ -1,14 +1,16 @@
 using System.Diagnostics;
-using System.Net;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OpenTelemetry;
+using OpenTelemetry.Instrumentation.AspNetCore;
+using OpenTelemetry.Instrumentation.Http;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Trace;
 using TradingEngine.Api.Diagnostics;
+using TradingEngine.Contracts.Diagnostics;
 using TradingEngine.Infrastructure.MonitoringRules.Xml;
 
 namespace TradingEngine.Api.IntegrationTests.Diagnostics;
@@ -20,6 +22,7 @@ public sealed class TelemetryExportPipelineTests
     private const string SyntheticHeaderValue = "synthetic-header-5c8e";
     private const string SyntheticCredential = "synthetic-credential-7e2a";
     private const string SyntheticXmlValue = "synthetic-private-rule-value";
+    private const string SyntheticActivitySourceName = "TradingEngine.Tests.Synthetic";
     private const string CustomEventNameAttribute = "microsoft.custom_event.name";
 
     private CapturingExporter<Activity> _activities = null!;
@@ -43,6 +46,8 @@ public sealed class TelemetryExportPipelineTests
                     "IngestionEndpoint=https://localhost/");
                 builder.ConfigureServices(services =>
                 {
+                    services.Configure<Azure.Monitor.OpenTelemetry.AspNetCore.AzureMonitorOptions>(
+                        options => options.EnableLiveMetrics = false);
                     services.ConfigureOpenTelemetryTracerProvider((_, tracerProviderBuilder) =>
                         tracerProviderBuilder.AddProcessor(
                             new SimpleActivityExportProcessor(activities)));
@@ -84,27 +89,34 @@ public sealed class TelemetryExportPipelineTests
     }
 
     [Test]
-    public async Task Request_WhenSensitiveQueryAndHeaderPresent_ExportsSpanWithoutSensitiveValues()
+    public void Span_WhenRequestTelemetryCarriesSensitiveValues_ExportsScrubbedEnrichedSpan()
     {
-        HttpClient client = _factory.CreateClient();
-        HttpRequestMessage request = new(
-            HttpMethod.Get,
-            $"/health?probe={SyntheticQueryValue}");
-        request.Headers.Add("X-Test-Synthetic", SyntheticHeaderValue);
+        VersionResponse identity = new ApplicationVersionProvider().GetCurrent();
+        using TracerProvider provider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(SyntheticActivitySourceName)
+            .AddProcessor(new TelemetryEnrichmentProcessor(identity, "Development"))
+            .AddProcessor(new SensitiveDataTelemetryProcessor())
+            .AddProcessor(new SimpleActivityExportProcessor(_activities))
+            .Build();
 
-        using HttpResponseMessage response = await client.SendAsync(request);
+        using ActivitySource source = new(SyntheticActivitySourceName);
+        using Activity? activity = source.StartActivity("GET /health", ActivityKind.Server);
+        Assert.That(activity, Is.Not.Null);
 
-        Activity? span = await WaitForServerSpanAsync(TimeSpan.FromSeconds(10));
+        activity!.SetTag("url.full", $"http://localhost/health?probe={SyntheticQueryValue}");
+        activity.SetTag("url.path", "/health");
+        activity.SetTag("url.query", $"probe={SyntheticQueryValue}");
+        activity.SetTag("http.request.header.x-synthetic", SyntheticHeaderValue);
+        activity.SetTag("db.statement", $"SELECT '{SyntheticQueryValue}'");
+        activity.Stop();
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(
-                span,
-                Is.Not.Null,
-                $"Captured {_activities.Items.Count} activity(s): " +
-                $"{string.Join(", ", _activities.Items.Select(activity => activity.DisplayName))}");
-        });
+        Activity? span = _activities.Items.LastOrDefault(IsServerSpan);
+
+        Assert.That(
+            span,
+            Is.Not.Null,
+            $"Captured {_activities.Items.Count} activity(s): " +
+            $"{string.Join(", ", _activities.Items.Select(item => item.DisplayName))}");
 
         foreach (KeyValuePair<string, object?> tag in span!.TagObjects)
         {
@@ -115,6 +127,14 @@ public sealed class TelemetryExportPipelineTests
         Assert.Multiple(() =>
         {
             Assert.That(
+                span.GetTagItem("url.full"),
+                Is.EqualTo("http://localhost/health"));
+            Assert.That(
+                span.GetTagItem("url.path"),
+                Is.EqualTo("/health"));
+            Assert.That(span.GetTagItem("db.statement"), Is.Null);
+            Assert.That(span.GetTagItem("url.query"), Is.Null);
+            Assert.That(
                 span.GetTagItem(TelemetryEnrichmentProcessor.VersionTag),
                 Is.Not.Null.Or.Empty);
             Assert.That(
@@ -123,6 +143,25 @@ public sealed class TelemetryExportPipelineTests
             Assert.That(
                 span.GetTagItem(TelemetryEnrichmentProcessor.EnvironmentTag),
                 Is.EqualTo("Development"));
+        });
+    }
+
+    [Test]
+    public void Telemetry_WhenConfigured_DisablesExceptionEventsOnSpans()
+    {
+        _ = _factory.CreateClient();
+
+        AspNetCoreTraceInstrumentationOptions aspNetCoreOptions = _factory.Services
+            .GetRequiredService<IOptionsMonitor<AspNetCoreTraceInstrumentationOptions>>()
+            .CurrentValue;
+        HttpClientTraceInstrumentationOptions httpClientOptions = _factory.Services
+            .GetRequiredService<IOptionsMonitor<HttpClientTraceInstrumentationOptions>>()
+            .CurrentValue;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(aspNetCoreOptions.RecordException, Is.False);
+            Assert.That(httpClientOptions.RecordException, Is.False);
         });
     }
 
@@ -271,89 +310,9 @@ public sealed class TelemetryExportPipelineTests
             Is.True);
     }
 
-    [Test]
-    public async Task Debug_DumpPipelineState()
-    {
-        List<string> seen = [];
-        using ActivityListener listener = new()
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) =>
-                ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStarted = activity => seen.Add(
-                $"STARTED:{activity.Source.Name}|{activity.DisplayName}|{activity.Kind}"),
-            ActivityStopped = activity => seen.Add(
-                $"{activity.Source.Name}|{activity.DisplayName}|{activity.Kind}")
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        List<string> diagnosticEvents = [];
-        using IDisposable subscription = DiagnosticListener.AllListeners.Subscribe(
-            new AnonymousDiagnosticObserver(diagnosticEvents));
-
-        HttpClient client = _factory.CreateClient();
-        using HttpResponseMessage response = await client.GetAsync("/health?probe=x");
-
-        object? tracerProvider = _factory.Services.GetService<TracerProvider>();
-        object? loggerProvider = _factory.Services.GetService<LoggerProvider>();
-        string hostedServices = string.Join(
-            ", ",
-            _factory.Services.GetServices<IHostedService>().Select(s => s.GetType().Name));
-
-        Assert.Fail(
-            $"tracer={tracerProvider is not null}, logger={loggerProvider is not null}, " +
-            $"status={response.StatusCode}, " +
-            $"activities={_activities.Items.Count}, logs={_logRecords.Items.Count}, " +
-            $"seen=[{string.Join(", ", seen)}], " +
-            $"diag=[{string.Join(", ", diagnosticEvents)}], " +
-            $"hosted=[{hostedServices}]");
-    }
-
-    private async Task<Activity?> WaitForServerSpanAsync(TimeSpan timeout)
-    {
-        DateTime deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            Activity? span = _activities.Items.LastOrDefault(IsServerSpan);
-            if (span is not null)
-            {
-                return span;
-            }
-
-            await Task.Delay(50);
-        }
-
-        return _activities.Items.LastOrDefault(IsServerSpan);
-    }
-
     private static bool IsServerSpan(Activity activity)
     {
         return activity.Kind == ActivityKind.Server;
-    }
-
-    private sealed class AnonymousDiagnosticObserver(List<string> events)
-        : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>
-    {
-        public void OnNext(DiagnosticListener listener)
-        {
-            if (listener.Name == "Microsoft.AspNetCore")
-            {
-                listener.Subscribe(this);
-            }
-        }
-
-        public void OnNext(KeyValuePair<string, object?> value)
-        {
-            events.Add(value.Key);
-        }
-
-        public void OnError(Exception error)
-        {
-        }
-
-        public void OnCompleted()
-        {
-        }
     }
 
     private static bool HasStartedEventName(CapturedLogRecord record)

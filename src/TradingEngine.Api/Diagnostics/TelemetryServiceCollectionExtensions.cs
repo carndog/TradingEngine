@@ -1,4 +1,6 @@
 using Azure.Monitor.OpenTelemetry.AspNetCore;
+using OpenTelemetry.Instrumentation.AspNetCore;
+using OpenTelemetry.Instrumentation.Http;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -50,6 +52,11 @@ internal static class TelemetryServiceCollectionExtensions
                 loggerProviderBuilder
                     .AddProcessor(new TelemetryEnrichmentLogProcessor(identity, environmentName))
                     .AddProcessor(new SensitiveDataLogProcessor()));
+
+            services.Configure<AspNetCoreTraceInstrumentationOptions>(options =>
+                options.RecordException = false);
+            services.Configure<HttpClientTraceInstrumentationOptions>(options =>
+                options.RecordException = false);
         }
 
         services.AddHostedService<StartupTelemetryHostedService>();

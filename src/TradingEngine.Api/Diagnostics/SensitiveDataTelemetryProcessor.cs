@@ -9,9 +9,6 @@ internal sealed class SensitiveDataTelemetryProcessor : BaseProcessor<Activity>
     private const string HttpUrlTag = "http.url";
     private const string UrlQueryTag = "url.query";
     private const string HeaderTagPrefix = "http.request.header.";
-    private const string ExceptionEventName = "exception";
-    private const string ExceptionMessageTag = "exception.message";
-    private const string ExceptionStackTraceTag = "exception.stacktrace";
 
     private static readonly string[] StatementTags =
     [
@@ -30,30 +27,6 @@ internal sealed class SensitiveDataTelemetryProcessor : BaseProcessor<Activity>
         RemoveHeaderTags(activity);
         RemoveQueryString(activity, UrlFullTag);
         RemoveQueryString(activity, HttpUrlTag);
-        ScrubExceptionEvents(activity);
-    }
-
-    private static void ScrubExceptionEvents(Activity activity)
-    {
-        foreach (ActivityEvent activityEvent in activity.Events)
-        {
-            if (activityEvent.Name != ExceptionEventName
-                || activityEvent.Tags is not ActivityTagsCollection tags)
-            {
-                continue;
-            }
-
-            ScrubTagValue(tags, ExceptionMessageTag);
-            ScrubTagValue(tags, ExceptionStackTraceTag);
-        }
-    }
-
-    private static void ScrubTagValue(ActivityTagsCollection tags, string key)
-    {
-        if (tags[key] is string text && SensitiveTextRedactor.ContainsSensitiveValue(text))
-        {
-            tags[key] = SensitiveTextRedactor.Redact(text);
-        }
     }
 
     private static void RemoveHeaderTags(Activity activity)
