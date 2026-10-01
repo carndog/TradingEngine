@@ -19,9 +19,10 @@ param provisionAzureSql = true
 param configureEntraAuth = true
 
 // Application Insights and its Log Analytics workspace for the development
-// environment (issue #36). Retention is the supported minimum and the daily
-// ingestion cap bounds telemetry cost; reaching the cap pauses ingestion for
-// the rest of the UTC day.
+// environment (issue #36). Retention is the supported minimum. The daily
+// ingestion cap is a safeguard against ingestion spikes, not a cost bound:
+// collection cannot stop at exactly the cap, the overshoot is billed, and
+// collection resumes at a workspace-specific reset hour that is not configurable.
 param applicationInsightsRetentionDays = 30
 param logAnalyticsDailyDataCapGb = '0.1'
 

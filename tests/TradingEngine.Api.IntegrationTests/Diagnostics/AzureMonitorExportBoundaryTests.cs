@@ -14,6 +14,8 @@ namespace TradingEngine.Api.IntegrationTests.Diagnostics;
 public sealed class AzureMonitorExportBoundaryTests
 {
     private const string SyntheticCredential = "synthetic-credential-7e2a";
+    private const string SyntheticSpacedCredential = "synthetic spaced credential 3b1f";
+    private const string SyntheticDelimitedCredential = "synthetic;delimited;credential;9c4e";
     private const string SyntheticXmlValue = "synthetic-private-rule-value";
     private const string CorrelationProbeMessage = "Correlation export probe.";
     private const string ExceptionProbeMessage = "Diagnostics exception probe.";
@@ -53,6 +55,8 @@ public sealed class AzureMonitorExportBoundaryTests
         EmitCorrelatedLog(logger);
         logger.LogError("Probe credential {Token}", SyntheticCredential);
         logger.LogError($"connection failed: password=\"{SyntheticCredential}\"");
+        logger.LogError($"connection failed: password=\"{SyntheticSpacedCredential}\" host=db.example.test");
+        logger.LogError($"connection failed: pwd='{SyntheticDelimitedCredential}';Server=db.example.test");
         logger.LogError(ThrowSensitiveException(), ExceptionProbeMessage);
         logger.LogError(ThrowSchemaValidationException(), SchemaProbeMessage);
 
@@ -92,6 +96,8 @@ public sealed class AzureMonitorExportBoundaryTests
         {
             Assert.That(_exportedItems, Is.Not.Empty);
             Assert.That(allPayloads, Does.Not.Contain(SyntheticCredential));
+            Assert.That(allPayloads, Does.Not.Contain(SyntheticSpacedCredential));
+            Assert.That(allPayloads, Does.Not.Contain(SyntheticDelimitedCredential));
             Assert.That(allPayloads, Does.Not.Contain(SyntheticXmlValue));
         });
     }

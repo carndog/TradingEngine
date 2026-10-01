@@ -54,6 +54,48 @@ public sealed class SensitiveTextRedactorTests
     }
 
     [Test]
+    public void Redact_WhenDoubleQuotedValueContainsWhitespace_RemovesWholeQuotedValue()
+    {
+        string redacted = SensitiveTextRedactor.Redact(
+            "password=\"synthetic credential\" host=db.example.test");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(redacted, Does.Not.Contain("synthetic credential"));
+            Assert.That(redacted, Does.Not.Contain("credential\""));
+            Assert.That(redacted, Does.Contain("host=db.example.test"));
+        });
+    }
+
+    [Test]
+    public void Redact_WhenSingleQuotedValueContainsSemicolon_RemovesWholeQuotedValue()
+    {
+        string redacted = SensitiveTextRedactor.Redact(
+            "pwd='synthetic;credential';Server=db.example.test");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(redacted, Does.Not.Contain("synthetic;credential"));
+            Assert.That(redacted, Does.Not.Contain("credential'"));
+            Assert.That(redacted, Does.Contain("Server=db.example.test"));
+        });
+    }
+
+    [Test]
+    public void ContainsSensitiveValue_WhenQuotedValueContainsWhitespaceOrSemicolon_ReturnsTrue()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                SensitiveTextRedactor.ContainsSensitiveValue("password=\"synthetic credential\""),
+                Is.True);
+            Assert.That(
+                SensitiveTextRedactor.ContainsSensitiveValue("pwd='synthetic;credential'"),
+                Is.True);
+        });
+    }
+
+    [Test]
     public void Redact_WhenAuthorizationBearerHeader_RemovesToken()
     {
         string redacted = SensitiveTextRedactor.Redact(

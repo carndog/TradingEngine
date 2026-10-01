@@ -7,7 +7,7 @@ internal static class SensitiveTextRedactor
     internal const string RedactedMarker = "<redacted>";
 
     private static readonly Regex CredentialPairPattern = new(
-        @"\b(password|pwd|instrumentationkey|sharedaccesskey|accountkey|apikey|api[_-]?key|x-database-probe-key|authorization|cookie|set-cookie|connectionstring|secret|sig|token)(\s*[:=]\s*)(?!bearer\b)([""'][^\s;""']*[""']|[^\s;""']+)",
+        @"\b(password|pwd|instrumentationkey|sharedaccesskey|accountkey|apikey|api[_-]?key|x-database-probe-key|authorization|cookie|set-cookie|connectionstring|secret|sig|token)(\s*[:=]\s*)(?!bearer\b)(""[^""]*""|'[^']*'|[^\s;""']+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex BearerPattern = new(
