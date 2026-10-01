@@ -124,7 +124,25 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
         Assert.Multiple(() =>
         {
             Assert.That(exception!.Message, Does.Contain("not a valid decimal"));
-            Assert.That(exception.InnerException, Is.TypeOf<FormatException>());
+            Assert.That(exception.InnerException, Is.Null);
+        });
+    }
+
+    [Test]
+    public void Deserialize_WithInvalidDecimalValue_ExcludesDocumentValueFromException()
+    {
+        const string syntheticValue = "synthetic-private-rule-value";
+        string xml = $"<ChartAnalysisDefinition priceScale=\"4\"><SupportZones><SupportZone id=\"support-a\" lower=\"{syntheticValue}\" level=\"100.0000\" upper=\"105.0000\"><Condition type=\"buy-zone\" actionId=\"publish-signal\" /><Condition type=\"support-loss\" actionId=\"publish-signal\" /></SupportZone></SupportZones></ChartAnalysisDefinition>";
+
+        XmlSchemaValidationException? exception = Assert.Throws<XmlSchemaValidationException>(
+            () => _serializer.Deserialize(xml));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception!.ToString(), Does.Not.Contain(syntheticValue));
+            Assert.That(exception.Message, Does.Contain("'lower'"));
+            Assert.That(exception.Message, Does.Contain("SupportZone"));
+            Assert.That(exception.Message, Does.Contain("not a valid decimal"));
         });
     }
 

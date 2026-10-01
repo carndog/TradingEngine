@@ -63,7 +63,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
         if (root.Name != XName.Get("ChartAnalysisDefinition"))
         {
             throw new InvalidDataException(
-                $"Unexpected root element '{root.Name}'. Expected 'ChartAnalysisDefinition' with no namespace.");
+                "Unexpected root element. Expected 'ChartAnalysisDefinition' with no namespace.");
         }
 
         EnsurePricesCanBeMapped(root);
@@ -82,17 +82,23 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
 
     private static void ValidateAgainstSchema(XDocument document)
     {
-        List<string> failures = [];
+        List<XmlSchemaException> failures = [];
 
         document.Validate(
             Schemas.Value,
-            (_, args) => failures.Add(args.Message),
+            (_, args) =>
+            {
+                failures.Add(args.Exception);
+            },
             true);
 
         if (failures.Count > 0)
         {
+            XmlSchemaException first = failures[0];
             throw new XmlSchemaValidationException(
-                $"The chart-analysis document failed schema validation: {string.Join(" ", failures)}");
+                $"The chart-analysis document failed schema validation " +
+                $"({failures.Count} error(s); first error at line {first.LineNumber}, " +
+                $"position {first.LinePosition}).");
         }
     }
 
@@ -123,11 +129,11 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
                         $"The '{attributeName}' price is outside the supported decimal range.",
                         exception);
                 }
-                catch (FormatException exception)
+                catch (FormatException)
                 {
                     throw new XmlSchemaValidationException(
-                        $"The '{attributeName}' price is not a valid decimal.",
-                        exception);
+                        $"The '{attributeName}' price on '{zone.Name.LocalName}' " +
+                        "is not a valid decimal.");
                 }
             }
         }
@@ -216,7 +222,7 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
             "buy-zone" => ChartConditionType.BuyZone,
             "support-loss" => ChartConditionType.SupportLoss,
             "breakout" => ChartConditionType.Breakout,
-            _ => throw new InvalidDataException($"Unknown chart condition type '{value}'.")
+            _ => throw new InvalidDataException("Unknown chart condition type.")
         };
     }
 

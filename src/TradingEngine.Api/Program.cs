@@ -19,6 +19,7 @@ builder.Services.AddHealthChecks()
         failureStatus: null,
         tags: ["database"]));
 builder.Services.AddSingleton<ApplicationVersionProvider>();
+builder.Services.AddApiTelemetry(builder.Configuration, builder.Environment.EnvironmentName);
 builder.Services.AddSingleton<IClock>(SystemClock.Instance);
 builder.Services.AddScoped<RegisterWatchedInstrumentHandler>(provider =>
     new RegisterWatchedInstrumentHandler(
