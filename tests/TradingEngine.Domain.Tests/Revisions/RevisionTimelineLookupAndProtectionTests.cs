@@ -131,6 +131,31 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     }
 
     [Test]
+    public void EffectiveAt_AfterIndexAssignmentThroughExposedTags_ReturnsUnchangedDefinition()
+    {
+        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        SyntheticLimitDefinition definition = new(10, ["synthetic"]);
+        Revision<SyntheticLimitDefinition> revision = timeline
+            .CreateDraft(Id(1), definition, October(1), Author, null, null)
+            .Value;
+        timeline.ApplyNow(revision.Id, October(1));
+        Apply(timeline, 2, 20, October(3));
+        IList<string> callerHeldTags = (IList<string>)definition.Tags;
+        IList<string> exposedTags = (IList<string>)timeline.EffectiveAt(October(2))!.Definition.Tags;
+
+        Assert.That(() => callerHeldTags[0] = "mutated", Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => exposedTags[0] = "mutated", Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => exposedTags.Add("extra"), Throws.TypeOf<NotSupportedException>());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(timeline.EffectiveAt(October(2))!.Definition, Is.SameAs(definition));
+            Assert.That(timeline.EffectiveAt(October(2))!.Definition.Tags, Is.EqualTo(new[] { "synthetic" }));
+            Assert.That(revision.EffectivePeriod!.EffectiveTo, Is.EqualTo(October(3)));
+        });
+    }
+
+    [Test]
     public void EditDraft_WithReplacementDefinition_DoesNotAlterPreviouslyCommittedDefinitionReference()
     {
         RevisionTimeline<SyntheticLimitDefinition> timeline = new();

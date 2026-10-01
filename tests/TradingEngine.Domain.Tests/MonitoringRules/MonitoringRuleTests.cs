@@ -334,6 +334,69 @@ public sealed class MonitoringRuleTests
         });
     }
 
+    [Test]
+    public void EffectiveAt_AfterMutationAttemptsOnSupersededDefinition_ReturnsUnchangedHistoricalRevision()
+    {
+        MonitoringRule rule = CreateRule();
+        ChartAnalysisDefinition callerHeld = CreateDefinition(100m);
+        rule.CreateDraft(FirstRevisionId, callerHeld, October1, Author, null, null);
+        rule.ApplyNow(FirstRevisionId, October1);
+        rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, null, null);
+        rule.ApplyNow(SecondRevisionId, October5);
+        ChartZone replacementZone = CreateDefinition(300m).SupportZones[0];
+        ChartCondition replacementCondition = CreateDefinition(100m).ResistanceZones[0].Conditions[0];
+        IList<ChartZone> callerHeldZones = (IList<ChartZone>)callerHeld.SupportZones;
+        IList<ChartZone> exposedZones = (IList<ChartZone>)rule.EffectiveAt(October1)!.Definition.SupportZones;
+        IList<ChartZone> exposedResistance = (IList<ChartZone>)rule.EffectiveAt(October1)!.Definition.ResistanceZones;
+        IList<ChartCondition> exposedConditions = (IList<ChartCondition>)rule.EffectiveAt(October1)!.Definition.SupportZones[0].Conditions;
+
+        Assert.That(() => callerHeldZones[0] = replacementZone, Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => exposedZones[0] = replacementZone, Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => exposedResistance[0] = replacementZone, Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => exposedConditions[0] = replacementCondition, Throws.TypeOf<NotSupportedException>());
+
+        Revision<ChartAnalysisDefinition> historical = rule.EffectiveAt(October1)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(historical.Id, Is.EqualTo(FirstRevisionId));
+            Assert.That(historical.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October1));
+            Assert.That(historical.EffectivePeriod.EffectiveTo, Is.EqualTo(October5));
+            Assert.That(historical.Definition, Is.SameAs(callerHeld));
+            Assert.That(historical.Definition.SupportZones[0].Level, Is.EqualTo(100m));
+            Assert.That(historical.Definition.ResistanceZones[0].Level, Is.EqualTo(205m));
+            Assert.That(historical.Definition.SupportZones[0].Conditions[0].Type, Is.EqualTo(ChartConditionType.BuyZone));
+            Assert.That(rule.EffectiveAt(October5)!.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+        });
+    }
+
+    [Test]
+    public void Schedule_AfterMutationAttemptsOnValidDraftCollections_CommitsOriginalValidDefinition()
+    {
+        MonitoringRule rule = CreateRuleWithCurrentRevision();
+        ChartAnalysisDefinition valid = CreateDefinition(110m);
+        rule.CreateDraft(SecondRevisionId, valid, October5, Author, null, null);
+        ChartZone overlappingZone = CreateSupportZone(205m);
+        ChartCondition misplacedCondition = CreateDefinition(100m).ResistanceZones[0].Conditions[0];
+        Revision<ChartAnalysisDefinition> draft = rule.FindRevision(SecondRevisionId)!;
+        IList<ChartZone> exposedZones = (IList<ChartZone>)draft.Definition.SupportZones;
+        IList<ChartCondition> exposedConditions = (IList<ChartCondition>)draft.Definition.SupportZones[0].Conditions;
+
+        Assert.That(() => exposedZones[0] = overlappingZone, Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => exposedConditions[1] = misplacedCondition, Throws.TypeOf<NotSupportedException>());
+        Result result = rule.Schedule(SecondRevisionId, October6At10, October5);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(rule.EffectiveAt(October6At10)!.Definition, Is.SameAs(valid));
+            Assert.That(valid.SupportZones[0].Level, Is.EqualTo(110m));
+            Assert.That(valid.SupportZones[0].Upper, Is.LessThan(valid.ResistanceZones[0].Lower));
+            Assert.That(
+                valid.SupportZones[0].Conditions.Select(condition => condition.Type),
+                Is.EqualTo(new[] { ChartConditionType.BuyZone, ChartConditionType.SupportLoss }));
+        });
+    }
+
     private static MonitoringRule CreateRule()
     {
         return MonitoringRule.Create(RuleId, InstrumentId, October1).Value;
@@ -359,15 +422,6 @@ public sealed class MonitoringRuleTests
 
     private static ChartAnalysisDefinition CreateDefinition(decimal supportLevel)
     {
-        ChartZone support = ChartZone.Create(
-            ChartAnalysisIdentifier.From("support-a").Value,
-            supportLevel - 5m,
-            supportLevel,
-            supportLevel + 5m,
-            [
-                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal").Value).Value,
-                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal").Value).Value
-            ]).Value;
         ChartZone resistance = ChartZone.Create(
             ChartAnalysisIdentifier.From("resistance-a").Value,
             200m,
@@ -375,6 +429,19 @@ public sealed class MonitoringRuleTests
             210m,
             [ChartCondition.Create(ChartConditionType.Breakout, ChartAnalysisIdentifier.From("publish-signal").Value).Value]).Value;
 
-        return ChartAnalysisDefinition.Create(4, [support], [resistance]).Value;
+        return ChartAnalysisDefinition.Create(4, [CreateSupportZone(supportLevel)], [resistance]).Value;
+    }
+
+    private static ChartZone CreateSupportZone(decimal level)
+    {
+        return ChartZone.Create(
+            ChartAnalysisIdentifier.From("support-a").Value,
+            level - 5m,
+            level,
+            level + 5m,
+            [
+                ChartCondition.Create(ChartConditionType.BuyZone, ChartAnalysisIdentifier.From("publish-signal").Value).Value,
+                ChartCondition.Create(ChartConditionType.SupportLoss, ChartAnalysisIdentifier.From("publish-signal").Value).Value
+            ]).Value;
     }
 }

@@ -77,7 +77,7 @@ public sealed record ChartAnalysisDefinition
             ArgumentNullException.ThrowIfNull(zone, parameterName);
         }
 
-        return zones.ToArray();
+        return Array.AsReadOnly(zones.ToArray());
     }
 
     private static Error? EnsureConditionOrder(

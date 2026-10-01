@@ -173,6 +173,57 @@ public sealed class ChartAnalysisDefinitionTests
         Assert.That(result.Value.SupportZones[0].Id.Value, Is.EqualTo("support-a"));
     }
 
+    [Test]
+    public void Create_WithCallerHeldResistanceArray_LaterInputMutationDoesNotChangeDefinition()
+    {
+        ChartZone[] resistanceZones = [CreateResistanceZone("resistance-a", 120m, 125m, 130m)];
+
+        Result<ChartAnalysisDefinition> result = ChartAnalysisDefinition.Create(4, [], resistanceZones);
+        resistanceZones[0] = CreateResistanceZone("resistance-b", 140m, 145m, 150m);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.Value.ResistanceZones[0].Id.Value, Is.EqualTo("resistance-a"));
+    }
+
+    [Test]
+    public void SupportZones_WhenIndexAssignedThroughListInterface_ThrowsNotSupportedAndKeepsZone()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
+            4,
+            [CreateSupportZone("support-a", 95m, 100m, 105m)],
+            []).Value;
+        IList<ChartZone> exposed = (IList<ChartZone>)definition.SupportZones;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => exposed[0] = CreateSupportZone("support-b", 110m, 115m, 120m), Throws.TypeOf<NotSupportedException>());
+            Assert.That(() => exposed.Add(CreateSupportZone("support-b", 110m, 115m, 120m)), Throws.TypeOf<NotSupportedException>());
+            Assert.That(() => exposed.Clear(), Throws.TypeOf<NotSupportedException>());
+            Assert.That(definition.SupportZones, Has.Count.EqualTo(1));
+            Assert.That(definition.SupportZones[0].Id.Value, Is.EqualTo("support-a"));
+            Assert.That(definition.SupportZones[0].Level, Is.EqualTo(100m));
+        });
+    }
+
+    [Test]
+    public void ResistanceZones_WhenIndexAssignedThroughListInterface_ThrowsNotSupportedAndKeepsZone()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(
+            4,
+            [],
+            [CreateResistanceZone("resistance-a", 120m, 125m, 130m)]).Value;
+        IList<ChartZone> exposed = (IList<ChartZone>)definition.ResistanceZones;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => exposed[0] = CreateResistanceZone("resistance-b", 140m, 145m, 150m), Throws.TypeOf<NotSupportedException>());
+            Assert.That(() => exposed.RemoveAt(0), Throws.TypeOf<NotSupportedException>());
+            Assert.That(definition.ResistanceZones, Has.Count.EqualTo(1));
+            Assert.That(definition.ResistanceZones[0].Id.Value, Is.EqualTo("resistance-a"));
+            Assert.That(definition.ResistanceZones[0].Level, Is.EqualTo(125m));
+        });
+    }
+
     private static ChartZone CreateSupportZone(string id, decimal lower, decimal level, decimal upper)
     {
         return ChartZone.Create(

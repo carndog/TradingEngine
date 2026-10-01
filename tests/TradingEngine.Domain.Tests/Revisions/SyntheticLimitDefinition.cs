@@ -7,7 +7,7 @@ public sealed record SyntheticLimitDefinition
         ArgumentNullException.ThrowIfNull(tags);
 
         Limit = limit;
-        Tags = tags.ToArray();
+        Tags = Array.AsReadOnly(tags.ToArray());
     }
 
     public int Limit { get; }

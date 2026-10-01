@@ -58,6 +58,6 @@ public sealed record ChartZone
             ArgumentNullException.ThrowIfNull(condition);
         }
 
-        return new ChartZone(id, lower, level, upper, conditions.ToArray());
+        return new ChartZone(id, lower, level, upper, Array.AsReadOnly(conditions.ToArray()));
     }
 }
