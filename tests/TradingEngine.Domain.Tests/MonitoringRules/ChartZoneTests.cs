@@ -88,6 +88,25 @@ public sealed class ChartZoneTests
         Assert.That(result.Value.Conditions[0].Type, Is.EqualTo(ChartConditionType.BuyZone));
     }
 
+    [Test]
+    public void Conditions_WhenIndexAssignedThroughListInterface_ThrowsNotSupportedAndKeepsCondition()
+    {
+        ChartZone zone = CreateZone(95m, 100m, 105m).Value;
+        ChartCondition replacement = ChartCondition.Create(
+            ChartConditionType.Breakout,
+            ChartAnalysisIdentifier.From("publish-signal").Value).Value;
+        IList<ChartCondition> exposed = (IList<ChartCondition>)zone.Conditions;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => exposed[0] = replacement, Throws.TypeOf<NotSupportedException>());
+            Assert.That(() => exposed.Add(replacement), Throws.TypeOf<NotSupportedException>());
+            Assert.That(() => exposed.Clear(), Throws.TypeOf<NotSupportedException>());
+            Assert.That(zone.Conditions, Has.Count.EqualTo(1));
+            Assert.That(zone.Conditions[0].Type, Is.EqualTo(ChartConditionType.BuyZone));
+        });
+    }
+
     private static Result<ChartZone> CreateZone(decimal lower, decimal level, decimal upper)
     {
         return ChartZone.Create(

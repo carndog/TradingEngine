@@ -27,19 +27,19 @@ An XML import capability may be added separately. Imported XML must be parsed se
 
 ## Relationship to the revision timeline
 
-Each relational monitoring-rule revision owns one `ChartAnalysisDefinition` document. The effective timeline selects the applicable relational revision for an `Instant`; its XML is then deserialized by the Infrastructure adapter into the Domain model.
+Each monitoring-rule revision owns one `ChartAnalysisDefinition` document. In Domain, `MonitoringRule` composes a `RevisionTimeline<ChartAnalysisDefinition>` whose `EffectiveAt` selects the applicable revision for an `Instant`; its XML is then deserialized by the Infrastructure adapter into the Domain model. See [Revision timelines](architecture.md#revision-timelines).
 
 | Concern | Representation |
 | --- | --- |
 | Stable revision identity and business revision number | Relational columns |
-| `Draft`, `Effective` and `Superseded` lifecycle | Relational columns |
+| Draft versus committed state, derived from the presence of an effective period | Relational columns |
 | Effective interval, creation metadata and change reason | Relational columns |
 | Instrument, exchange, currency, monitoring state and sampling interval | Relational columns |
 | Support and resistance zones and their generic conditions | `ChartAnalysisDefinition` XML |
 | Actual price observations and resulting signals | Separate relational records |
 | SQL optimistic concurrency token | Relational `rowversion` |
 
-An effective or superseded revision is immutable. A change creates a new draft revision rather than rewriting the historical XML.
+A revision whose effective period has begun is immutable. A change is prepared as a Draft and committed by an apply-now or schedule operation that splits the running revision at an instant at or after now; the historical XML is never rewritten. `Superseded` is at most a derived display label, not a stored state.
 
 ## Canonical document
 
@@ -122,13 +122,13 @@ The XSD is stored beside the Infrastructure adapter at `src/TradingEngine.Infras
 
 The contract is deliberately unversioned. No production or Azure SQL data exists, so no XML migration or backward reader is required. If a real compatibility requirement arises after persisted releases exist, schema versioning will be introduced from evidence at that point.
 
-When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision. It never rewrites the XML held by an effective or superseded revision in place.
+When a historical definition is used as the basis for an edit, the application reads it into the current Domain model and writes the result to a new draft revision. It never rewrites the XML held by a revision whose effective period has begun.
 
 ## Azure SQL persistence
 
 The `DefinitionXml` column of the monitoring-rule revision table is intended to use the Azure SQL `xml` type. The SQL `xml` type preserves the XML information set — the semantic content and document structure — not the identical lexical string: whitespace, attribute order and other lexical details may differ when the value is read back. Code must therefore not depend on SQL returning the byte-for-byte canonical string originally written. After reading, Infrastructure deserializes the stored value into the Domain model and can serialize it canonically again. Equality checks must compare the validated Domain meaning or freshly canonicalized output, and hashing must not depend directly on the raw string returned by SQL.
 
-EF Core maps a `string` property to the Azure SQL `xml` type via `HasColumnType("xml")`; the adapter validates and canonically serializes the document before it reaches the column, so no SQL Server XML schema collection is required. The EF Core mapping, `TradingEngineDbContext` and migrations belong to issue #32 and are not implemented here. Relational concerns such as revision identity, lifecycle, effective boundaries, creation metadata and the `rowversion` concurrency token remain in their own columns, and effective or superseded monitoring-rule revisions remain immutable.
+EF Core maps a `string` property to the Azure SQL `xml` type via `HasColumnType("xml")`; the adapter validates and canonically serializes the document before it reaches the column, so no SQL Server XML schema collection is required. The EF Core mapping, `TradingEngineDbContext` and migrations belong to issue #32 and are not implemented here. Relational concerns such as revision identity, effective boundaries, creation metadata and the `rowversion` concurrency token remain in their own columns, and monitoring-rule revisions whose effective period has begun remain immutable.
 
 Future indicators remain descriptive chart-analysis inputs. Dynamic stop-loss or take-profit changes depend on current evaluation, risk and execution state and therefore belong in later signal, risk and order workflows rather than being written repeatedly into this immutable XML. Sampling cadence in seconds remains a relational concern and can change without an XML schema change.
 
