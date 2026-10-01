@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -42,12 +43,15 @@ public sealed class TelemetryExportPipelineTests
             {
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
-                    "InstrumentationKey=00000000-0000-0000-0000-000000000000;" +
+                    $"InstrumentationKey={Guid.NewGuid()};" +
                     "IngestionEndpoint=https://localhost/");
                 builder.ConfigureServices(services =>
                 {
-                    services.Configure<Azure.Monitor.OpenTelemetry.AspNetCore.AzureMonitorOptions>(
-                        options => options.EnableLiveMetrics = false);
+                    services.Configure<AzureMonitorOptions>(options =>
+                    {
+                        options.EnableLiveMetrics = false;
+                        options.DisableOfflineStorage = true;
+                    });
                     services.ConfigureOpenTelemetryTracerProvider((_, tracerProviderBuilder) =>
                         tracerProviderBuilder.AddProcessor(
                             new SimpleActivityExportProcessor(activities)));
@@ -112,11 +116,7 @@ public sealed class TelemetryExportPipelineTests
 
         Activity? span = _activities.Items.LastOrDefault(IsServerSpan);
 
-        Assert.That(
-            span,
-            Is.Not.Null,
-            $"Captured {_activities.Items.Count} activity(s): " +
-            $"{string.Join(", ", _activities.Items.Select(item => item.DisplayName))}");
+        Assert.That(span, Is.Not.Null);
 
         foreach (KeyValuePair<string, object?> tag in span!.TagObjects)
         {
@@ -243,7 +243,7 @@ public sealed class TelemetryExportPipelineTests
                 record.Exception!.ToString(),
                 Does.Not.Contain(SyntheticCredential));
             Assert.That(
-                record.Exception.Message,
+                record.Exception.ToString(),
                 Does.Contain(nameof(InvalidOperationException)));
         });
     }

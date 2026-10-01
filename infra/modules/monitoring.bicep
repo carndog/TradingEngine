@@ -12,7 +12,7 @@ param location string
 @maxValue(730)
 param retentionInDays int = 30
 
-@description('Daily ingestion cap in GB applied to the Log Analytics workspace, expressed as a string so fractional values are supported. Ingestion stops for the rest of the UTC day when the cap is reached.')
+@description('Daily ingestion cap in GB applied to the Log Analytics workspace, expressed as a string so fractional values are supported. A safeguard against ingestion spikes, not a cost bound: collection cannot stop at exactly the cap, excess data is billed, and collection resumes at a workspace-specific reset hour that cannot be configured.')
 param dailyDataCapGb string = '0.1'
 
 @description('Tags applied to the resources.')

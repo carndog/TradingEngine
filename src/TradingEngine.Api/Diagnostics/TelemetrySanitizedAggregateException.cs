@@ -1,13 +1,13 @@
 namespace TradingEngine.Api.Diagnostics;
 
-internal sealed class TelemetrySanitizedException : Exception
+internal sealed class TelemetrySanitizedAggregateException : AggregateException
 {
-    public TelemetrySanitizedException(
+    public TelemetrySanitizedAggregateException(
         string originalTypeName,
         string sanitizedMessage,
         string sanitizedDiagnosticText,
-        Exception? sanitizedInnerException)
-        : base(sanitizedMessage, sanitizedInnerException)
+        IReadOnlyList<Exception> sanitizedInnerExceptions)
+        : base(sanitizedMessage, sanitizedInnerExceptions)
     {
         OriginalTypeName = originalTypeName;
         SanitizedDiagnosticText = sanitizedDiagnosticText;

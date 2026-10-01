@@ -129,11 +129,11 @@ public sealed class ChartAnalysisDefinitionXmlSerializer
                         $"The '{attributeName}' price is outside the supported decimal range.",
                         exception);
                 }
-                catch (FormatException exception)
+                catch (FormatException)
                 {
                     throw new XmlSchemaValidationException(
-                        $"The '{attributeName}' price is not a valid decimal.",
-                        exception);
+                        $"The '{attributeName}' price on '{zone.Name.LocalName}' " +
+                        "is not a valid decimal.");
                 }
             }
         }

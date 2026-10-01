@@ -48,7 +48,7 @@ param entraAuthAllowedPrincipalIds array = []
 @maxValue(730)
 param applicationInsightsRetentionDays int = 30
 
-@description('Daily ingestion cap in GB on the Log Analytics workspace, as a string to allow fractional values. Ingestion stops for the rest of the UTC day when reached; it is not a billing budget.')
+@description('Daily ingestion cap in GB on the Log Analytics workspace, as a string to allow fractional values. A safeguard against ingestion spikes, not a cost bound: excess data above the cap is still billed and collection resumes at a workspace-specific reset hour.')
 param logAnalyticsDailyDataCapGb string = '0.1'
 
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'

@@ -7,7 +7,7 @@ internal static class SensitiveTextRedactor
     internal const string RedactedMarker = "<redacted>";
 
     private static readonly Regex CredentialPairPattern = new(
-        @"\b(password|pwd|instrumentationkey|sharedaccesskey|accountkey|apikey|api[_-]?key|x-database-probe-key|authorization|cookie|set-cookie|connectionstring|secret|sig|token)(\s*[:=]\s*)[^\s;""']+",
+        @"\b(password|pwd|instrumentationkey|sharedaccesskey|accountkey|apikey|api[_-]?key|x-database-probe-key|authorization|cookie|set-cookie|connectionstring|secret|sig|token)(\s*[:=]\s*)(?!bearer\b)([""'][^\s;""']*[""']|[^\s;""']+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex BearerPattern = new(
@@ -39,6 +39,26 @@ internal static class SensitiveTextRedactor
             || ChartAnalysisDocumentPattern.IsMatch(value);
     }
 
+    public static bool ContainsSensitiveValue(
+        string value,
+        IReadOnlyCollection<string> sensitiveValues)
+    {
+        if (ContainsSensitiveValue(value))
+        {
+            return true;
+        }
+
+        foreach (string sensitiveValue in sensitiveValues)
+        {
+            if (value.Contains(sensitiveValue, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static bool IsSensitiveKey(string key)
     {
         foreach (string fragment in SensitiveKeyFragments)
@@ -61,5 +81,16 @@ internal static class SensitiveTextRedactor
         redacted = ChartAnalysisDocumentPattern.Replace(redacted, "<redacted chart-analysis document>");
 
         return redacted;
+    }
+
+    public static string Redact(string value, IReadOnlyCollection<string> sensitiveValues)
+    {
+        string redacted = value;
+        foreach (string sensitiveValue in sensitiveValues)
+        {
+            redacted = redacted.Replace(sensitiveValue, RedactedMarker, StringComparison.Ordinal);
+        }
+
+        return Redact(redacted);
     }
 }

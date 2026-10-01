@@ -5,30 +5,23 @@ namespace TradingEngine.Api.Diagnostics;
 
 internal sealed class SensitiveDataLogProcessor : BaseProcessor<LogRecord>
 {
+    private const string OriginalTypeAttribute = "exception.original_type";
+    private const string SanitizedDetailsAttribute = "exception.sanitized_details";
+
     public override void OnEnd(LogRecord logRecord)
     {
-        if (logRecord.FormattedMessage is not null
-            && SensitiveTextRedactor.ContainsSensitiveValue(logRecord.FormattedMessage))
-        {
-            logRecord.FormattedMessage = SensitiveTextRedactor.Redact(logRecord.FormattedMessage);
-        }
-
-        if (logRecord.Body is not null
-            && SensitiveTextRedactor.ContainsSensitiveValue(logRecord.Body))
-        {
-            logRecord.Body = SensitiveTextRedactor.Redact(logRecord.Body);
-        }
-
-        ScrubAttributes(logRecord);
-        ScrubException(logRecord);
+        List<string> sensitiveValues = ScrubAttributes(logRecord);
+        ScrubRenderedText(logRecord, sensitiveValues);
+        ScrubException(logRecord, sensitiveValues);
     }
 
-    private static void ScrubAttributes(LogRecord logRecord)
+    private static List<string> ScrubAttributes(LogRecord logRecord)
     {
+        List<string> sensitiveValues = [];
         IReadOnlyList<KeyValuePair<string, object?>>? attributes = logRecord.Attributes;
         if (attributes is null)
         {
-            return;
+            return sensitiveValues;
         }
 
         bool changed = false;
@@ -37,6 +30,7 @@ internal sealed class SensitiveDataLogProcessor : BaseProcessor<LogRecord>
         {
             if (SensitiveTextRedactor.IsSensitiveKey(attribute.Key))
             {
+                AddIfString(sensitiveValues, attribute.Value);
                 scrubbed.Add(new KeyValuePair<string, object?>(
                     attribute.Key,
                     SensitiveTextRedactor.RedactedMarker));
@@ -45,6 +39,7 @@ internal sealed class SensitiveDataLogProcessor : BaseProcessor<LogRecord>
             else if (attribute.Value is string text
                 && SensitiveTextRedactor.ContainsSensitiveValue(text))
             {
+                sensitiveValues.Add(text);
                 scrubbed.Add(new KeyValuePair<string, object?>(
                     attribute.Key,
                     SensitiveTextRedactor.Redact(text)));
@@ -60,23 +55,113 @@ internal sealed class SensitiveDataLogProcessor : BaseProcessor<LogRecord>
         {
             logRecord.Attributes = scrubbed;
         }
+
+        return sensitiveValues;
     }
 
-    private static void ScrubException(LogRecord logRecord)
+    private static void ScrubRenderedText(
+        LogRecord logRecord,
+        IReadOnlyCollection<string> sensitiveValues)
     {
-        if (logRecord.Exception is null
-            || !SensitiveTextRedactor.ContainsSensitiveValue(logRecord.Exception.ToString()))
+        if (logRecord.FormattedMessage is not null
+            && SensitiveTextRedactor.ContainsSensitiveValue(
+                logRecord.FormattedMessage, sensitiveValues))
+        {
+            logRecord.FormattedMessage = SensitiveTextRedactor.Redact(
+                logRecord.FormattedMessage, sensitiveValues);
+        }
+
+        if (logRecord.Body is not null
+            && SensitiveTextRedactor.ContainsSensitiveValue(logRecord.Body, sensitiveValues))
+        {
+            logRecord.Body = SensitiveTextRedactor.Redact(logRecord.Body, sensitiveValues);
+        }
+    }
+
+    private static void ScrubException(
+        LogRecord logRecord,
+        IReadOnlyCollection<string> sensitiveValues)
+    {
+        Exception? exception = logRecord.Exception;
+        if (exception is null
+            || SensitiveTextRedactor.ContainsSensitiveValue(
+                exception.ToString(), sensitiveValues) is false)
         {
             return;
         }
 
-        logRecord.Exception = SanitizeException(logRecord.Exception);
+        Exception sanitized = SanitizeException(exception, sensitiveValues);
+        logRecord.Exception = sanitized;
+        logRecord.Attributes = AppendSanitizedDetails(
+            logRecord.Attributes,
+            sanitized);
     }
 
-    private static TelemetrySanitizedException SanitizeException(Exception exception)
+    private static IReadOnlyList<KeyValuePair<string, object?>> AppendSanitizedDetails(
+        IReadOnlyList<KeyValuePair<string, object?>>? attributes,
+        Exception sanitized)
     {
+        List<KeyValuePair<string, object?>> extended = attributes is null
+            ? []
+            : [.. attributes];
+
+        string originalType = sanitized is TelemetrySanitizedException single
+            ? single.OriginalTypeName
+            : ((TelemetrySanitizedAggregateException)sanitized).OriginalTypeName;
+        string diagnosticText = sanitized is TelemetrySanitizedException singleText
+            ? singleText.SanitizedDiagnosticText
+            : ((TelemetrySanitizedAggregateException)sanitized).SanitizedDiagnosticText;
+
+        extended.Add(new KeyValuePair<string, object?>(OriginalTypeAttribute, originalType));
+        extended.Add(new KeyValuePair<string, object?>(SanitizedDetailsAttribute, diagnosticText));
+
+        return extended;
+    }
+
+    private static Exception SanitizeException(
+        Exception exception,
+        IReadOnlyCollection<string> sensitiveValues)
+    {
+        string sanitizedMessage = SensitiveTextRedactor.Redact(
+            exception.Message,
+            sensitiveValues);
+        string sanitizedDiagnosticText = SensitiveTextRedactor.Redact(
+            exception.ToString(),
+            sensitiveValues);
+        string originalTypeName = exception.GetType().FullName
+            ?? exception.GetType().Name;
+
+        if (exception is AggregateException aggregate)
+        {
+            List<Exception> sanitizedInner = [];
+            foreach (Exception inner in aggregate.InnerExceptions)
+            {
+                sanitizedInner.Add(SanitizeException(inner, sensitiveValues));
+            }
+
+            return new TelemetrySanitizedAggregateException(
+                originalTypeName,
+                sanitizedMessage,
+                sanitizedDiagnosticText,
+                sanitizedInner);
+        }
+
+        Exception? sanitizedInnerException = exception.InnerException is null
+            ? null
+            : SanitizeException(exception.InnerException, sensitiveValues);
+
         return new TelemetrySanitizedException(
-            $"{exception.GetType().FullName}: {SensitiveTextRedactor.Redact(exception.Message)}",
-            exception.InnerException is null ? null : SanitizeException(exception.InnerException));
+            originalTypeName,
+            sanitizedMessage,
+            sanitizedDiagnosticText,
+            sanitizedInnerException);
+    }
+
+    private static void AddIfString(List<string> sensitiveValues, object? value)
+    {
+        if (value is string text && string.IsNullOrEmpty(text) is false)
+        {
+            sensitiveValues.Add(text);
+        }
     }
 }
