@@ -53,13 +53,29 @@ Contracts are transport-facing types rather than domain types. Domain and Applic
 - Cohesive catalogues such as `WatchedInstrumentErrors` and `ChartAnalysisErrors` hold the complete `Error` definitions for their area. Per-type rule enums are not used.
 - At the Infrastructure XML boundary, a failed Domain `Result` during deserialization is translated into `InvalidDataException` carrying the stable error code. Malformed or corrupt persistence XML is never converted into an Application validation `Result`, because clients do not submit persistence XML.
 
+## Revision timelines
+
+`TradingEngine.Domain.Revisions` provides reusable business-effective revision mechanics that aggregates compose rather than inherit:
+
+- `Revision<TDefinition>` wraps a typed policy payload with a stable `Guid` identity, an optional business `RevisionNumber`, creation metadata (`CreatedAt`, `CreatedBy`), an optional `ChangeReason`, an optional committed `EffectivePeriod` and an optional `RevisionProposal` carrying tentative draft dates. `TDefinition` is a plain payload; it does not implement a revision contract.
+- `EffectivePeriod` is an immutable half-open interval `[EffectiveFrom, EffectiveTo)` of NodaTime `Instant` values. A null `EffectiveTo` is open-ended. A revision without a committed period is a Draft.
+- `RevisionTimeline<TDefinition>` owns temporal validation, scheduling, splitting, rescheduling, removal and effective-at retrieval. Drafts live outside the committed timeline: they do not reserve periods, do not take effect automatically and are excluded from `EffectiveAt`. Several drafts may carry overlapping proposals.
+- `ApplyNow` and `Schedule` commit a draft with an effective start at or after the captured `now`. A start inside an existing period splits that revision: the original keeps its identity and definition and ends at the new start; the successor inherits the original end boundary, so later scheduled revisions keep their periods. A start exactly equal to an existing start is rejected. Backdated starts and zero-length or inverted periods are rejected.
+- A committed definition is immutable exactly when `now >= EffectiveFrom`, including at the start boundary. Entirely future revisions may be edited, rescheduled or removed; rescheduling and removal reconcile the adjacent predecessor's end boundary so replacements meet without gaps. Nothing that already applied before the captured `now` changes.
+- Applicability and editability are derived from the dates and the captured instant. No `Superseded` state is stored and no background job flips lifecycle states.
+- Business revision numbers are the effective rank of committed revisions (1-based, in `EffectiveFrom` order). Inserting or rescheduling a future revision renumbers only future revisions; a revision whose period has begun keeps its number because nothing can be placed before it. Drafts have no number. The `Guid` is the identity; the number is display and audit metadata and is distinct from any XML schema version or SQL `rowversion`.
+- Expected failures return `Result` values using the `RevisionErrors` catalogue (`revision.*` codes). Null definitions are programmer errors and throw.
+
+Application obtains the current instant through `IClock` and passes the same captured `Instant` into each Domain operation. Domain never reads a clock.
+
 ## Monitoring-rule definitions
 
-- A relational monitoring-rule revision owns the business revision number, lifecycle state, effective interval, creation metadata and concurrency state.
+- `MonitoringRule` is the owning aggregate for per-instrument monitoring-rule revisions. It holds its own identity and `WatchedInstrumentId` scope and composes a `RevisionTimeline<ChartAnalysisDefinition>`; `MonitoringRuleErrors` holds its aggregate-specific errors.
+- `ChartAnalysisDefinition` remains the validated policy payload. Its invariants are enforced by its `Result`-returning factory, so every definition placed on the timeline is complete and valid by construction.
 - Its variable chart-analysis definition is stored as canonical XML and mapped to a validated Domain model by an Infrastructure adapter.
 - The XML persistence schema is independent of versioned HTTP and message contracts. Clients send transport DTOs and do not construct persistence XML.
 - Price observations, signals, risk decisions and orders are separate records rather than mutable state inside the definition.
-- Effective and superseded definitions are immutable. A changed definition is written only as a new draft business revision.
+- A definition whose effective period has begun is immutable. Changing future behaviour is done by scheduling a split at an instant at or after now; the historical definition is never rewritten.
 - Generic schema and synthetic examples are public-safe. Real definitions, meaningful parameters and strategy or execution logic remain private.
 
 See [Chart-analysis definition XML](chart-analysis-definition-xml.md) for the canonical contract.
