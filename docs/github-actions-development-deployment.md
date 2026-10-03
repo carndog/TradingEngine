@@ -7,6 +7,7 @@ The workflow `.github/workflows/deploy-development.yml` builds, tests and deploy
 - **Pull requests targeting `main`**: restore, build and test only.
 - **Pushes to `main`** (including merged pull requests): restore, build, test, publish, package and deploy, then verify `/health` and `/version`.
 - **Manual `workflow_dispatch`**: recovery option that runs the same pipeline. The deployment job still requires `refs/heads/main`, so a manual run only deploys when started from `main`.
+- **Deployment hold**: while the repository variable `DEPLOYMENT_HOLD` is `true`, the deploy job is skipped on every trigger, including manual `workflow_dispatch` runs. It does not pause the running application and nothing is queued for later — clearing the variable does not trigger a deployment. Set it before merging a schema-incompatible change so the application deploys only after the migration has been applied — see [Azure SQL operations runbook](azure-sql-operations-runbook.md#10-coordinated-schemaapplication-cutover).
 
 The `build` job holds only `contents: read`. The `deploy` job adds `id-token: write` for OIDC, runs against the `development` GitHub environment and uses a `deploy-development` concurrency group with `cancel-in-progress: false` so development deployments never overlap.
 

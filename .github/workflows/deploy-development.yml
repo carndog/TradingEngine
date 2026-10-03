@@ -55,7 +55,7 @@ jobs:
   deploy:
     name: Deploy to development
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && vars.DEPLOYMENT_HOLD != 'true'
     runs-on: ubuntu-latest
     environment: development
     permissions:

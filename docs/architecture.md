@@ -29,8 +29,8 @@ Contracts are transport-facing types rather than domain types. Domain and Applic
 - Organise use cases as small vertical slices under a capability folder, for example `WatchedInstruments/Register`.
 - Give each use case a command and a handler. Add a use-case-specific port only when the use case needs an external capability.
 - Do not add a generic repository or mediator abstraction without a demonstrated need.
-- Application reads the current time through NodaTime `IClock`. It passes the resulting `Instant` into Domain methods explicitly.
-- Infrastructure will implement the ports. This story intentionally includes no persistence implementation.
+- Application reads the current time through NodaTime `IClock`. It passes the resulting `Instant` into Domain methods explicitly, and into store ports wherever a lookup is time-sensitive.
+- Infrastructure implements the ports. The current adapters are the SQL Server stores for watched instruments and monitoring rules.
 
 ## Domain conventions
 
@@ -72,8 +72,10 @@ Application obtains the current instant through `IClock` and passes the same cap
 ## Monitoring-rule definitions
 
 - `MonitoringRule` is the owning aggregate for per-instrument monitoring-rule revisions. It holds its own identity and `WatchedInstrumentId` scope and composes a `RevisionTimeline<ChartAnalysisDefinition>`; `MonitoringRuleErrors` holds its aggregate-specific errors.
+- `MonitoringRule.Restore` rebuilds a persisted aggregate without replaying operations and re-validates the committed chain; corrupt or incomplete revision state is rejected instead of repaired.
+- `IMonitoringRuleStore` persists the whole aggregate. Reads return a `MonitoringRuleSnapshot` pairing the restored rule with a `rowversion` concurrency token; saves apply the full mutation atomically and reject stale tokens. See [Current configuration persistence](current-configuration-persistence.md).
 - `ChartAnalysisDefinition` remains the validated policy payload. Its invariants are enforced by its `Result`-returning factory, so every definition placed on the timeline is complete and valid by construction. `ChartAnalysisDefinition.SupportZones`, `ChartAnalysisDefinition.ResistanceZones` and `ChartZone.Conditions` are read-only wrappers over private defensive copies, and every other member is a read-only scalar or value object, so a definition cannot be changed after construction and the timeline does not re-validate it at commit.
-- Its variable chart-analysis definition is stored as canonical XML and mapped to a validated Domain model by an Infrastructure adapter.
+- Its variable chart-analysis definition is stored as canonical XML on each revision row and mapped to a validated Domain model by an Infrastructure adapter.
 - The XML persistence schema is independent of versioned HTTP and message contracts. Clients send transport DTOs and do not construct persistence XML.
 - Price observations, signals, risk decisions and orders are separate records rather than mutable state inside the definition.
 - A definition whose effective period has begun is immutable. Changing future behaviour is done by scheduling a split at an instant at or after now; the historical definition is never rewritten.

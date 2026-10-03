@@ -1,5 +1,6 @@
 using NodaTime;
 using TradingEngine.Application.Ports;
+using TradingEngine.Application.Time;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.Results;
 
@@ -25,7 +26,9 @@ public sealed class RegisterWatchedInstrumentHandler
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(command.Definition);
 
-        Instant occurredAt = _clock.GetCurrentInstant();
+        Instant occurredAt = PersistedInstant.Require(
+            _clock.GetCurrentInstant(),
+            nameof(command));
         Result<WatchedInstrumentFields> fields = WatchedInstrument.Validate(
             command.Symbol,
             command.Exchange,

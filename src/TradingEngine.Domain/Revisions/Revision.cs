@@ -60,6 +60,25 @@ public sealed class Revision<TDefinition>
         return new Revision<TDefinition>(id, definition, createdAt, createdBy, changeReason, proposal);
     }
 
+    internal static Revision<TDefinition> Restore(
+        Guid id,
+        TDefinition definition,
+        Instant createdAt,
+        string createdBy,
+        string? changeReason,
+        int? revisionNumber,
+        EffectivePeriod? period,
+        RevisionProposal? proposal)
+    {
+        Revision<TDefinition> revision = new(id, definition, createdAt, createdBy, changeReason, proposal)
+        {
+            EffectivePeriod = period,
+            RevisionNumber = revisionNumber
+        };
+
+        return revision;
+    }
+
     internal void Replace(TDefinition definition, string? changeReason)
     {
         Definition = definition;

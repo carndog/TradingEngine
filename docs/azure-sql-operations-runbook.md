@@ -210,3 +210,141 @@ Do **not** delete `rg-tradingengine-dev` — it contains the App Service. Increm
 - The 100,000 vCore-second and 32 GB allowances reset each calendar month; `AutoPause` means exhaustion pauses the database rather than billing.
 - Disconnect query tools when finished — open connections prevent auto-pause and consume the allowance.
 - Keep the subscription budget and cost alerts from the App Service deployment active; the SQL free offer should produce zero SQL line items.
+
+## 10. Coordinated schema/application cutover
+
+Some migrations are write-incompatible with the running application. The `MonitoringRuleRevisionHistory` migration creates the monitoring-rule tables and backfills `ChartAnalysisDefinitions` into them **once**, inside the migration itself; EF records it in `__EFMigrationsHistory` and never re-runs it. The schema and the application therefore have to change together:
+
+- Deploying the new application first fails because the tables do not exist.
+- Letting the old application keep running after the migration is worse: it registers instruments only into the legacy table. Those registrations are invisible to the new model, and rerunning the migration workflow cannot pick them up because the migration is already marked applied.
+
+Perform the whole cutover in one coordinated window. Freeze `main` for the duration: nothing else may merge or push to `main` between steps 1 and 10.
+
+1. **Freeze `main` and hold automatic deployment.** In the repository set **Settings → Secrets and variables → Actions → Variables** `DEPLOYMENT_HOLD` = `true` **before** merging the incompatible change. `DEPLOYMENT_HOLD` only skips the `Deploy to development` job — on `main` pushes and on manual `workflow_dispatch` runs alike. It does not pause the running application, and nothing is queued: clearing the variable does not trigger a deployment.
+2. **Merge the change and record the cutover commit.** Merge normally; the merge run builds and tests while `Deploy to development` shows as skipped. Record the exact commit to cut over:
+
+   ```powershell
+   git rev-parse origin/main
+   ```
+
+   Every later step uses this SHA: the migration workflow run and the deployment run must both show it in their **Commit** link before you proceed.
+3. **Quiesce application writes.** Stop the Web App and wait until it reports `Stopped`:
+
+   ```powershell
+   az webapp stop --name <web-app-name> --resource-group rg-tradingengine-dev
+   az webapp show --name <web-app-name> --resource-group rg-tradingengine-dev --query state --output tsv
+   ```
+
+   Stopping lets in-flight requests drain, but issuing the command does not prove every in-flight registration committed — the baseline queries below establish the real state. Allow outstanding database work to settle, then record the pre-cutover counts:
+
+   ```sql
+   SELECT COUNT(*) FROM WatchedInstruments;
+   SELECT COUNT(*) FROM ChartAnalysisDefinitions;
+   ```
+
+4. **Apply the reviewed migration.** Run **Actions → Migrate development database → Run workflow** from `main` (see section 5). Confirm the run's **Commit** is the SHA recorded in step 2 before it applies anything. The `development-database-migration` environment approval still applies.
+5. **Verify the backfill before the app serves again.** Connect through the temporary firewall rule (section 3, step 2). The first two queries must return no rows, and all three counts in the third must equal the `ChartAnalysisDefinitions` baseline from step 3:
+
+   ```sql
+   -- a) Every instrument with a legacy definition gained a rule
+   SELECT w.Id FROM WatchedInstruments w
+   JOIN ChartAnalysisDefinitions d ON d.WatchedInstrumentId = w.Id
+   WHERE NOT EXISTS (
+       SELECT 1 FROM MonitoringRules m WHERE m.WatchedInstrumentId = w.Id);
+
+   -- b) Every rule has at least one committed revision
+   SELECT m.Id FROM MonitoringRules m
+   WHERE NOT EXISTS (
+       SELECT 1 FROM MonitoringRuleRevisions r
+       WHERE r.MonitoringRuleId = m.Id AND r.EffectiveFrom IS NOT NULL);
+
+   -- c) Exactly one open-ended committed revision per rule, with provenance
+   SELECT
+       (SELECT COUNT(*) FROM MonitoringRules) AS Rules,
+       (SELECT COUNT(*) FROM MonitoringRuleRevisions) AS Revisions,
+       (SELECT COUNT(*) FROM MonitoringRuleRevisions
+        WHERE RevisionNumber = 1 AND EffectiveTo IS NULL
+          AND CreatedBy = N'migration-20261003150626') AS InitialCommitted;
+   ```
+
+6. **Deploy the matching application build.** Clear `DEPLOYMENT_HOLD` (set it `false` or delete it), then run **Actions → Deploy development → Run workflow** from `main` and confirm the run's **Commit** is the step-2 SHA. Keep the Web App stopped while `Deploy to App Service` runs: the step talks to the SCM endpoint, which stays reachable on a stopped app, so the new package lands while the old build cannot serve writes. The `Verify health endpoint` and `Verify version endpoint` steps then poll the site — they fail while it remains stopped, which is expected and does not roll back the deployment. If `Deploy to App Service` fails, keep the Web App stopped, set `DEPLOYMENT_HOLD=true`, and investigate the deployment failure. Once the cause is resolved, clear the hold only to retry deployment of the recorded cutover commit, keeping the Web App stopped throughout. Do not restart the old application to make deployment succeed.
+7. **Start the app and verify the build.** Start the Web App only after `Deploy to App Service` has succeeded for the recorded cutover commit. A failed or cancelled deployment must leave the app stopped.
+
+   ```powershell
+   az webapp start --name <web-app-name> --resource-group rg-tradingengine-dev
+   ```
+
+   Then verify the anonymous endpoints directly — the workflow's own checks may already have reported failure while the app was still stopped:
+
+   ```powershell
+   Invoke-RestMethod "https://<web-app-hostname>/health"                  # {"status":"Healthy"}
+   (Invoke-RestMethod "https://<web-app-hostname>/version").commit       # equals the step-2 SHA
+   ```
+
+8. **Smoke-test a real registration.** The administration endpoints sit behind Easy Auth: send a bearer token **for this API** acquired by an approved client application (see [Easy Auth](easy-auth-entra-id.md) — an ordinary Azure CLI token does not have the right audience and is rejected), or perform the requests from a browser signed in through `/.auth/login/aad` as an allowlisted owner. With a bearer token and a symbol unique to this run:
+
+   ```powershell
+   $headers = @{ Authorization = "Bearer <api-access-token>" }
+   $symbol = "CUT-" + [guid]::NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant()
+   $body = @{
+       symbol = $symbol
+       exchange = "XTEST"
+       quoteCurrency = "USD"
+       samplingIntervalSeconds = 60
+       monitoringState = "configured"
+       priceScale = 4
+       supportZones = @(
+           @{
+               id = "support-a"; lower = 95.0; level = 100.0; upper = 105.0
+               conditions = @(
+                   @{ type = "buy-zone"; actionId = "publish-signal" },
+                   @{ type = "support-loss"; actionId = "publish-signal" }
+               )
+           }
+       )
+       resistanceZones = @(
+           @{
+               id = "resistance-a"; lower = 120.0; level = 125.0; upper = 130.0
+               conditions = @(
+                   @{ type = "breakout"; actionId = "publish-signal" }
+               )
+           }
+       )
+   } | ConvertTo-Json -Depth 10
+
+   $post = Invoke-WebRequest -Method Post `
+       -Uri "https://<web-app-hostname>/api/watched-instruments" `
+       -Headers $headers -ContentType 'application/json' -Body $body
+   if ($post.StatusCode -ne 201) { throw "POST returned $($post.StatusCode)" }
+   $registered = $post.Content | ConvertFrom-Json
+
+   $get = Invoke-WebRequest `
+       -Uri "https://<web-app-hostname>/api/watched-instruments/$($registered.id)" `
+       -Headers $headers
+   if ($get.StatusCode -ne 200) { throw "GET returned $($get.StatusCode)" }
+   $read = $get.Content | ConvertFrom-Json
+   ```
+
+   The zone conditions must appear in the order shown: a support zone requires `buy-zone` then `support-loss`, a resistance zone requires `breakout`; a request with both zone arrays empty is rejected with HTTP 400 and `chart_analysis.missing_zones`. The POST returns **201** with a `Location` header and the new `id` in the body. `GET /api/watched-instruments/{id}` returns **200** with that registration's instrument and definition — it reads the configuration applicable at the instant the request executes and takes no lookup instant, so a point before the revision's `EffectiveFrom` cannot be requested through it. Confirm the response `symbol` matches and, for example, `supportZones[0].level` is 100.
+9. **Verify persistence.** In Query Editor confirm the write landed in the new model only:
+
+   ```sql
+   SELECT m.Id AS RuleId, m.CreatedAt, r.RevisionNumber, r.EffectiveFrom, r.EffectiveTo
+   FROM MonitoringRules m
+   JOIN MonitoringRuleRevisions r ON r.MonitoringRuleId = m.Id
+   WHERE m.WatchedInstrumentId = '<registered-id>';
+   -- one row: RevisionNumber 1, EffectiveFrom = the registration instant, EffectiveTo NULL
+
+   SELECT 1 FROM ChartAnalysisDefinitions WHERE WatchedInstrumentId = '<registered-id>';
+   -- expect no rows: the new model does not write the legacy table
+   ```
+
+   **Leave the synthetic instrument in place.** There is no delete endpoint, and the restrictive foreign keys deliberately prevent removing a rule while its revisions exist. The `CUT-` symbol marks the record as synthetic.
+10. **Resume.** Remove the temporary firewall rule (section 7), confirm `DEPLOYMENT_HOLD` stays cleared and lift the `main` freeze.
+
+**Recovery.** Fix forward once the migration has applied — it ran once and will never run again, so nothing can rebuild the backfill automatically:
+
+- The safe resting state after any failed step is Web App stopped plus `DEPLOYMENT_HOLD` set. A failed step must never end by restarting an incompatible writer: do not start the old build, and do not clear the hold, as part of reacting to a failure.
+- Redeploying the previous application build is a **diagnosis step only** and only while writes stay quiesced. If the old build is allowed to serve registrations, they land only in the legacy table; rerunning `Migrate development database` will not synchronise the models, because EF never re-executes an applied migration.
+- If legacy writes occurred after the backfill, stop the cutover there: keep the old build stopped, keep the new build undeployed, and reconcile under a separately reviewed procedure (for example, a reviewed script that replays the affected legacy rows into `MonitoringRules`/`MonitoringRuleRevisions`) before the new application resumes.
+- Never run the migration's `Down`, delete rows from `__EFMigrationsHistory`, or delete revision history to force a re-backfill — each of those destroys committed configuration rather than recovering it.

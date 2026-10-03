@@ -1,3 +1,4 @@
+using NodaTime;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
@@ -35,6 +36,8 @@ internal sealed class CapturingWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Guid? RequestedInstrumentId { get; private set; }
 
+    public Instant? RequestedAt { get; private set; }
+
     public Task<Result<Guid>> AddAsync(
         WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken)
@@ -46,10 +49,12 @@ internal sealed class CapturingWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Task<Result<WatchedInstrumentConfiguration>> GetAsync(
         Guid instrumentId,
+        Instant at,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         RequestedInstrumentId = instrumentId;
+        RequestedAt = at;
 
         return Task.FromResult(_getResult ?? WatchedInstrumentErrors.ConfigurationNotFound);
     }

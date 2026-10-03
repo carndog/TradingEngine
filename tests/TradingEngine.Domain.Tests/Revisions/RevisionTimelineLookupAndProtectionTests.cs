@@ -20,6 +20,30 @@ public sealed class RevisionTimelineLookupAndProtectionTests
         {
             Assert.That(timeline.EffectiveAt(October(6, 10) - Duration.FromNanoseconds(1)), Is.SameAs(original));
             Assert.That(timeline.EffectiveAt(October(6, 10)), Is.SameAs(successor));
+            Assert.That(timeline.EffectiveAt(October(6, 10) + Duration.FromNanoseconds(1)), Is.SameAs(successor));
+        });
+    }
+
+    [Test]
+    public void EffectiveAt_MinimumCommittedPeriod_SelectsInsideAndEndBoundaries()
+    {
+        Instant start = October(6, 10);
+        Instant end = start.PlusTicks(1);
+        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        Revision<SyntheticLimitDefinition> first = Apply(timeline, 1, 10, October(1));
+        Revision<SyntheticLimitDefinition> middle = Schedule(timeline, 2, 20, start, October(5));
+        Revision<SyntheticLimitDefinition> last = Schedule(timeline, 3, 30, end, October(5));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(middle.EffectivePeriod!.EffectiveFrom, Is.EqualTo(start));
+            Assert.That(middle.EffectivePeriod!.EffectiveTo, Is.EqualTo(end));
+            Assert.That(timeline.EffectiveAt(start), Is.SameAs(middle));
+            Assert.That(timeline.EffectiveAt(start + Duration.FromNanoseconds(50)), Is.SameAs(middle));
+            Assert.That(timeline.EffectiveAt(end - Duration.FromNanoseconds(1)), Is.SameAs(middle));
+            Assert.That(timeline.EffectiveAt(end), Is.SameAs(last));
+            Assert.That(first.EffectivePeriod!.EffectiveTo, Is.EqualTo(start));
+            Assert.That(last.EffectivePeriod!.IsOpenEnded, Is.True);
         });
     }
 

@@ -26,7 +26,9 @@ builder.Services.AddScoped<RegisterWatchedInstrumentHandler>(provider =>
         provider.GetRequiredService<IClock>(),
         provider.GetRequiredService<IWatchedInstrumentStore>()));
 builder.Services.AddScoped<GetWatchedInstrumentHandler>(provider =>
-    new GetWatchedInstrumentHandler(provider.GetRequiredService<IWatchedInstrumentStore>()));
+    new GetWatchedInstrumentHandler(
+        provider.GetRequiredService<IWatchedInstrumentStore>(),
+        provider.GetRequiredService<IClock>()));
 
 if (string.IsNullOrWhiteSpace(connectionString) is false)
 {

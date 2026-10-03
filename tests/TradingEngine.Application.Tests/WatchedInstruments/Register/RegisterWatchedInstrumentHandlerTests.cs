@@ -142,8 +142,29 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
 
-        Assert.ThrowsAsync<OperationCanceledException>(
+        await Assert.ThrowsAsync<OperationCanceledException>(
             () => handler.HandleAsync(command, cancellation.Token));
+    }
+
+    [Test]
+    public async Task HandleAsync_WithUnrepresentableClockInstant_ThrowsBeforeStoreCall()
+    {
+        Instant now = Instant.FromUtc(2026, 1, 2, 9, 30).PlusNanoseconds(50);
+        FakeClock clock = new(now);
+        CapturingWatchedInstrumentStore store = new();
+        RegisterWatchedInstrumentHandler handler = new(clock, store);
+        RegisterWatchedInstrument command = new(
+            "demo-2",
+            "xtest",
+            "gbp",
+            60,
+            MonitoringState.Configured,
+            CreateDefinition());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => handler.HandleAsync(command, CancellationToken.None));
+
+        Assert.That(store.AddedRegistration, Is.Null);
     }
 
     [Test]

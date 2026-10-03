@@ -1,10 +1,13 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using NodaTime;
 using TradingEngine.Application.Ports;
+using TradingEngine.Application.Time;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.MonitoringRules;
 using TradingEngine.Domain.Results;
+using TradingEngine.Domain.Revisions;
 using TradingEngine.Infrastructure.MonitoringRules.Xml;
 
 namespace TradingEngine.Infrastructure.Persistence;
@@ -12,6 +15,7 @@ namespace TradingEngine.Infrastructure.Persistence;
 public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 {
     private const string BusinessKeyIndexName = "UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency";
+    private const string RegistrationCreatedBy = "watched-instrument-registration";
 
     private readonly TradingEngineDbContext _context;
     private readonly ChartAnalysisDefinitionXmlSerializer _serializer;
@@ -31,6 +35,9 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         ArgumentNullException.ThrowIfNull(registration);
 
         WatchedInstrumentFields fields = registration.Fields;
+        Instant createdAt = PersistedInstant.Require(
+            registration.CreatedAt,
+            nameof(registration));
         WatchedInstrumentRow row = new()
         {
             Symbol = fields.Symbol,
@@ -38,15 +45,29 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
             QuoteCurrency = fields.QuoteCurrency,
             MonitoringState = registration.MonitoringState.ToString(),
             SamplingIntervalSeconds = fields.SamplingIntervalSeconds,
-            CreatedAt = registration.CreatedAt,
-            LastChangedAt = registration.CreatedAt,
-            ChartAnalysisDefinition = new ChartAnalysisDefinitionRow
-            {
-                DefinitionXml = _serializer.Serialize(registration.Definition)
-            }
+            CreatedAt = createdAt,
+            LastChangedAt = createdAt
         };
 
         _context.WatchedInstruments.Add(row);
+
+        MonitoringRuleRow rule = new()
+        {
+            WatchedInstrumentId = row.Id,
+            CreatedAt = createdAt
+        };
+        rule.Revisions.Add(new MonitoringRuleRevisionRow
+        {
+            Id = Guid.CreateVersion7(),
+            RevisionNumber = 1,
+            CreatedAt = createdAt,
+            CreatedBy = RegistrationCreatedBy,
+            DefinitionXml = _serializer.Serialize(registration.Definition),
+            EffectiveFrom = createdAt,
+            Rule = rule
+        });
+
+        _context.MonitoringRules.Add(rule);
 
         try
         {
@@ -64,21 +85,15 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
     public async Task<Result<WatchedInstrumentConfiguration>> GetAsync(
         Guid instrumentId,
+        Instant at,
         CancellationToken cancellationToken)
     {
         WatchedInstrumentRow? row = await _context.WatchedInstruments
-            .Include(instrument => instrument.ChartAnalysisDefinition)
             .SingleOrDefaultAsync(instrument => instrument.Id == instrumentId, cancellationToken);
 
         if (row is null)
         {
             return WatchedInstrumentErrors.ConfigurationNotFound;
-        }
-
-        if (row.ChartAnalysisDefinition is null)
-        {
-            throw new InvalidDataException(
-                $"The persisted configuration for watched instrument '{instrumentId}' has no chart-analysis definition.");
         }
 
         Result<WatchedInstrument> instrument = WatchedInstrument.Restore(
@@ -98,10 +113,28 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
                 $"({instrument.Error.Code}): {instrument.Error.Description}");
         }
 
-        ChartAnalysisDefinition definition = _serializer.Deserialize(
-            row.ChartAnalysisDefinition.DefinitionXml);
+        MonitoringRuleRow? rule = await _context.MonitoringRules
+            .AsNoTracking()
+            .Include(candidate => candidate.Revisions)
+            .SingleOrDefaultAsync(
+                candidate => candidate.WatchedInstrumentId == instrumentId,
+                cancellationToken);
 
-        return new WatchedInstrumentConfiguration(instrument.Value, definition);
+        if (rule is null)
+        {
+            throw new InvalidDataException(
+                $"The persisted configuration for watched instrument '{instrumentId}' has no monitoring rule.");
+        }
+
+        MonitoringRule restored = MonitoringRuleRowMapping.Restore(rule, _serializer);
+        Revision<ChartAnalysisDefinition>? effective = restored.EffectiveAt(at);
+
+        if (effective is null)
+        {
+            return MonitoringRuleErrors.NoApplicableRevision;
+        }
+
+        return new WatchedInstrumentConfiguration(instrument.Value, effective.Definition);
     }
 
     private static MonitoringState ParseMonitoringState(WatchedInstrumentRow row)
