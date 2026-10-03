@@ -43,4 +43,16 @@ public static class RevisionErrors
     public static readonly Error StartConflict = Error.Conflict(
         "revision.start_conflict",
         "Another revision already begins at the requested instant.");
+
+    public static readonly Error RestoredDraftInvalid = Error.Validation(
+        "revision.restored_draft_invalid",
+        "A restored draft cannot carry a revision number or an effective end boundary.");
+
+    public static readonly Error RestoredCommittedInvalid = Error.Validation(
+        "revision.restored_committed_invalid",
+        "A restored committed revision requires a positive revision number and cannot carry a proposal.");
+
+    public static readonly Error RestoredSequenceInvalid = Error.Validation(
+        "revision.restored_sequence_invalid",
+        "Restored committed revisions must be adjacent in start order, numbered to match their position, and end open-ended.");
 }

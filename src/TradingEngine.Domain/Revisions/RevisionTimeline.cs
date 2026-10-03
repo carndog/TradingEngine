@@ -23,6 +23,146 @@ public sealed class RevisionTimeline<TDefinition>
         return _committed.Concat(_drafts).FirstOrDefault(revision => revision.Id == revisionId);
     }
 
+    public static Result<RevisionTimeline<TDefinition>> Restore(
+        IReadOnlyList<RestoredRevision<TDefinition>> revisions)
+    {
+        ArgumentNullException.ThrowIfNull(revisions);
+
+        RevisionTimeline<TDefinition> timeline = new();
+        HashSet<Guid> seen = [];
+
+        foreach (RestoredRevision<TDefinition> revision in revisions)
+        {
+            ArgumentNullException.ThrowIfNull(revision);
+            ArgumentNullException.ThrowIfNull(revision.Definition);
+
+            if (revision.Id == Guid.Empty)
+            {
+                return RevisionErrors.IdRequired;
+            }
+
+            if (string.IsNullOrWhiteSpace(revision.CreatedBy))
+            {
+                return RevisionErrors.CreatedByRequired;
+            }
+
+            if (seen.Add(revision.Id) is false)
+            {
+                return RevisionErrors.DuplicateId;
+            }
+
+            Result<Revision<TDefinition>> restored = RestoreRevision(revision);
+            if (restored.IsFailure)
+            {
+                return restored.Error;
+            }
+
+            if (restored.Value.IsDraft)
+            {
+                timeline._drafts.Add(restored.Value);
+            }
+            else
+            {
+                timeline._committed.Add(restored.Value);
+            }
+        }
+
+        Result sequence = timeline.ValidateRestoredSequence();
+        if (sequence.IsFailure)
+        {
+            return sequence.Error;
+        }
+
+        return timeline;
+    }
+
+    private static Result<Revision<TDefinition>> RestoreRevision(
+        RestoredRevision<TDefinition> revision)
+    {
+        RevisionProposal? proposal = revision.ProposedFrom is null && revision.ProposedTo is null
+            ? null
+            : new RevisionProposal(revision.ProposedFrom, revision.ProposedTo);
+
+        if (revision.EffectiveFrom is null)
+        {
+            if (revision.EffectiveTo is not null || revision.RevisionNumber is not null)
+            {
+                return RevisionErrors.RestoredDraftInvalid;
+            }
+
+            return Revision<TDefinition>.Restore(
+                revision.Id,
+                revision.Definition,
+                revision.CreatedAt,
+                revision.CreatedBy,
+                revision.ChangeReason,
+                null,
+                null,
+                proposal);
+        }
+
+        if (revision.RevisionNumber is null || revision.RevisionNumber <= 0)
+        {
+            return RevisionErrors.RestoredCommittedInvalid;
+        }
+
+        if (proposal is not null)
+        {
+            return RevisionErrors.RestoredCommittedInvalid;
+        }
+
+        Result<EffectivePeriod> period = EffectivePeriod.Create(
+            revision.EffectiveFrom.Value,
+            revision.EffectiveTo);
+        if (period.IsFailure)
+        {
+            return period.Error;
+        }
+
+        return Revision<TDefinition>.Restore(
+            revision.Id,
+            revision.Definition,
+            revision.CreatedAt,
+            revision.CreatedBy,
+            revision.ChangeReason,
+            revision.RevisionNumber,
+            period.Value,
+            null);
+    }
+
+    private Result ValidateRestoredSequence()
+    {
+        _committed.Sort((left, right) =>
+            left.EffectivePeriod!.EffectiveFrom.CompareTo(right.EffectivePeriod!.EffectiveFrom));
+
+        for (int index = 0; index < _committed.Count; index++)
+        {
+            Revision<TDefinition> revision = _committed[index];
+            bool ordered = index == 0
+                || _committed[index - 1].EffectivePeriod!.EffectiveFrom
+                    < revision.EffectivePeriod!.EffectiveFrom;
+            if (ordered is false)
+            {
+                return RevisionErrors.RestoredSequenceInvalid;
+            }
+
+            if (revision.RevisionNumber != index + 1)
+            {
+                return RevisionErrors.RestoredSequenceInvalid;
+            }
+
+            Instant? expectedEnd = index + 1 < _committed.Count
+                ? _committed[index + 1].EffectivePeriod!.EffectiveFrom
+                : null;
+            if (revision.EffectivePeriod!.EffectiveTo != expectedEnd)
+            {
+                return RevisionErrors.RestoredSequenceInvalid;
+            }
+        }
+
+        return Result.Success();
+    }
+
     public Result<Revision<TDefinition>> CreateDraft(
         Guid draftId,
         TDefinition definition,

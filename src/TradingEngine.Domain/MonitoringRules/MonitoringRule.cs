@@ -6,13 +6,18 @@ namespace TradingEngine.Domain.MonitoringRules;
 
 public sealed class MonitoringRule
 {
-    private readonly RevisionTimeline<ChartAnalysisDefinition> _timeline = new();
+    private readonly RevisionTimeline<ChartAnalysisDefinition> _timeline;
 
-    private MonitoringRule(Guid id, Guid watchedInstrumentId, Instant createdAt)
+    private MonitoringRule(
+        Guid id,
+        Guid watchedInstrumentId,
+        Instant createdAt,
+        RevisionTimeline<ChartAnalysisDefinition> timeline)
     {
         Id = id;
         WatchedInstrumentId = watchedInstrumentId;
         CreatedAt = createdAt;
+        _timeline = timeline;
     }
 
     public Guid Id { get; }
@@ -37,7 +42,39 @@ public sealed class MonitoringRule
             return MonitoringRuleErrors.WatchedInstrumentIdRequired;
         }
 
-        return new MonitoringRule(id, watchedInstrumentId, createdAt);
+        return new MonitoringRule(
+            id,
+            watchedInstrumentId,
+            createdAt,
+            new RevisionTimeline<ChartAnalysisDefinition>());
+    }
+
+    public static Result<MonitoringRule> Restore(
+        Guid id,
+        Guid watchedInstrumentId,
+        Instant createdAt,
+        IReadOnlyList<RestoredRevision<ChartAnalysisDefinition>> revisions)
+    {
+        ArgumentNullException.ThrowIfNull(revisions);
+
+        if (id == Guid.Empty)
+        {
+            return MonitoringRuleErrors.IdRequired;
+        }
+
+        if (watchedInstrumentId == Guid.Empty)
+        {
+            return MonitoringRuleErrors.WatchedInstrumentIdRequired;
+        }
+
+        Result<RevisionTimeline<ChartAnalysisDefinition>> timeline =
+            RevisionTimeline<ChartAnalysisDefinition>.Restore(revisions);
+        if (timeline.IsFailure)
+        {
+            return timeline.Error;
+        }
+
+        return new MonitoringRule(id, watchedInstrumentId, createdAt, timeline.Value);
     }
 
     public Revision<ChartAnalysisDefinition>? EffectiveAt(Instant instant)

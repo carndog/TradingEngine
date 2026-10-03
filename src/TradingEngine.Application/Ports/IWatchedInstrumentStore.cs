@@ -1,3 +1,4 @@
+using NodaTime;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Domain.Results;
 
@@ -11,5 +12,6 @@ public interface IWatchedInstrumentStore
 
     Task<Result<WatchedInstrumentConfiguration>> GetAsync(
         Guid instrumentId,
+        Instant at,
         CancellationToken cancellationToken);
 }

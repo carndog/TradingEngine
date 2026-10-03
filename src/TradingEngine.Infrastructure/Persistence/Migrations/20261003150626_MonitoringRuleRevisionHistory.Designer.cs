@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TradingEngine.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using TradingEngine.Infrastructure.Persistence;
 namespace TradingEngine.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TradingEngineDbContext))]
-    partial class TradingEngineDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261003150626_MonitoringRuleRevisionHistory")]
+    partial class MonitoringRuleRevisionHistory
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

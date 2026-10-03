@@ -19,6 +19,7 @@ public static class InfrastructureServiceCollectionExtensions
             options.UseSqlServer(connectionString));
         services.AddSingleton<ChartAnalysisDefinitionXmlSerializer>();
         services.AddScoped<IWatchedInstrumentStore, SqlServerWatchedInstrumentStore>();
+        services.AddScoped<IMonitoringRuleStore, SqlServerMonitoringRuleStore>();
 
         return services;
     }

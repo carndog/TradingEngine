@@ -63,6 +63,7 @@ public sealed class CurrentConfigurationPersistenceTests
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
             Result<WatchedInstrumentConfiguration> retrieved = await store.GetAsync(
                 added.Value,
+                registration.CreatedAt,
                 CancellationToken.None);
 
             Assert.That(retrieved.IsSuccess, Is.True);
@@ -100,23 +101,29 @@ public sealed class CurrentConfigurationPersistenceTests
         Assert.That(added.Value, Is.Not.EqualTo(Guid.Empty));
 
         int instrumentRows;
-        int definitionRows;
+        int ruleRows;
+        int revisionRows;
         await using (TradingEngineDbContext context = CreateContext())
         {
             instrumentRows = await context.Database
                 .SqlQuery<int>(
                     $"SELECT COUNT(*) AS [Value] FROM WatchedInstruments WHERE Id = {added.Value}")
                 .SingleAsync();
-            definitionRows = await context.Database
+            ruleRows = await context.Database
                 .SqlQuery<int>(
-                    $"SELECT COUNT(*) AS [Value] FROM ChartAnalysisDefinitions WHERE WatchedInstrumentId = {added.Value}")
+                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRules WHERE WatchedInstrumentId = {added.Value}")
+                .SingleAsync();
+            revisionRows = await context.Database
+                .SqlQuery<int>(
+                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions r JOIN MonitoringRules m ON r.MonitoringRuleId = m.Id WHERE m.WatchedInstrumentId = {added.Value}")
                 .SingleAsync();
         }
 
         Assert.Multiple(() =>
         {
             Assert.That(instrumentRows, Is.EqualTo(1));
-            Assert.That(definitionRows, Is.EqualTo(1));
+            Assert.That(ruleRows, Is.EqualTo(1));
+            Assert.That(revisionRows, Is.EqualTo(1));
         });
     }
 
@@ -171,6 +178,7 @@ public sealed class CurrentConfigurationPersistenceTests
 
         Result<WatchedInstrumentConfiguration> result = await store.GetAsync(
             UnknownInstrumentId,
+            Instant.FromUtc(2026, 1, 2, 9, 30),
             CancellationToken.None);
 
         Assert.Multiple(() =>
@@ -203,16 +211,16 @@ public sealed class CurrentConfigurationPersistenceTests
         }
 
         int instrumentRows;
-        int orphanedDefinitionRows;
+        int orphanedRevisionRows;
         await using (TradingEngineDbContext context = CreateContext())
         {
             instrumentRows = await context.Database
                 .SqlQuery<int>(
                     $"SELECT COUNT(*) AS [Value] FROM WatchedInstruments WHERE Exchange = {"XTEST"} AND Symbol = {"CCC"} AND QuoteCurrency = {"EUR"}")
                 .SingleAsync();
-            orphanedDefinitionRows = await context.Database
+            orphanedRevisionRows = await context.Database
                 .SqlQuery<int>(
-                    $"SELECT COUNT(*) AS [Value] FROM ChartAnalysisDefinitions d WHERE NOT EXISTS (SELECT 1 FROM WatchedInstruments w WHERE w.Id = d.WatchedInstrumentId)")
+                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions r WHERE NOT EXISTS (SELECT 1 FROM MonitoringRules m WHERE m.Id = r.MonitoringRuleId)")
                 .SingleAsync();
         }
 
@@ -223,7 +231,7 @@ public sealed class CurrentConfigurationPersistenceTests
             Assert.That(secondAdd.Error, Is.EqualTo(WatchedInstrumentErrors.DuplicateBusinessKey));
             Assert.That(secondAdd.Error.Type, Is.EqualTo(ErrorType.Conflict));
             Assert.That(instrumentRows, Is.EqualTo(1));
-            Assert.That(orphanedDefinitionRows, Is.EqualTo(0));
+            Assert.That(orphanedRevisionRows, Is.EqualTo(0));
         });
     }
 
@@ -265,8 +273,9 @@ public sealed class CurrentConfigurationPersistenceTests
         await connection.OpenAsync();
         await using SqlCommand command = connection.CreateCommand();
         command.CommandText =
-            "SELECT CONVERT(nvarchar(max), DefinitionXml) FROM ChartAnalysisDefinitions " +
-            "WHERE WatchedInstrumentId = @id";
+            "SELECT CONVERT(nvarchar(max), r.DefinitionXml) FROM MonitoringRuleRevisions r " +
+            "JOIN MonitoringRules m ON r.MonitoringRuleId = m.Id " +
+            "WHERE m.WatchedInstrumentId = @id";
         command.Parameters.AddWithValue("@id", added.Value);
 
         string? storedXml = (string?)await command.ExecuteScalarAsync();
@@ -311,7 +320,10 @@ public sealed class CurrentConfigurationPersistenceTests
         SqlServerWatchedInstrumentStore store = new(context, _serializer);
 
         InvalidOperationException? exception = Assert.ThrowsAsync<InvalidOperationException>(
-            () => store.GetAsync(UnavailableDatabaseInstrumentId, CancellationToken.None));
+            () => store.GetAsync(
+                UnavailableDatabaseInstrumentId,
+                Instant.FromUtc(2026, 1, 2, 9, 30),
+                CancellationToken.None));
 
         Assert.That(exception?.InnerException, Is.TypeOf<SqlException>());
     }

@@ -19,6 +19,16 @@ public sealed class TradingEngineDbContext : DbContext
         get { return Set<ChartAnalysisDefinitionRow>(); }
     }
 
+    internal DbSet<MonitoringRuleRow> MonitoringRules
+    {
+        get { return Set<MonitoringRuleRow>(); }
+    }
+
+    internal DbSet<MonitoringRuleRevisionRow> MonitoringRuleRevisions
+    {
+        get { return Set<MonitoringRuleRevisionRow>(); }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(TradingEngineDbContext).Assembly);

@@ -1,4 +1,5 @@
 using NodaTime;
+using NodaTime.Testing;
 using TradingEngine.Application.Tests.WatchedInstruments.Register;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Application.WatchedInstruments.Read;
@@ -18,7 +19,8 @@ public sealed class GetWatchedInstrumentHandlerTests
         CapturingWatchedInstrumentStore store = new(
             CapturingWatchedInstrumentStore.DefaultGeneratedId,
             configuration);
-        GetWatchedInstrumentHandler handler = new(store);
+        FakeClock clock = new(Instant.FromUtc(2026, 10, 5, 9, 30));
+        GetWatchedInstrumentHandler handler = new(store, clock);
         GetWatchedInstrument query = new(configuration.Instrument.Id);
 
         Result<WatchedInstrumentConfiguration> result = await handler.HandleAsync(
@@ -30,6 +32,7 @@ public sealed class GetWatchedInstrumentHandlerTests
             Assert.That(result.IsSuccess, Is.True);
             Assert.That(result.Value, Is.SameAs(configuration));
             Assert.That(store.RequestedInstrumentId, Is.EqualTo(query.InstrumentId));
+            Assert.That(store.RequestedAt, Is.EqualTo(clock.GetCurrentInstant()));
         });
     }
 
@@ -39,7 +42,7 @@ public sealed class GetWatchedInstrumentHandlerTests
         CapturingWatchedInstrumentStore store = new(
             CapturingWatchedInstrumentStore.DefaultGeneratedId,
             WatchedInstrumentErrors.ConfigurationNotFound);
-        GetWatchedInstrumentHandler handler = new(store);
+        GetWatchedInstrumentHandler handler = new(store, SystemClock.Instance);
         GetWatchedInstrument query = new(Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));
 
         Result<WatchedInstrumentConfiguration> result = await handler.HandleAsync(
@@ -58,7 +61,7 @@ public sealed class GetWatchedInstrumentHandlerTests
     public async Task HandleAsync_WhenCancelled_PropagatesCancellation()
     {
         CapturingWatchedInstrumentStore store = new();
-        GetWatchedInstrumentHandler handler = new(store);
+        GetWatchedInstrumentHandler handler = new(store, SystemClock.Instance);
         GetWatchedInstrument query = new(Guid.Parse("a34b2207-fc21-4226-91b2-47eb4a40bde1"));
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
