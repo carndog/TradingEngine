@@ -4,10 +4,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 #nullable disable
 
 namespace TradingEngine.Infrastructure.Persistence.Migrations;
-/// <inheritdoc />
 public partial class MonitoringRuleRevisionHistory : Migration
 {
-    /// <inheritdoc />
     protected override void Up(MigrationBuilder migrationBuilder)
     {
             migrationBuilder.CreateTable(
@@ -99,7 +97,6 @@ public partial class MonitoringRuleRevisionHistory : Migration
                 """);
         }
 
-    /// <inheritdoc />
     protected override void Down(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.DropTable(

@@ -297,6 +297,60 @@ public sealed class RevisionTimelineRestoreTests
     }
 
     [Test]
+    public void Restore_WithNanosecondGapBetweenCommittedPeriods_ReturnsRestoredSequenceInvalidError()
+    {
+        Result<RevisionTimeline<SyntheticLimitDefinition>> result = RevisionTimeline<SyntheticLimitDefinition>
+            .Restore(
+            [
+                Committed(SyntheticTimelines.Id(1), 1, 100, October1, October1, October5, null),
+                Committed(SyntheticTimelines.Id(2), 2, 110, October5, October5.PlusNanoseconds(1), null, null)
+            ]);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(RevisionErrors.RestoredSequenceInvalid));
+    }
+
+    [Test]
+    public void Restore_WithNanosecondOverlapBetweenCommittedPeriods_ReturnsRestoredSequenceInvalidError()
+    {
+        Result<RevisionTimeline<SyntheticLimitDefinition>> result = RevisionTimeline<SyntheticLimitDefinition>
+            .Restore(
+            [
+                Committed(SyntheticTimelines.Id(1), 1, 100, October1, October1, October5.PlusNanoseconds(1), null),
+                Committed(SyntheticTimelines.Id(2), 2, 110, October5, October5, null, null)
+            ]);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(RevisionErrors.RestoredSequenceInvalid));
+    }
+
+    [Test]
+    public void Restore_WithMinimumCommittedPeriod_PreservesExactBoundary()
+    {
+        Instant start = October5;
+        Instant end = start.PlusTicks(1);
+
+        Result<RevisionTimeline<SyntheticLimitDefinition>> result = RevisionTimeline<SyntheticLimitDefinition>
+            .Restore(
+            [
+                Committed(SyntheticTimelines.Id(1), 1, 100, October1, October1, start, null),
+                Committed(SyntheticTimelines.Id(2), 2, 110, October1, start, end, null),
+                Committed(SyntheticTimelines.Id(3), 3, 120, October1, end, null, null)
+            ]);
+
+        Assert.That(result.IsSuccess, Is.True);
+        RevisionTimeline<SyntheticLimitDefinition> timeline = result.Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(timeline.EffectiveAt(start - Duration.FromNanoseconds(1))!.Id, Is.EqualTo(SyntheticTimelines.Id(1)));
+            Assert.That(timeline.EffectiveAt(start)!.Id, Is.EqualTo(SyntheticTimelines.Id(2)));
+            Assert.That(timeline.EffectiveAt(start + Duration.FromNanoseconds(50))!.Id, Is.EqualTo(SyntheticTimelines.Id(2)));
+            Assert.That(timeline.EffectiveAt(end - Duration.FromNanoseconds(1))!.Id, Is.EqualTo(SyntheticTimelines.Id(2)));
+            Assert.That(timeline.EffectiveAt(end)!.Id, Is.EqualTo(SyntheticTimelines.Id(3)));
+        });
+    }
+
+    [Test]
     public void Restore_WithDuplicateCommittedStarts_ReturnsRestoredSequenceInvalidError()
     {
         Result<RevisionTimeline<SyntheticLimitDefinition>> result = RevisionTimeline<SyntheticLimitDefinition>

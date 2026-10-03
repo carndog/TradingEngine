@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NodaTime;
 using TradingEngine.Application.Ports;
+using TradingEngine.Application.Time;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.MonitoringRules;
@@ -34,7 +35,7 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         ArgumentNullException.ThrowIfNull(registration);
 
         WatchedInstrumentFields fields = registration.Fields;
-        Instant createdAt = SqlInstant.RequireSupported(
+        Instant createdAt = PersistedInstant.Require(
             registration.CreatedAt,
             nameof(registration));
         WatchedInstrumentRow row = new()

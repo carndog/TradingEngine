@@ -1,3 +1,4 @@
+using TradingEngine.Application.Time;
 using TradingEngine.Domain.MonitoringRules;
 using TradingEngine.Domain.Results;
 using TradingEngine.Domain.Revisions;
@@ -68,15 +69,15 @@ internal static class MonitoringRuleRowMapping
 
     public static void ValidateInstants(MonitoringRule rule)
     {
-        SqlInstant.RequireSupported(rule.CreatedAt, nameof(rule));
+        PersistedInstant.Require(rule.CreatedAt, nameof(rule));
 
         foreach (Revision<ChartAnalysisDefinition> revision in rule.Revisions.Concat(rule.Drafts))
         {
-            SqlInstant.RequireSupported(revision.CreatedAt, nameof(rule));
-            SqlInstant.RequireSupported(revision.EffectivePeriod?.EffectiveFrom, nameof(rule));
-            SqlInstant.RequireSupported(revision.EffectivePeriod?.EffectiveTo, nameof(rule));
-            SqlInstant.RequireSupported(revision.Proposal?.EffectiveFrom, nameof(rule));
-            SqlInstant.RequireSupported(revision.Proposal?.EffectiveTo, nameof(rule));
+            PersistedInstant.Require(revision.CreatedAt, nameof(rule));
+            PersistedInstant.Require(revision.EffectivePeriod?.EffectiveFrom, nameof(rule));
+            PersistedInstant.Require(revision.EffectivePeriod?.EffectiveTo, nameof(rule));
+            PersistedInstant.Require(revision.Proposal?.EffectiveFrom, nameof(rule));
+            PersistedInstant.Require(revision.Proposal?.EffectiveTo, nameof(rule));
         }
     }
 }

@@ -1,8 +1,8 @@
 using NodaTime;
 
-namespace TradingEngine.Infrastructure.Persistence;
+namespace TradingEngine.Application.Time;
 
-internal static class SqlInstant
+public static class PersistedInstant
 {
     private static readonly Instant Minimum =
         Instant.FromDateTimeUtc(DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc));
@@ -10,7 +10,7 @@ internal static class SqlInstant
     private static readonly Instant Maximum =
         Instant.FromDateTimeUtc(DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc));
 
-    public static Instant RequireSupported(Instant instant, string parameterName)
+    public static Instant Require(Instant instant, string parameterName)
     {
         if (instant < Minimum || instant > Maximum)
         {
@@ -31,8 +31,8 @@ internal static class SqlInstant
         return instant;
     }
 
-    public static Instant? RequireSupported(Instant? instant, string parameterName)
+    public static Instant? Require(Instant? instant, string parameterName)
     {
-        return instant is null ? null : RequireSupported(instant.Value, parameterName);
+        return instant is null ? null : Require(instant.Value, parameterName);
     }
 }

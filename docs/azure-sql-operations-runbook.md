@@ -210,3 +210,61 @@ Do **not** delete `rg-tradingengine-dev` — it contains the App Service. Increm
 - The 100,000 vCore-second and 32 GB allowances reset each calendar month; `AutoPause` means exhaustion pauses the database rather than billing.
 - Disconnect query tools when finished — open connections prevent auto-pause and consume the allowance.
 - Keep the subscription budget and cost alerts from the App Service deployment active; the SQL free offer should produce zero SQL line items.
+
+## 10. Coordinated schema/application cutover
+
+Some migrations are write-incompatible with the running application: the `MonitoringRuleRevisionHistory` migration backfills `ChartAnalysisDefinitions` into `MonitoringRules`/`MonitoringRuleRevisions` once. An old application instance running afterwards still registers instruments only into the legacy table, which the new read path cannot see; deploying the new application before the migration also fails because its tables do not yet exist. Cut over in one coordinated window:
+
+1. **Hold automatic deployment.** In the repository set **Settings → Secrets and variables → Actions → Variables** `DEPLOYMENT_HOLD` = `true` **before** merging the incompatible change. While set, `Deploy development` still builds and tests on `main` pushes but skips the deploy job, so merging never deploys ahead of the schema.
+2. **Merge the change.** Confirm the `Deploy to development` job was skipped in the merge run.
+3. **Quiesce legacy writes and drain in-flight registrations.** Stop the Web App; stopping drains outstanding requests so no registration can land in the legacy table after this point.
+
+   ```powershell
+   az webapp stop --name <web-app-name> --resource-group rg-tradingengine-dev
+   ```
+
+   Record the pre-cutover counts so the verification in step 5 has a baseline:
+
+   ```sql
+   SELECT COUNT(*) FROM WatchedInstruments;
+   SELECT COUNT(*) FROM ChartAnalysisDefinitions;
+   ```
+
+4. **Apply the reviewed migration.** Run **Actions → Migrate development database → Run workflow** from `main` (see step 5 above). It requires the `development-database-migration` environment approval and applies the same commit that was just merged.
+5. **Verify the backfill before any app runs.** Connect through the temporary firewall rule (step 3.2) and confirm every instrument with a legacy definition gained a rule and exactly one open-ended committed revision — both queries must return zero rows:
+
+   ```sql
+   SELECT w.Id FROM WatchedInstruments w
+   JOIN ChartAnalysisDefinitions d ON d.WatchedInstrumentId = w.Id
+   WHERE NOT EXISTS (
+       SELECT 1 FROM MonitoringRules m WHERE m.WatchedInstrumentId = w.Id);
+
+   SELECT m.Id FROM MonitoringRules m
+   WHERE NOT EXISTS (
+       SELECT 1 FROM MonitoringRuleRevisions r
+       WHERE r.MonitoringRuleId = m.Id AND r.EffectiveFrom IS NOT NULL);
+   ```
+
+   The revision counts must equal the baseline from step 3.
+
+6. **Deploy the matching application version.** Clear `DEPLOYMENT_HOLD` (delete the variable or set it `false`), then run **Actions → Deploy development → Run workflow** from `main` — a manual run deploys the current `main` commit, which is the just-merged build. Keep the Web App stopped until the `Deploy to App Service` step completes; only then start it so the old build never serves again:
+
+   ```powershell
+   az webapp start --name <web-app-name> --resource-group rg-tradingengine-dev
+   ```
+
+   The workflow's health and `/version` verification then confirms the new build is serving.
+7. **Smoke-test before resuming writes.** Register a synthetic instrument and read it back at its creation instant and after:
+
+   ```powershell
+   $registered = Invoke-RestMethod -Method Post `
+     -Uri "https://<web-app-hostname>/api/watched-instruments" `
+     -ContentType 'application/json' `
+     -Body (@{ symbol = 'CUT-1'; exchange = 'XTEST'; quoteCurrency = 'USD'; samplingIntervalSeconds = 60; monitoringState = 'configured'; priceScale = 4; supportZones = @(); resistanceZones = @() } | ConvertTo-Json)
+   Invoke-RestMethod "https://<web-app-hostname>/api/watched-instruments/$($registered.id)"
+   ```
+
+   In Query Editor confirm the instrument has one `MonitoringRules` row and one committed revision `1` with `EffectiveFrom` at the registration instant and `EffectiveTo` `NULL`, and that its legacy `ChartAnalysisDefinitions` row is absent — the new model no longer writes it. Delete the synthetic instrument afterwards if desired.
+8. **Resume writes and clear up.** The app is live on the new model. Remove the temporary firewall rule (step 7) and confirm `DEPLOYMENT_HOLD` stays cleared.
+
+**Recovery.** Before any new-model write, the safe rollback is to redeploy the previous application build (the package artifact is retained for one day, or rerun `Deploy development` from the prior commit) — the new tables are harmless to the old build, which ignores them; do **not** run `Down`. After any revision or registration has been written through the new model, reverting the application is unsafe: the old build writes only the legacy table while history lives in the new tables, silently splitting the authoritative configuration. Recovery is fix-forward; the legacy table remains untouched as an archive.

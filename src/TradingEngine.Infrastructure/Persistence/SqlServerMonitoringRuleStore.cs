@@ -13,8 +13,6 @@ namespace TradingEngine.Infrastructure.Persistence;
 
 public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
 {
-    private const int TemporaryRevisionNumberOffset = 1_000_000;
-
     private readonly TradingEngineDbContext _context;
     private readonly ChartAnalysisDefinitionXmlSerializer _serializer;
 
@@ -114,7 +112,7 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
         rootEntry.Property(nameof(MonitoringRuleRow.RowVersion)).OriginalValue =
             snapshot.ConcurrencyToken;
 
-        int pendingStarts = StagePhaseA(root, desired);
+        WithdrawRemovedAndChangedRevisions(root, desired);
         List<MonitoringRuleRevisionRow> adds = CollectAdds(root, desired);
 
         try
@@ -124,12 +122,6 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
 
             rootEntry.State = EntityState.Modified;
             await _context.SaveChangesAsync(cancellationToken);
-
-            if (pendingStarts > 0)
-            {
-                ApplyMovedStarts(root, desired);
-                await _context.SaveChangesAsync(cancellationToken);
-            }
 
             foreach (MonitoringRuleRevisionRow add in adds)
             {
@@ -153,7 +145,7 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
         return Result.Success();
     }
 
-    private int StagePhaseA(
+    private void WithdrawRemovedAndChangedRevisions(
         MonitoringRuleRow root,
         List<MonitoringRuleRevisionRow> desired)
     {
@@ -168,26 +160,20 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
             root.Revisions.Remove(row);
         }
 
-        int pendingStarts = 0;
-
         foreach (MonitoringRuleRevisionRow row in root.Revisions)
         {
             MonitoringRuleRevisionRow target = desired.First(candidate => candidate.Id == row.Id);
+            bool committedStateChanged = row.RevisionNumber != target.RevisionNumber
+                || row.EffectiveFrom != target.EffectiveFrom
+                || row.EffectiveTo != target.EffectiveTo;
 
-            if (row.RevisionNumber is not null && row.RevisionNumber != target.RevisionNumber)
+            if (committedStateChanged)
             {
-                row.RevisionNumber += TemporaryRevisionNumberOffset;
-            }
-
-            if (row.EffectiveFrom is not null
-                && target.EffectiveFrom is not null
-                && row.EffectiveFrom != target.EffectiveFrom)
-            {
-                pendingStarts++;
+                row.RevisionNumber = null;
+                row.EffectiveFrom = null;
+                row.EffectiveTo = null;
             }
         }
-
-        return pendingStarts;
     }
 
     private static List<MonitoringRuleRevisionRow> CollectAdds(
@@ -197,23 +183,6 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
         HashSet<Guid> existingIds = root.Revisions.Select(row => row.Id).ToHashSet();
 
         return desired.Where(row => existingIds.Contains(row.Id) is false).ToList();
-    }
-
-    private static void ApplyMovedStarts(
-        MonitoringRuleRow root,
-        List<MonitoringRuleRevisionRow> desired)
-    {
-        foreach (MonitoringRuleRevisionRow row in root.Revisions)
-        {
-            MonitoringRuleRevisionRow target = desired.First(candidate => candidate.Id == row.Id);
-
-            if (row.EffectiveFrom is not null
-                && target.EffectiveFrom is not null
-                && row.EffectiveFrom != target.EffectiveFrom)
-            {
-                row.EffectiveFrom = target.EffectiveFrom;
-            }
-        }
     }
 
     private static void ApplyFinalValues(
