@@ -142,7 +142,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
 
-        Assert.ThrowsAsync<OperationCanceledException>(
+        await Assert.ThrowsAsync<OperationCanceledException>(
             () => handler.HandleAsync(command, cancellation.Token));
     }
 

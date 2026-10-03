@@ -61,7 +61,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid ruleId = await SeedRuleAsync("CT-DRAFT-END");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => InsertRevisionAsync(
                 ruleId, Guid.CreateVersion7(), null, null, October5, null, null));
         int revisions = await CountRevisionsAsync(ruleId);
@@ -79,7 +79,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid ruleId = await SeedRuleAsync("CT-NO-NUM");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => InsertRevisionAsync(
                 ruleId, Guid.CreateVersion7(), null, October5, October10, null, null));
         int revisions = await CountRevisionsAsync(ruleId);
@@ -99,7 +99,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid ruleId = await SeedRuleAsync($"CT-NUM-{number}");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => InsertRevisionAsync(
                 ruleId, Guid.CreateVersion7(), number, October5, October10, null, null));
         int revisions = await CountRevisionsAsync(ruleId);
@@ -117,7 +117,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid ruleId = await SeedRuleAsync("CT-EQUAL");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => InsertRevisionAsync(
                 ruleId, Guid.CreateVersion7(), 2, October5, October5, null, null));
         int revisions = await CountRevisionsAsync(ruleId);
@@ -135,7 +135,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid ruleId = await SeedRuleAsync("CT-INVERTED");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => InsertRevisionAsync(
                 ruleId, Guid.CreateVersion7(), 2, October10, October5, null, null));
         int revisions = await CountRevisionsAsync(ruleId);
@@ -166,7 +166,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid instrumentId = await AddInstrumentAsync("CT-DEL-INST");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => ExecuteSqlAsync(
                 "DELETE FROM WatchedInstruments WHERE Id = @id",
                 instrumentId));
@@ -204,7 +204,7 @@ public sealed class MonitoringRuleConstraintTests
     {
         Guid instrumentId = await AddInstrumentAsync("CT-DEL-RULE");
 
-        SqlException? exception = Assert.CatchAsync<SqlException>(
+        SqlException? exception = await Assert.CatchAsync<SqlException>(
             () => ExecuteSqlAsync(
                 "DELETE FROM MonitoringRules WHERE WatchedInstrumentId = @id",
                 instrumentId));

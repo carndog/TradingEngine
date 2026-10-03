@@ -66,7 +66,7 @@ public sealed class GetWatchedInstrumentHandlerTests
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
 
-        Assert.ThrowsAsync<OperationCanceledException>(
+        await Assert.ThrowsAsync<OperationCanceledException>(
             () => handler.HandleAsync(query, cancellation.Token));
     }
 

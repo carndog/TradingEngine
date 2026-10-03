@@ -178,7 +178,7 @@ public sealed class MonitoringRuleConcurrencyTests
             Assert.That(edited.IsSuccess, Is.True);
         });
 
-        Assert.CatchAsync<DbUpdateException>(() => SaveAsync(snapshot));
+        await Assert.CatchAsync<DbUpdateException>(() => SaveAsync(snapshot));
 
         long versionAfter = await ReadRowVersionAsync(instrumentId);
         int rowCount;
@@ -223,7 +223,7 @@ public sealed class MonitoringRuleConcurrencyTests
             "fine precision",
             null);
 
-        Assert.CatchAsync<ArgumentOutOfRangeException>(
+        await Assert.CatchAsync<ArgumentOutOfRangeException>(
             () => SaveAsync(snapshot));
     }
 
@@ -238,7 +238,7 @@ public sealed class MonitoringRuleConcurrencyTests
         CancellationTokenSource cancellation = new();
         await cancellation.CancelAsync();
 
-        Assert.CatchAsync<OperationCanceledException>(
+        await Assert.CatchAsync<OperationCanceledException>(
             () => store.SaveAsync(snapshot, cancellation.Token));
     }
 
@@ -257,7 +257,7 @@ public sealed class MonitoringRuleConcurrencyTests
         await using TradingEngineDbContext context = CreateContext();
         SqlServerMonitoringRuleStore store = new(context, _serializer);
 
-        Assert.ThrowsAsync<XmlSchemaValidationException>(
+        await Assert.ThrowsAsync<XmlSchemaValidationException>(
             () => store.GetAsync(instrumentId, CancellationToken.None));
     }
 
@@ -278,7 +278,7 @@ public sealed class MonitoringRuleConcurrencyTests
         await using TradingEngineDbContext context = CreateContext();
         SqlServerMonitoringRuleStore store = new(context, _serializer);
 
-        Assert.ThrowsAsync<InvalidDataException>(
+        await Assert.ThrowsAsync<InvalidDataException>(
             () => store.GetAsync(instrumentId, CancellationToken.None));
     }
 
@@ -296,7 +296,7 @@ public sealed class MonitoringRuleConcurrencyTests
         await using TradingEngineDbContext context = CreateContext();
         SqlServerMonitoringRuleStore store = new(context, _serializer);
 
-        Assert.ThrowsAsync<InvalidDataException>(
+        await Assert.ThrowsAsync<InvalidDataException>(
             () => store.GetAsync(instrumentId, CancellationToken.None));
     }
 
