@@ -30,6 +30,16 @@ public sealed record Error
         return Create(code, description, ErrorType.NotFound);
     }
 
+    public static Error PreconditionRequired(string code, string description)
+    {
+        return Create(code, description, ErrorType.PreconditionRequired);
+    }
+
+    public static Error PreconditionFailed(string code, string description)
+    {
+        return Create(code, description, ErrorType.PreconditionFailed);
+    }
+
     private static Error Create(string code, string description, ErrorType type)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(code);

@@ -2,7 +2,11 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NodaTime;
 using TradingEngine.Api.Diagnostics;
+using TradingEngine.Api.MonitoringRules;
 using TradingEngine.Api.WatchedInstruments;
+using TradingEngine.Application.MonitoringRules.Drafts;
+using TradingEngine.Application.MonitoringRules.Lifecycle;
+using TradingEngine.Application.MonitoringRules.Read;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.WatchedInstruments.Read;
 using TradingEngine.Application.WatchedInstruments.Register;
@@ -28,6 +32,41 @@ builder.Services.AddScoped<RegisterWatchedInstrumentHandler>(provider =>
 builder.Services.AddScoped<GetWatchedInstrumentHandler>(provider =>
     new GetWatchedInstrumentHandler(
         provider.GetRequiredService<IWatchedInstrumentStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<GetMonitoringRuleTimelineHandler>(provider =>
+    new GetMonitoringRuleTimelineHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>()));
+builder.Services.AddScoped<GetApplicableMonitoringRuleRevisionHandler>(provider =>
+    new GetApplicableMonitoringRuleRevisionHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<CreateMonitoringRuleDraftHandler>(provider =>
+    new CreateMonitoringRuleDraftHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<EditMonitoringRuleDraftHandler>(provider =>
+    new EditMonitoringRuleDraftHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<DeleteMonitoringRuleDraftHandler>(provider =>
+    new DeleteMonitoringRuleDraftHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<ApplyMonitoringRuleDraftHandler>(provider =>
+    new ApplyMonitoringRuleDraftHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<ScheduleMonitoringRuleDraftHandler>(provider =>
+    new ScheduleMonitoringRuleDraftHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<EditMonitoringRuleRevisionHandler>(provider =>
+    new EditMonitoringRuleRevisionHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
+        provider.GetRequiredService<IClock>()));
+builder.Services.AddScoped<RemoveMonitoringRuleRevisionHandler>(provider =>
+    new RemoveMonitoringRuleRevisionHandler(
+        provider.GetRequiredService<IMonitoringRuleStore>(),
         provider.GetRequiredService<IClock>()));
 
 if (string.IsNullOrWhiteSpace(connectionString) is false)
@@ -67,5 +106,6 @@ app.MapGet(
 app.MapGet("/auth-check", () => TypedResults.NoContent());
 
 app.MapWatchedInstrumentEndpoints();
+app.MapMonitoringRuleEndpoints();
 
 app.Run();

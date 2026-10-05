@@ -179,3 +179,123 @@ Authorization: Bearer {{bearerToken}}
 GET {{deployedHost}}/api/watched-instruments/{{createdInstrumentId}}
 Accept: application/json
 Authorization: Bearer {{bearerToken}}
+
+###
+
+// Local API: monitoring-rule timeline. Committed revisions plus the coverage
+// origin and the base64 concurrency token also returned as the ETag header.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule
+Accept: application/json
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Drafts list for the same rule.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+###
+
+// Revision effective at an instant; omit ?at= to resolve at server now.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at=2026-10-06T10:00:00Z
+Accept: application/json
+
+###
+
+// Create a draft. Writes require If-Match with the latest concurrencyToken;
+// missing -> 428, malformed -> 400, stale -> 412.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "raise support",
+  "proposedPeriod": { "effectiveFrom": "2026-10-06T10:00:00Z", "effectiveTo": null },
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 105.0,
+        "level": 110.0,
+        "upper": 115.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": [
+      {
+        "id": "resistance-a",
+        "lower": 120.0,
+        "level": 125.0,
+        "upper": 130.0,
+        "conditions": [
+          { "type": "breakout", "actionId": "publish-signal" }
+        ]
+      }
+    ]
+  }
+}
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Capture the draft id from GET .../drafts, then commit it open-ended from
+// server now (apply) or over an explicit future range (schedule).
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/apply
+If-Match: "{{ruleToken}}"
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/schedule
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "effectiveFrom": "2026-10-06T10:00:00Z",
+  "effectiveTo": null
+}
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Edit a future scheduled revision: optional definition replacement and/or a
+// new effectiveFrom boundary. Begun and origin revisions reject edits.
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{revisionId}}
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "fine tune",
+  "effectiveFrom": "2026-10-10T00:00:00Z"
+}
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Discard a draft, or remove a future revision (the predecessor reopens).
+DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}
+If-Match: "{{ruleToken}}"
+
+###
+
+DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{revisionId}}
+If-Match: "{{ruleToken}}"

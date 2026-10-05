@@ -51,23 +51,26 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
         _context.WatchedInstruments.Add(row);
 
-        MonitoringRuleRow rule = new()
+        MonitoringRule rule = MonitoringRule.Create(
+            Guid.CreateVersion7(),
+            row.Id,
+            Guid.CreateVersion7(),
+            registration.Definition,
+            createdAt,
+            RegistrationCreatedBy).Value;
+        MonitoringRuleRow ruleRow = new()
         {
+            Id = rule.Id,
             WatchedInstrumentId = row.Id,
-            CreatedAt = createdAt
+            CreatedAt = rule.CreatedAt
         };
-        rule.Revisions.Add(new MonitoringRuleRevisionRow
+        foreach (Revision<ChartAnalysisDefinition> revision in rule.Revisions.Concat(rule.Drafts))
         {
-            Id = Guid.CreateVersion7(),
-            RevisionNumber = 1,
-            CreatedAt = createdAt,
-            CreatedBy = RegistrationCreatedBy,
-            DefinitionXml = _serializer.Serialize(registration.Definition),
-            EffectiveFrom = createdAt,
-            Rule = rule
-        });
+            ruleRow.Revisions.Add(
+                MonitoringRuleRowMapping.ToRow(rule.Id, revision, _serializer));
+        }
 
-        _context.MonitoringRules.Add(rule);
+        _context.MonitoringRules.Add(ruleRow);
 
         try
         {

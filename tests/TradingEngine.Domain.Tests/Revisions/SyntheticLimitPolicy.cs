@@ -10,7 +10,9 @@ public sealed class SyntheticLimitPolicy
         "synthetic_limit.limit_not_positive",
         "A synthetic limit must be greater than zero when committed.");
 
-    private readonly RevisionTimeline<SyntheticLimitDefinition> _timeline = new();
+    private readonly RevisionTimeline<SyntheticLimitDefinition> _timeline =
+        RevisionTimeline<SyntheticLimitDefinition>.Restore(
+            Array.Empty<RestoredRevision<SyntheticLimitDefinition>>()).Value;
 
     public IReadOnlyList<Revision<SyntheticLimitDefinition>> Revisions => _timeline.Revisions;
 
@@ -42,7 +44,7 @@ public sealed class SyntheticLimitPolicy
             return failure;
         }
 
-        return _timeline.ApplyNow(draftId, now);
+        return _timeline.ApplyNow(draftId, Guid.NewGuid(), now);
     }
 
     public Result Schedule(Guid draftId, Instant effectiveFrom, Instant now)
@@ -53,7 +55,7 @@ public sealed class SyntheticLimitPolicy
             return failure;
         }
 
-        return _timeline.Schedule(draftId, effectiveFrom, now);
+        return _timeline.Schedule(draftId, effectiveFrom, null, Guid.NewGuid(), now);
     }
 
     private Error? ValidateDefinition(Guid draftId)

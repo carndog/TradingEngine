@@ -448,7 +448,7 @@ public sealed class RevisionTimelineRestoreTests
             Author,
             null,
             null);
-        Result scheduled = timeline.Schedule(draft.Value.Id, October12, October5);
+        Result scheduled = timeline.Schedule(draft.Value.Id, October12, null, SyntheticTimelines.Id(90), October5);
 
         Assert.Multiple(() =>
         {

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
-using OpenTelemetry.Logs;
 using TradingEngine.Api.Diagnostics;
 
 namespace TradingEngine.Api.IntegrationTests.Diagnostics;

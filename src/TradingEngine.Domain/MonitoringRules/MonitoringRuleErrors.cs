@@ -20,11 +20,35 @@ public static class MonitoringRuleErrors
         "monitoring_rule.already_exists",
         "A monitoring rule already exists for the watched instrument.");
 
-    public static readonly Error ConcurrentChange = Error.Conflict(
+    public static readonly Error ConcurrentChange = Error.PreconditionFailed(
         "monitoring_rule.concurrent_change",
         "The monitoring rule changed after it was loaded; reload and retry the change.");
 
     public static readonly Error NoApplicableRevision = Error.NotFound(
         "monitoring_rule.no_applicable_revision",
         "No committed monitoring-rule revision applies at the requested instant.");
+
+    public static readonly Error InstantInvalid = Error.Validation(
+        "monitoring_rule.instant_invalid",
+        "A timestamp is required and must be a valid ISO-8601 UTC instant.");
+
+    public static readonly Error InstantNotPersistable = Error.Validation(
+        "monitoring_rule.instant_not_persistable",
+        "A stored timestamp must lie within the supported UTC range and be no finer than 100 nanoseconds.");
+
+    public static readonly Error RequestRequired = Error.Validation(
+        "monitoring_rule.request_required",
+        "A monitoring-rule request body is required.");
+
+    public static readonly Error DefinitionRequired = Error.Validation(
+        "monitoring_rule.definition_required",
+        "A chart-analysis definition is required.");
+
+    public static readonly Error ConcurrencyTokenRequired = Error.PreconditionRequired(
+        "monitoring_rule.concurrency_token_required",
+        "A monitoring-rule change requires the current concurrency token via the If-Match header.");
+
+    public static readonly Error ConcurrencyTokenInvalid = Error.Validation(
+        "monitoring_rule.concurrency_token_invalid",
+        "The supplied concurrency token is malformed.");
 }

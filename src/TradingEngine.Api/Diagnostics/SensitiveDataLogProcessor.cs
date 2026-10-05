@@ -102,8 +102,8 @@ internal sealed class SensitiveDataLogProcessor : BaseProcessor<LogRecord>
         Exception sanitized)
     {
         List<KeyValuePair<string, object?>> extended = attributes is null
-            ? []
-            : [.. attributes];
+            ? new List<KeyValuePair<string, object?>>()
+            : new List<KeyValuePair<string, object?>>(attributes);
 
         string originalType = sanitized is TelemetrySanitizedException single
             ? single.OriginalTypeName

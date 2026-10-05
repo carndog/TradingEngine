@@ -72,15 +72,10 @@ public sealed class MonitoringRulePersistenceTests
         MonitoringRule rule = MonitoringRule.Create(
             Guid.CreateVersion7(),
             instrumentId,
-            October1).Value;
-        rule.CreateDraft(
             RevisionId(11),
             CreateDefinition(100m),
             October1,
-            Author,
-            "initial zones",
-            null);
-        rule.ApplyNow(RevisionId(11), October1);
+            Author).Value;
         rule.CreateDraft(
             RevisionId(12),
             CreateDefinition(110m),
@@ -124,7 +119,7 @@ public sealed class MonitoringRulePersistenceTests
                 Assert.That(restored.Revisions[0].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October1));
                 Assert.That(restored.Revisions[0].EffectivePeriod!.EffectiveTo, Is.Null);
                 Assert.That(restored.Revisions[0].CreatedBy, Is.EqualTo(Author));
-                Assert.That(restored.Revisions[0].ChangeReason, Is.EqualTo("initial zones"));
+                Assert.That(restored.Revisions[0].ChangeReason, Is.Null);
                 Assert.That(
                     restored.Revisions[0].Definition.SupportZones[0].Level,
                     Is.EqualTo(100m));
@@ -152,10 +147,22 @@ public sealed class MonitoringRulePersistenceTests
         {
             SqlServerMonitoringRuleStore store = new(context, _serializer);
             first = await store.AddAsync(
-                MonitoringRule.Create(Guid.CreateVersion7(), instrumentId, October1).Value,
+                MonitoringRule.Create(
+                    Guid.CreateVersion7(),
+                    instrumentId,
+                    Guid.CreateVersion7(),
+                    CreateDefinition(100m),
+                    October1,
+                    Author).Value,
                 CancellationToken.None);
             second = await store.AddAsync(
-                MonitoringRule.Create(Guid.CreateVersion7(), instrumentId, October1).Value,
+                MonitoringRule.Create(
+                    Guid.CreateVersion7(),
+                    instrumentId,
+                    Guid.CreateVersion7(),
+                    CreateDefinition(100m),
+                    October1,
+                    Author).Value,
                 CancellationToken.None);
         }
 
@@ -288,7 +295,7 @@ public sealed class MonitoringRulePersistenceTests
             Author,
             "raise support",
             null);
-        snapshot.Rule.ApplyNow(RevisionId(31), October5);
+        snapshot.Rule.ApplyNow(RevisionId(31), RevisionId(91), October5);
 
         Result saved = await SaveAsync(snapshot);
 
@@ -326,7 +333,7 @@ public sealed class MonitoringRulePersistenceTests
             Author,
             "raise support",
             null);
-        snapshot.Rule.Schedule(RevisionId(32), October10, October5);
+        snapshot.Rule.Schedule(RevisionId(32), October10, null, RevisionId(92), October5);
 
         Result saved = await SaveAsync(snapshot);
 
@@ -354,12 +361,12 @@ public sealed class MonitoringRulePersistenceTests
         Guid instrumentId = await AddInstrumentAsync("MR-SPLIT-1");
         MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
         seeded.Rule.CreateDraft(RevisionId(41), CreateDefinition(110m), October1, Author, "later", null);
-        seeded.Rule.Schedule(RevisionId(41), October10, October1);
+        seeded.Rule.Schedule(RevisionId(41), October10, null, RevisionId(93), October1);
         await SaveAsync(seeded);
 
         MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
         snapshot.Rule.CreateDraft(RevisionId(42), CreateDefinition(105m), October1, Author, "middle", null);
-        snapshot.Rule.Schedule(RevisionId(42), October5, October1);
+        snapshot.Rule.Schedule(RevisionId(42), October5, October10, RevisionId(94), October1);
 
         Result saved = await SaveAsync(snapshot);
 
@@ -389,7 +396,7 @@ public sealed class MonitoringRulePersistenceTests
         MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
         Guid originalRevisionId = seeded.Rule.Revisions[0].Id;
         seeded.Rule.CreateDraft(RevisionId(51), CreateDefinition(110m), October1, Author, "later", null);
-        seeded.Rule.Schedule(RevisionId(51), October10, October1);
+        seeded.Rule.Schedule(RevisionId(51), October10, null, RevisionId(95), October1);
         await SaveAsync(seeded);
 
         MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
@@ -416,7 +423,7 @@ public sealed class MonitoringRulePersistenceTests
         MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
         Guid originalRevisionId = seeded.Rule.Revisions[0].Id;
         seeded.Rule.CreateDraft(RevisionId(61), CreateDefinition(110m), October1, Author, "later", null);
-        seeded.Rule.Schedule(RevisionId(61), October10, October1);
+        seeded.Rule.Schedule(RevisionId(61), October10, null, RevisionId(96), October1);
         await SaveAsync(seeded);
 
         MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
@@ -442,7 +449,7 @@ public sealed class MonitoringRulePersistenceTests
         Guid instrumentId = await AddInstrumentAsync("MR-EDIT-1");
         MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
         seeded.Rule.CreateDraft(RevisionId(71), CreateDefinition(110m), October1, Author, "later", null);
-        seeded.Rule.Schedule(RevisionId(71), October10, October1);
+        seeded.Rule.Schedule(RevisionId(71), October10, null, RevisionId(97), October1);
         await SaveAsync(seeded);
 
         MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);

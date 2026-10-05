@@ -30,8 +30,18 @@ public sealed class MonitoringRule
 
     public IReadOnlyList<Revision<ChartAnalysisDefinition>> Drafts => _timeline.Drafts;
 
-    public static Result<MonitoringRule> Create(Guid id, Guid watchedInstrumentId, Instant createdAt)
+    public Instant? CoverageOrigin => _timeline.CoverageOrigin;
+
+    public static Result<MonitoringRule> Create(
+        Guid id,
+        Guid watchedInstrumentId,
+        Guid initialRevisionId,
+        ChartAnalysisDefinition initialDefinition,
+        Instant createdAt,
+        string? createdBy)
     {
+        ArgumentNullException.ThrowIfNull(initialDefinition);
+
         if (id == Guid.Empty)
         {
             return MonitoringRuleErrors.IdRequired;
@@ -42,11 +52,22 @@ public sealed class MonitoringRule
             return MonitoringRuleErrors.WatchedInstrumentIdRequired;
         }
 
+        Result<RevisionTimeline<ChartAnalysisDefinition>> timeline =
+            RevisionTimeline<ChartAnalysisDefinition>.Create(
+                initialRevisionId,
+                initialDefinition,
+                createdAt,
+                createdBy);
+        if (timeline.IsFailure)
+        {
+            return timeline.Error;
+        }
+
         return new MonitoringRule(
             id,
             watchedInstrumentId,
             createdAt,
-            new RevisionTimeline<ChartAnalysisDefinition>());
+            timeline.Value);
     }
 
     public static Result<MonitoringRule> Restore(
@@ -116,14 +137,19 @@ public sealed class MonitoringRule
         return _timeline.DeleteDraft(draftId);
     }
 
-    public Result ApplyNow(Guid draftId, Instant now)
+    public Result ApplyNow(Guid draftId, Guid continuationId, Instant now)
     {
-        return _timeline.ApplyNow(draftId, now);
+        return _timeline.ApplyNow(draftId, continuationId, now);
     }
 
-    public Result Schedule(Guid draftId, Instant effectiveFrom, Instant now)
+    public Result Schedule(
+        Guid draftId,
+        Instant effectiveFrom,
+        Instant? effectiveTo,
+        Guid continuationId,
+        Instant now)
     {
-        return _timeline.Schedule(draftId, effectiveFrom, now);
+        return _timeline.Schedule(draftId, effectiveFrom, effectiveTo, continuationId, now);
     }
 
     public Result EditScheduledRevision(

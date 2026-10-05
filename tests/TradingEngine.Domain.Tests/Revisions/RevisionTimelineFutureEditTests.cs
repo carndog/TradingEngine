@@ -13,7 +13,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void EditScheduledRevision_BeforeStartBoundary_ReplacesDefinitionAndReason()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> future = Schedule(timeline, 1, 10, Start, October(5));
 
         Result result = timeline.EditScheduledRevision(
@@ -34,7 +34,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void EditScheduledRevision_AtExactStartBoundary_ReturnsPeriodBegunError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> future = Schedule(timeline, 1, 10, Start, October(5));
 
         Result result = timeline.EditScheduledRevision(future.Id, Limit(15), null, Start);
@@ -50,7 +50,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void EditScheduledRevision_AfterStart_ReturnsPeriodBegunError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
 
         Result result = timeline.EditScheduledRevision(current.Id, Limit(15), null, October(5));
@@ -66,7 +66,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void EditScheduledRevision_WithDraftId_ReturnsNotCommittedError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, 1, 10, October(1));
 
         Result result = timeline.EditScheduledRevision(draft.Id, Limit(15), null, October(5));
@@ -78,7 +78,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void EditScheduledRevision_WithUnknownId_ReturnsNotFoundError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Result result = timeline.EditScheduledRevision(Id(9), Limit(15), null, October(5));
 
@@ -89,7 +89,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void Reschedule_FutureRevisionLater_ExtendsAdjacentPredecessorToNewStart()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> future = Schedule(timeline, 2, 20, Start, October(5));
 
@@ -109,7 +109,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void Reschedule_FutureRevisionEarlier_ShrinksAdjacentPredecessorWithoutChangingHistory()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> future = Schedule(timeline, 2, 20, October(8), October(5));
 
@@ -128,7 +128,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void Reschedule_ToPredecessorStart_ReturnsInvalidPeriodErrorAndLeavesStateUnchanged()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> first = Schedule(timeline, 1, 10, October(6), October(5));
         Revision<SyntheticLimitDefinition> second = Schedule(timeline, 2, 20, October(8), October(5));
 
@@ -146,44 +146,45 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void Reschedule_AtOrBeyondOwnEnd_ReturnsInvalidPeriodError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> first = Schedule(timeline, 1, 10, October(6), October(5));
-        Schedule(timeline, 2, 20, October(8), October(5));
+        Revision<SyntheticLimitDefinition> second = Schedule(timeline, 2, 20, October(8), October(5));
+        Revision<SyntheticLimitDefinition> inserted = Draft(timeline, 3, 30, October(5));
+        timeline.Schedule(inserted.Id, October(6, 12), October(7), Id(90), October(5));
 
-        Result result = timeline.Reschedule(first.Id, October(8), October(5));
+        Result result = timeline.Reschedule(inserted.Id, October(7), October(5));
 
         Assert.That(result.IsFailure, Is.True);
         Assert.Multiple(() =>
         {
             Assert.That(result.Error, Is.EqualTo(RevisionErrors.InvalidPeriod));
+            Assert.That(inserted.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(6, 12)));
+            Assert.That(inserted.EffectivePeriod.EffectiveTo, Is.EqualTo(October(7)));
+            Assert.That(second.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(8)));
             Assert.That(first.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(6)));
         });
     }
 
     [Test]
-    public void Reschedule_FirstFutureRevisionLater_LeavesGapBeforeItWithoutPredecessorChange()
+    public void Reschedule_OriginRevision_ReturnsCoverageOriginProtectedError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
-        Revision<SyntheticLimitDefinition> later = Schedule(timeline, 1, 30, October(10), October(5));
-        Revision<SyntheticLimitDefinition> earlier = Schedule(timeline, 2, 20, October(6), October(5));
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
+        Revision<SyntheticLimitDefinition> origin = Schedule(timeline, 1, 30, October(10), October(5));
 
-        Result result = timeline.Reschedule(earlier.Id, October(7), October(5));
+        Result result = timeline.Reschedule(origin.Id, October(12), October(5));
 
-        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.IsFailure, Is.True);
         Assert.Multiple(() =>
         {
-            Assert.That(earlier.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(7)));
-            Assert.That(earlier.EffectivePeriod.EffectiveTo, Is.EqualTo(October(10)));
-            Assert.That(later.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(10)));
-            Assert.That(timeline.EffectiveAt(October(6, 12)), Is.Null);
-            Assert.That(timeline.EffectiveAt(October(7)), Is.SameAs(earlier));
+            Assert.That(result.Error, Is.EqualTo(RevisionErrors.CoverageOriginProtected));
+            Assert.That(origin.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(10)));
         });
     }
 
     [Test]
     public void Reschedule_BeforeNow_ReturnsBackdatedError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> future = Schedule(timeline, 1, 10, Start, October(5));
 
         Result result = timeline.Reschedule(future.Id, October(4), October(5));
@@ -199,7 +200,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void Reschedule_BegunRevision_ReturnsPeriodBegunError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
 
         Result result = timeline.Reschedule(current.Id, October(8), October(5));
@@ -211,10 +212,10 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void RemoveScheduledRevision_FutureRevision_ExtendsPredecessorToRemovedEndBoundary()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> later = Schedule(timeline, 2, 30, October(10), October(5));
-        Revision<SyntheticLimitDefinition> middle = Schedule(timeline, 3, 20, Start, October(5));
+        Revision<SyntheticLimitDefinition> middle = Schedule(timeline, 3, 20, Start, October(5), October(10));
 
         Result result = timeline.RemoveScheduledRevision(middle.Id, October(5));
 
@@ -233,29 +234,25 @@ public sealed class RevisionTimelineFutureEditTests
     }
 
     [Test]
-    public void RemoveScheduledRevision_WithoutAdjacentPredecessor_LeavesOtherPeriodsUnchanged()
+    public void RemoveScheduledRevision_OriginRevision_ReturnsCoverageOriginProtectedError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
-        Revision<SyntheticLimitDefinition> later = Schedule(timeline, 1, 30, October(10), October(5));
-        Revision<SyntheticLimitDefinition> earlier = Schedule(timeline, 2, 20, October(6), October(5));
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
+        Revision<SyntheticLimitDefinition> origin = Schedule(timeline, 1, 30, October(10), October(5));
 
-        Result result = timeline.RemoveScheduledRevision(earlier.Id, October(5));
+        Result result = timeline.RemoveScheduledRevision(origin.Id, October(5));
 
-        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.IsFailure, Is.True);
         Assert.Multiple(() =>
         {
-            Assert.That(timeline.Revisions, Is.EqualTo(new[] { later }));
-            Assert.That(later.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October(10)));
-            Assert.That(later.EffectivePeriod.EffectiveTo, Is.Null);
-            Assert.That(later.RevisionNumber, Is.EqualTo(1));
-            Assert.That(timeline.EffectiveAt(October(8)), Is.Null);
+            Assert.That(result.Error, Is.EqualTo(RevisionErrors.CoverageOriginProtected));
+            Assert.That(timeline.Revisions, Is.EqualTo(new[] { origin }));
         });
     }
 
     [Test]
     public void RemoveScheduledRevision_BegunRevision_ReturnsPeriodBegunError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
 
         Result result = timeline.RemoveScheduledRevision(current.Id, October(5));
@@ -271,7 +268,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void RemoveScheduledRevision_AtExactStartBoundary_ReturnsPeriodBegunError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> future = Schedule(timeline, 1, 10, Start, October(5));
 
         Result result = timeline.RemoveScheduledRevision(future.Id, Start);
@@ -283,7 +280,7 @@ public sealed class RevisionTimelineFutureEditTests
     [Test]
     public void RemoveScheduledRevision_WithDraftId_ReturnsNotCommittedError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, 1, 10, October(1));
 
         Result result = timeline.RemoveScheduledRevision(draft.Id, October(5));

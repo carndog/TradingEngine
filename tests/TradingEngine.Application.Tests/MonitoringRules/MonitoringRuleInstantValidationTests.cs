@@ -13,6 +13,8 @@ public sealed class MonitoringRuleInstantValidationTests
     private static readonly Guid InstrumentId = Guid.Parse("c3000000-0000-0000-0000-000000000002");
     private static readonly Guid RevisionA = Guid.Parse("c3000000-0000-0000-0000-000000000011");
     private static readonly Guid RevisionB = Guid.Parse("c3000000-0000-0000-0000-000000000012");
+    private static readonly Guid RevisionC = Guid.Parse("c3000000-0000-0000-0000-000000000013");
+    private static readonly Guid ContinuationId = Guid.Parse("c3000000-0000-0000-0000-000000000090");
     private static readonly Instant October1 = Instant.FromUtc(2026, 10, 1, 0, 0);
     private static readonly Instant October10 = Instant.FromUtc(2026, 10, 10, 0, 0);
     private static readonly Instant October15 = Instant.FromUtc(2026, 10, 15, 0, 0);
@@ -62,8 +64,6 @@ public sealed class MonitoringRuleInstantValidationTests
     public void Schedule_WithSubTickComparisonInstant_KeepsExactComparisonSemantics()
     {
         MonitoringRule rule = CreateRule();
-        rule.CreateDraft(RevisionA, CreateDefinition(100m), October1, Author, "a", null);
-        rule.ApplyNow(RevisionA, October1);
         rule.CreateDraft(RevisionB, CreateDefinition(110m), October1, Author, "b", null);
         Instant subTickNow = October1.PlusNanoseconds(1);
 
@@ -85,8 +85,6 @@ public sealed class MonitoringRuleInstantValidationTests
     public void Schedule_WithUnsupportedBoundary_ThrowsBeforeMutatingTimeline()
     {
         MonitoringRule rule = CreateRule();
-        rule.CreateDraft(RevisionA, CreateDefinition(100m), October1, Author, "a", null);
-        rule.ApplyNow(RevisionA, October1);
         rule.CreateDraft(RevisionB, CreateDefinition(110m), October1, Author, "b", null);
 
         Assert.That(
@@ -105,12 +103,12 @@ public sealed class MonitoringRuleInstantValidationTests
     public void ApplyNow_WithUnsupportedNow_ThrowsBeforeCommittingDraft()
     {
         MonitoringRule rule = CreateRule();
-        rule.CreateDraft(RevisionA, CreateDefinition(100m), October1, Author, "a", null);
+        rule.CreateDraft(RevisionB, CreateDefinition(110m), October1, Author, "b", null);
 
         Assert.That(
-            () => ApplyNowValidated(rule, RevisionA, October1.PlusNanoseconds(50)),
+            () => ApplyNowValidated(rule, RevisionB, October1.PlusNanoseconds(50)),
             Throws.TypeOf<ArgumentOutOfRangeException>());
-        Assert.That(rule.FindRevision(RevisionA)!.IsDraft, Is.True);
+        Assert.That(rule.FindRevision(RevisionB)!.IsDraft, Is.True);
     }
 
     [Test]
@@ -122,13 +120,13 @@ public sealed class MonitoringRuleInstantValidationTests
 
         Result<Revision<ChartAnalysisDefinition>> first = CreateDraftValidated(
             rule,
-            RevisionA,
+            RevisionB,
             CreateDefinition(100m),
             October1,
             inverted);
         Result<Revision<ChartAnalysisDefinition>> second = CreateDraftValidated(
             rule,
-            RevisionB,
+            RevisionC,
             CreateDefinition(110m),
             October1,
             open);
@@ -137,9 +135,9 @@ public sealed class MonitoringRuleInstantValidationTests
         {
             Assert.That(first.IsSuccess, Is.True);
             Assert.That(second.IsSuccess, Is.True);
-            Assert.That(rule.FindRevision(RevisionA)!.Proposal, Is.EqualTo(inverted));
-            Assert.That(rule.FindRevision(RevisionB)!.Proposal, Is.EqualTo(open));
-            Assert.That(rule.Revisions, Is.Empty);
+            Assert.That(rule.FindRevision(RevisionB)!.Proposal, Is.EqualTo(inverted));
+            Assert.That(rule.FindRevision(RevisionC)!.Proposal, Is.EqualTo(open));
+            Assert.That(rule.Revisions, Has.Count.EqualTo(1));
         });
     }
 
@@ -159,7 +157,6 @@ public sealed class MonitoringRuleInstantValidationTests
             Throws.TypeOf<ArgumentOutOfRangeException>());
         Assert.Multiple(() =>
         {
-            Assert.That(rule.FindRevision(RevisionA), Is.Null);
             Assert.That(rule.Drafts, Is.Empty);
         });
     }
@@ -194,7 +191,7 @@ public sealed class MonitoringRuleInstantValidationTests
     {
         Instant boundary = PersistedInstant.Require(effectiveFrom, nameof(effectiveFrom));
 
-        return rule.Schedule(draftId, boundary, now);
+        return rule.Schedule(draftId, boundary, null, ContinuationId, now);
     }
 
     private static Result ApplyNowValidated(
@@ -204,7 +201,7 @@ public sealed class MonitoringRuleInstantValidationTests
     {
         Instant committed = PersistedInstant.Require(now, nameof(now));
 
-        return rule.ApplyNow(draftId, committed);
+        return rule.ApplyNow(draftId, ContinuationId, committed);
     }
 
     private static Result<Revision<ChartAnalysisDefinition>> CreateDraftValidated(
@@ -238,7 +235,13 @@ public sealed class MonitoringRuleInstantValidationTests
     {
         Instant created = PersistedInstant.Require(createdAt, nameof(createdAt));
 
-        return MonitoringRule.Create(id, watchedInstrumentId, created);
+        return MonitoringRule.Create(
+            id,
+            watchedInstrumentId,
+            RevisionA,
+            CreateDefinition(100m),
+            created,
+            Author);
     }
 
     private static MonitoringRule CreateRule()
@@ -249,10 +252,8 @@ public sealed class MonitoringRuleInstantValidationTests
     private static MonitoringRule CreateRuleWithFutureRevision()
     {
         MonitoringRule rule = CreateRule();
-        rule.CreateDraft(RevisionA, CreateDefinition(100m), October1, Author, "a", null);
-        rule.ApplyNow(RevisionA, October1);
         rule.CreateDraft(RevisionB, CreateDefinition(110m), October1, Author, "b", null);
-        rule.Schedule(RevisionB, October10, October1);
+        rule.Schedule(RevisionB, October10, null, ContinuationId, October1);
 
         return rule;
     }

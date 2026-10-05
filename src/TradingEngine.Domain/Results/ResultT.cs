@@ -40,6 +40,11 @@ public sealed class Result<T>
         return new Result<T>(error);
     }
 
+    public Result ToResult()
+    {
+        return IsSuccess ? Result.Success() : Result.Failure(_error!);
+    }
+
     public static implicit operator Result<T>(T value)
     {
         return Success(value);

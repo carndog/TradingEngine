@@ -44,6 +44,14 @@ public static class RevisionErrors
         "revision.start_conflict",
         "Another revision already begins at the requested instant.");
 
+    public static readonly Error UncoveredStart = Error.Conflict(
+        "revision.uncovered_start",
+        "The committed range must start at or after the timeline's coverage origin.");
+
+    public static readonly Error CoverageOriginProtected = Error.Conflict(
+        "revision.coverage_origin_protected",
+        "The revision holding the coverage origin cannot be rescheduled or removed.");
+
     public static readonly Error RestoredDraftInvalid = Error.Validation(
         "revision.restored_draft_invalid",
         "A restored draft cannot carry a revision number or an effective end boundary.");
