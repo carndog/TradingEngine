@@ -25,9 +25,14 @@ internal static class RequestInstants
 
     internal static (Instant? Instant, Error? Error) Optional(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (value is null)
         {
             return (null, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return (null, MonitoringRuleErrors.InstantInvalid);
         }
 
         Result<Instant> parsed = Required(value);

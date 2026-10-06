@@ -43,6 +43,12 @@ All paths are relative to `/api/watched-instruments/{instrumentId}`.
 
 Every timestamp field in a request or query is an ISO-8601 string (for example `"2026-10-06T10:00:00.5Z"` or `"2030-01-01T01:00:00+01:00"`). The API parses the raw string directly into a nanosecond-precision `Instant`; nothing is coerced through `DateTimeOffset`, so sub-millisecond precision is never silently dropped during binding.
 
+An optional bound accepts three distinct inputs, deliberately:
+
+- **Omitted property or explicit JSON `null`** — the bound is unspecified: open-ended for commit `effectiveTo`, absent proposal dates, unchanged for revision `effectiveFrom`, and server now for an omitted `at` query parameter.
+- **A supplied empty or whitespace string** (`"effectiveTo": ""`, `" "`, or `?at=`) — rejected with `400` `monitoring_rule.instant_invalid`. A blank string is never silently treated as null, so it cannot turn a bounded commit into an accidental open-ended replacement.
+- **A parseable timestamp string** — used verbatim, subject to the precision rules below.
+
 Two different precision rules apply, deliberately:
 
 - **Persisted instants** — draft `proposedPeriod` dates, commit `effectiveFrom`/`effectiveTo` boundaries and revision `effectiveFrom` amendments become stored `datetime2(7)` values. They must lie within the `datetime2(7)` range and be exact 100 ns multiples. Any finer value — for example `"2030-01-01T00:00:00.000000001Z"` — is rejected with `400` `monitoring_rule.instant_not_persistable`. Values are never truncated or rounded to make them fit.
@@ -139,7 +145,13 @@ Failures are RFC 7807 Problem Details with a stable `code` extension.
 - The recorded actor is the first present of the `http://schemas.microsoft.com/identity/claims/objectidentifier` claim, `oid`, `nameidentifier`, then `sub` — an object or subject identifier, not a display name. `preferred_username` is carried on the principal but is never used as the actor.
 - Locally the platform header is not trusted, so a caller-supplied `X-MS-CLIENT-PRINCIPAL` is ignored and the actor falls back to `unverified-local-caller`.
 
-Caller-supplied identity fields are never read from the request body. Real Azure identity verification of this mapping is a deployment smoke test; see [easy-auth-entra-id.md](easy-auth-entra-id.md).
+Three creation paths record different authors:
+
+- **Registration** — `SqlServerWatchedInstrumentStore` seeds the initial committed revision with `createdBy = "watched-instrument-registration"`. That is the existing baseline behaviour for the creation commit; `RequestActor` is not involved.
+- **Drafts and their commits** — `RequestActor` supplies `createdBy` for drafts, and the draft's actor carries onto the committed revision it becomes.
+- **Generated continuations** — a continuation minted by a bounded insertion is a real committed row whose `createdAt` is the commit instant and whose `createdBy` is the committing draft's actor; it carries the covered revision's definition, not its identity or metadata. A revision that survives with a moved boundary (for example the tail after an open-ended insert) instead keeps its own GUID and original metadata.
+
+Caller-supplied identity fields are never read from the request body; no expanded authorship or audit feature is provided. Real Azure identity verification of this mapping is a deployment smoke test; see [easy-auth-entra-id.md](easy-auth-entra-id.md).
 
 ## Worked timeline examples
 

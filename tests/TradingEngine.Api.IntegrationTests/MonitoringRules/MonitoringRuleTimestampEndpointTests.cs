@@ -209,6 +209,142 @@ public sealed class MonitoringRuleTimestampEndpointTests
         });
     }
 
+    [TestCase("")]
+    [TestCase("   ")]
+    public async Task PostSchedule_WithBlankEffectiveTo_RejectsAndPreservesFutureRevision(
+        string effectiveTo)
+    {
+        (Guid greenId, _) = await ScheduleFutureRevisionAsync(120m);
+        (Guid draftId, string currentToken) = await _host.CreateDraftAsync(110m);
+        string before = await _host.SnapshotStateAsync();
+
+        HttpResponseMessage response = await _host.SendRawAsync(
+            HttpMethod.Post,
+            Path($"/drafts/{draftId}/schedule"),
+            $$"""{"effectiveFrom":"2029-12-01T00:00:00Z","effectiveTo":"{{effectiveTo}}"}""",
+            currentToken);
+
+        await AssertInvalidUnchangedAsync(response, before, currentToken, greenId);
+    }
+
+    [TestCase("")]
+    [TestCase("   ")]
+    public async Task PostApply_WithBlankEffectiveTo_RejectsAndPreservesFutureRevision(
+        string effectiveTo)
+    {
+        (Guid greenId, _) = await ScheduleFutureRevisionAsync(120m);
+        (Guid draftId, string currentToken) = await _host.CreateDraftAsync(110m);
+        string before = await _host.SnapshotStateAsync();
+
+        HttpResponseMessage response = await _host.SendRawAsync(
+            HttpMethod.Post,
+            Path($"/drafts/{draftId}/apply"),
+            $$"""{"effectiveTo":"{{effectiveTo}}"}""",
+            currentToken);
+
+        await AssertInvalidUnchangedAsync(response, before, currentToken, greenId);
+    }
+
+    [Test]
+    public async Task PostDraft_WithBlankProposalStart_RejectsAndLeavesStateUnchanged()
+    {
+        string token = await _host.GetTokenAsync();
+        string before = await _host.SnapshotStateAsync();
+
+        HttpResponseMessage response = await _host.SendRawAsync(
+            HttpMethod.Post,
+            Path("/drafts"),
+            $$"""
+            {
+              "changeReason": "proposal",
+              "proposedPeriod": { "effectiveFrom": "", "effectiveTo": null },
+              "definition": {{DefinitionJson(110m)}}
+            }
+            """,
+            token);
+
+        await AssertInvalidUnchangedAsync(response, before, token, null);
+    }
+
+    [Test]
+    public async Task PutDraft_WithBlankProposalEnd_RejectsAndLeavesStateUnchanged()
+    {
+        (Guid draftId, string token) = await _host.CreateDraftAsync(110m);
+        string before = await _host.SnapshotStateAsync();
+
+        HttpResponseMessage response = await _host.SendRawAsync(
+            HttpMethod.Put,
+            Path($"/drafts/{draftId}"),
+            $$"""
+            {
+              "changeReason": "proposal",
+              "proposedPeriod": { "effectiveFrom": null, "effectiveTo": " " },
+              "definition": {{DefinitionJson(115m)}}
+            }
+            """,
+            token);
+
+        await AssertInvalidUnchangedAsync(response, before, token, null);
+    }
+
+    [Test]
+    public async Task PutRevision_WithBlankEffectiveFrom_RejectsAndLeavesStateUnchanged()
+    {
+        (Guid revisionId, string token) = await ScheduleFutureRevisionAsync(110m);
+        string before = await _host.SnapshotStateAsync();
+
+        HttpResponseMessage response = await _host.SendRawAsync(
+            HttpMethod.Put,
+            Path($"/revisions/{revisionId}"),
+            """{"effectiveFrom":""}""",
+            token);
+
+        await AssertInvalidUnchangedAsync(response, before, token, revisionId);
+    }
+
+    [Test]
+    public async Task GetApplicable_WithBlankAt_ReturnsInstantInvalid()
+    {
+        HttpResponseMessage response = await _host.Client.GetAsync(
+            Path("/revisions/applicable?at="));
+        string? code = await ProblemCodeAsync(response);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(code, Is.EqualTo("monitoring_rule.instant_invalid"));
+        });
+    }
+
+    [Test]
+    public async Task GetApplicable_WithWhitespaceAt_ReturnsInstantInvalid()
+    {
+        HttpResponseMessage response = await _host.Client.GetAsync(
+            Path("/revisions/applicable?at=%20"));
+        string? code = await ProblemCodeAsync(response);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(code, Is.EqualTo("monitoring_rule.instant_invalid"));
+        });
+    }
+
+    [Test]
+    public async Task GetApplicable_WithOmittedAt_ResolvesAtServerNow()
+    {
+        HttpResponseMessage response = await _host.Client.GetAsync(
+            Path("/revisions/applicable"));
+        MonitoringRuleRevisionResponse? body = await response.Content
+            .ReadFromJsonAsync<MonitoringRuleRevisionResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(body!.Revision.Id, Is.EqualTo(InitialRevisionId));
+        });
+    }
+
     [Test]
     public async Task PostSchedule_WithMalformedTimestamp_ReturnsInstantInvalid()
     {
@@ -226,6 +362,48 @@ public sealed class MonitoringRuleTimestampEndpointTests
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
             Assert.That(code, Is.EqualTo("monitoring_rule.instant_invalid"));
         });
+    }
+
+    private async Task<(Guid RevisionId, string Token)> ScheduleFutureRevisionAsync(
+        decimal level)
+    {
+        (Guid draftId, string token) = await _host.CreateDraftAsync(level);
+        HttpResponseMessage scheduled = await _host.SendAsync(
+            HttpMethod.Post,
+            Path($"/drafts/{draftId}/schedule"),
+            new ScheduleMonitoringRuleRequest("2029-12-01T00:00:00Z", null),
+            token);
+        Assert.That(scheduled.IsSuccessStatusCode, Is.True);
+        MonitoringRuleTimelineResponse? body = await scheduled.Content
+            .ReadFromJsonAsync<MonitoringRuleTimelineResponse>();
+
+        return (draftId, body!.ConcurrencyToken);
+    }
+
+    private async Task AssertInvalidUnchangedAsync(
+        HttpResponseMessage response,
+        string before,
+        string token,
+        Guid? preservedRevisionId)
+    {
+        string? code = await ProblemCodeAsync(response);
+        string after = await _host.SnapshotStateAsync();
+        MonitoringRuleTimelineResponse timeline = await _host.GetTimelineAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(code, Is.EqualTo("monitoring_rule.instant_invalid"));
+            Assert.That(after, Is.EqualTo(before));
+            Assert.That(_host.Store.CurrentToken, Is.EqualTo(token));
+        });
+
+        if (preservedRevisionId is not null)
+        {
+            Assert.That(
+                timeline.Revisions.Any(revision => revision.Id == preservedRevisionId),
+                Is.True);
+        }
     }
 
     private async Task AssertRejectedUnchangedAsync(
