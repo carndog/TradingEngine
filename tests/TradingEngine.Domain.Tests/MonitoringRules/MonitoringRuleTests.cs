@@ -13,6 +13,9 @@ public sealed class MonitoringRuleTests
     private static readonly Guid FirstRevisionId = Guid.Parse("a1000000-0000-0000-0000-000000000001");
     private static readonly Guid SecondRevisionId = Guid.Parse("a1000000-0000-0000-0000-000000000002");
     private static readonly Guid ThirdRevisionId = Guid.Parse("a1000000-0000-0000-0000-000000000003");
+    private static readonly Guid FourthRevisionId = Guid.Parse("a1000000-0000-0000-0000-000000000004");
+    private static readonly Guid FifthRevisionId = Guid.Parse("a1000000-0000-0000-0000-000000000005");
+    private static readonly Guid ContinuationId = Guid.Parse("a1000000-0000-0000-0000-000000000090");
     private static readonly Instant October1 = Instant.FromUtc(2026, 10, 1, 0, 0);
     private static readonly Instant October5 = Instant.FromUtc(2026, 10, 5, 0, 0);
     private static readonly Instant October6At10 = Instant.FromUtc(2026, 10, 6, 10, 0);
@@ -20,25 +23,48 @@ public sealed class MonitoringRuleTests
     private const string Author = "synthetic-user";
 
     [Test]
-    public void Create_WithValidIdentity_ReturnsRuleWithoutRevisions()
+    public void Create_WithValidIdentity_CommitsInitialRevisionFromCreatedAt()
     {
-        Result<MonitoringRule> result = MonitoringRule.Create(RuleId, InstrumentId, October1);
+        ChartAnalysisDefinition definition = CreateDefinition(100m);
+
+        Result<MonitoringRule> result = MonitoringRule.Create(
+            RuleId,
+            InstrumentId,
+            FirstRevisionId,
+            definition,
+            October1,
+            Author);
 
         Assert.That(result.IsSuccess, Is.True);
+        Revision<ChartAnalysisDefinition> initial = result.Value.Revisions[0];
         Assert.Multiple(() =>
         {
             Assert.That(result.Value.Id, Is.EqualTo(RuleId));
             Assert.That(result.Value.WatchedInstrumentId, Is.EqualTo(InstrumentId));
             Assert.That(result.Value.CreatedAt, Is.EqualTo(October1));
-            Assert.That(result.Value.Revisions, Is.Empty);
+            Assert.That(result.Value.CoverageOrigin, Is.EqualTo(October1));
+            Assert.That(result.Value.Revisions, Has.Count.EqualTo(1));
             Assert.That(result.Value.Drafts, Is.Empty);
+            Assert.That(initial.Id, Is.EqualTo(FirstRevisionId));
+            Assert.That(initial.Definition, Is.SameAs(definition));
+            Assert.That(initial.CreatedBy, Is.EqualTo(Author));
+            Assert.That(initial.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October1));
+            Assert.That(initial.EffectivePeriod.EffectiveTo, Is.Null);
+            Assert.That(initial.RevisionNumber, Is.EqualTo(1));
+            Assert.That(result.Value.EffectiveAt(October1), Is.SameAs(initial));
         });
     }
 
     [Test]
     public void Create_WithEmptyId_ReturnsIdRequiredError()
     {
-        Result<MonitoringRule> result = MonitoringRule.Create(Guid.Empty, InstrumentId, October1);
+        Result<MonitoringRule> result = MonitoringRule.Create(
+            Guid.Empty,
+            InstrumentId,
+            FirstRevisionId,
+            CreateDefinition(100m),
+            October1,
+            Author);
 
         Assert.That(result.IsFailure, Is.True);
         Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.IdRequired));
@@ -47,32 +73,39 @@ public sealed class MonitoringRuleTests
     [Test]
     public void Create_WithEmptyWatchedInstrumentId_ReturnsWatchedInstrumentIdRequiredError()
     {
-        Result<MonitoringRule> result = MonitoringRule.Create(RuleId, Guid.Empty, October1);
+        Result<MonitoringRule> result = MonitoringRule.Create(
+            RuleId,
+            Guid.Empty,
+            FirstRevisionId,
+            CreateDefinition(100m),
+            October1,
+            Author);
 
         Assert.That(result.IsFailure, Is.True);
         Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.WatchedInstrumentIdRequired));
     }
 
     [Test]
-    public void ApplyNow_WithFirstDraft_MakesDefinitionEffectiveFromNow()
+    public void ApplyNow_WithCurrentRevision_CommitsDraftOpenEndedFromNow()
     {
         MonitoringRule rule = CreateRule();
-        ChartAnalysisDefinition definition = CreateDefinition(100m);
+        ChartAnalysisDefinition definition = CreateDefinition(110m);
         Revision<ChartAnalysisDefinition> draft = rule
-            .CreateDraft(FirstRevisionId, definition, October1, Author, "initial zones", null)
+            .CreateDraft(SecondRevisionId, definition, October5, Author, "raise support", null)
             .Value;
 
-        Result result = rule.ApplyNow(draft.Id, October1);
+        Result result = rule.ApplyNow(draft.Id, FourthRevisionId, October5);
 
         Assert.That(result.IsSuccess, Is.True);
         Assert.Multiple(() =>
         {
-            Assert.That(rule.EffectiveAt(October1), Is.SameAs(draft));
-            Assert.That(rule.EffectiveAt(October1)!.Definition, Is.SameAs(definition));
-            Assert.That(draft.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October1));
+            Assert.That(rule.EffectiveAt(October5), Is.SameAs(draft));
+            Assert.That(rule.EffectiveAt(October5)!.Definition, Is.SameAs(definition));
+            Assert.That(draft.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October5));
             Assert.That(draft.EffectivePeriod.EffectiveTo, Is.Null);
-            Assert.That(draft.RevisionNumber, Is.EqualTo(1));
+            Assert.That(draft.RevisionNumber, Is.EqualTo(2));
             Assert.That(rule.Drafts, Is.Empty);
+            Assert.That(rule.FindRevision(FirstRevisionId)!.EffectivePeriod!.EffectiveTo, Is.EqualTo(October5));
         });
     }
 
@@ -117,7 +150,7 @@ public sealed class MonitoringRuleTests
             .CreateDraft(SecondRevisionId, changed, October5, Author, "raise support", null)
             .Value;
 
-        Result result = rule.Schedule(draft.Id, October6At10, October5);
+        Result result = rule.Schedule(draft.Id, October6At10, null, ContinuationId, October5);
 
         Revision<ChartAnalysisDefinition> original = rule.FindRevision(FirstRevisionId)!;
         Assert.That(result.IsSuccess, Is.True);
@@ -186,7 +219,7 @@ public sealed class MonitoringRuleTests
             .CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, null, null)
             .Value;
 
-        Result applied = rule.ApplyNow(draft.Id, October5);
+        Result applied = rule.ApplyNow(draft.Id, ContinuationId, October5);
         Result edited = rule.EditScheduledRevision(draft.Id, CreateDefinition(120m), null, October5);
 
         Assert.Multiple(() =>
@@ -206,12 +239,12 @@ public sealed class MonitoringRuleTests
         Revision<ChartAnalysisDefinition> later = rule
             .CreateDraft(SecondRevisionId, CreateDefinition(130m), October5, Author, null, null)
             .Value;
-        rule.Schedule(later.Id, October10, October5);
+        rule.Schedule(later.Id, October10, null, FourthRevisionId, October5);
         Revision<ChartAnalysisDefinition> middle = rule
             .CreateDraft(ThirdRevisionId, CreateDefinition(110m), October5, Author, null, null)
             .Value;
 
-        Result result = rule.Schedule(middle.Id, October6At10, October5);
+        Result result = rule.Schedule(middle.Id, October6At10, October10, FifthRevisionId, October5);
 
         Assert.That(result.IsSuccess, Is.True);
         Assert.Multiple(() =>
@@ -282,7 +315,7 @@ public sealed class MonitoringRuleTests
             .CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, null, null)
             .Value;
 
-        Result result = rule.Schedule(draft.Id, October5, October6At10);
+        Result result = rule.Schedule(draft.Id, October5, null, ContinuationId, October6At10);
 
         Assert.That(result.IsFailure, Is.True);
         Assert.Multiple(() =>
@@ -320,9 +353,9 @@ public sealed class MonitoringRuleTests
         ChartAnalysisDefinition second = CreateDefinition(110m);
         ChartAnalysisDefinition third = CreateDefinition(120m);
         rule.CreateDraft(SecondRevisionId, second, October5, Author, null, null);
-        rule.ApplyNow(SecondRevisionId, October5);
+        rule.ApplyNow(SecondRevisionId, FourthRevisionId, October5);
         rule.CreateDraft(ThirdRevisionId, third, October6At10, Author, null, null);
-        rule.ApplyNow(ThirdRevisionId, October6At10);
+        rule.ApplyNow(ThirdRevisionId, FifthRevisionId, October6At10);
 
         Assert.Multiple(() =>
         {
@@ -337,12 +370,16 @@ public sealed class MonitoringRuleTests
     [Test]
     public void EffectiveAt_AfterMutationAttemptsOnSupersededDefinition_ReturnsUnchangedHistoricalRevision()
     {
-        MonitoringRule rule = CreateRule();
         ChartAnalysisDefinition callerHeld = CreateDefinition(100m);
-        rule.CreateDraft(FirstRevisionId, callerHeld, October1, Author, null, null);
-        rule.ApplyNow(FirstRevisionId, October1);
+        MonitoringRule rule = MonitoringRule.Create(
+            RuleId,
+            InstrumentId,
+            FirstRevisionId,
+            callerHeld,
+            October1,
+            Author).Value;
         rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, null, null);
-        rule.ApplyNow(SecondRevisionId, October5);
+        rule.ApplyNow(SecondRevisionId, ThirdRevisionId, October5);
         ChartZone replacementZone = CreateDefinition(300m).SupportZones[0];
         ChartCondition replacementCondition = CreateDefinition(100m).ResistanceZones[0].Conditions[0];
         IList<ChartZone> callerHeldZones = (IList<ChartZone>)callerHeld.SupportZones;
@@ -383,7 +420,7 @@ public sealed class MonitoringRuleTests
 
         Assert.That(() => exposedZones[0] = overlappingZone, Throws.TypeOf<NotSupportedException>());
         Assert.That(() => exposedConditions[1] = misplacedCondition, Throws.TypeOf<NotSupportedException>());
-        Result result = rule.Schedule(SecondRevisionId, October6At10, October5);
+        Result result = rule.Schedule(SecondRevisionId, October6At10, null, ContinuationId, October5);
 
         Assert.That(result.IsSuccess, Is.True);
         Assert.Multiple(() =>
@@ -397,25 +434,128 @@ public sealed class MonitoringRuleTests
         });
     }
 
+    [Test]
+    public void CreateDraft_WithChangeReasonLongerThanLimit_ReturnsChangeReasonTooLongWithoutDraft()
+    {
+        MonitoringRule rule = CreateRule();
+        string reason = new('r', MonitoringRule.ChangeReasonMaxLength + 1);
+
+        Result<Revision<ChartAnalysisDefinition>> result = rule.CreateDraft(
+            SecondRevisionId,
+            CreateDefinition(110m),
+            October5,
+            Author,
+            reason,
+            null);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.ChangeReasonTooLong));
+            Assert.That(rule.Drafts, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void CreateDraft_WithChangeReasonAtLimit_Succeeds()
+    {
+        MonitoringRule rule = CreateRule();
+        string reason = new('r', MonitoringRule.ChangeReasonMaxLength);
+
+        Result<Revision<ChartAnalysisDefinition>> result = rule.CreateDraft(
+            SecondRevisionId,
+            CreateDefinition(110m),
+            October5,
+            Author,
+            reason,
+            null);
+
+        Assert.That(result.IsSuccess, Is.True);
+    }
+
+    [Test]
+    public void EditDraft_WithChangeReasonLongerThanLimit_LeavesDraftUnchanged()
+    {
+        MonitoringRule rule = CreateRule();
+        rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, "original", null);
+
+        Result result = rule.EditDraft(
+            SecondRevisionId,
+            CreateDefinition(120m),
+            new string('r', MonitoringRule.ChangeReasonMaxLength + 1),
+            null);
+
+        Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.ChangeReasonTooLong));
+        Revision<ChartAnalysisDefinition> draft = rule.Drafts[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(draft.ChangeReason, Is.EqualTo("original"));
+            Assert.That(draft.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+        });
+    }
+
+    [Test]
+    public void AmendScheduledRevision_WithChangeReasonLongerThanLimit_LeavesRevisionUnchanged()
+    {
+        MonitoringRule rule = CreateRuleWithScheduledRevision();
+
+        Result result = rule.AmendScheduledRevision(
+            SecondRevisionId,
+            CreateDefinition(120m),
+            new string('r', MonitoringRule.ChangeReasonMaxLength + 1),
+            October10,
+            October5);
+
+        Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.ChangeReasonTooLong));
+        Revision<ChartAnalysisDefinition> scheduled = rule.FindRevision(SecondRevisionId)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(scheduled.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+            Assert.That(scheduled.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October6At10));
+        });
+    }
+
+    [Test]
+    public void ApplyNow_WithEnd_CommitsTemporaryChangeAndContinuesCurrentDefinition()
+    {
+        MonitoringRule rule = CreateRule();
+        rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, "temporary", null);
+
+        Result result = rule.ApplyNow(SecondRevisionId, October10, ContinuationId, October5);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(rule.Revisions, Has.Count.EqualTo(3));
+            Assert.That(rule.EffectiveAt(October5)!.Id, Is.EqualTo(SecondRevisionId));
+            Assert.That(rule.EffectiveAt(October6At10)!.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+            Assert.That(rule.EffectiveAt(October10)!.Id, Is.EqualTo(ContinuationId));
+            Assert.That(rule.EffectiveAt(October10)!.Definition.SupportZones[0].Level, Is.EqualTo(100m));
+            Assert.That(rule.Revisions[2].EffectivePeriod!.EffectiveTo, Is.Null);
+        });
+    }
+
     private static MonitoringRule CreateRule()
     {
-        return MonitoringRule.Create(RuleId, InstrumentId, October1).Value;
+        return MonitoringRule.Create(
+            RuleId,
+            InstrumentId,
+            FirstRevisionId,
+            CreateDefinition(100m),
+            October1,
+            Author).Value;
     }
 
     private static MonitoringRule CreateRuleWithCurrentRevision()
     {
-        MonitoringRule rule = CreateRule();
-        rule.CreateDraft(FirstRevisionId, CreateDefinition(100m), October1, Author, "initial zones", null);
-        rule.ApplyNow(FirstRevisionId, October1);
-
-        return rule;
+        return CreateRule();
     }
 
     private static MonitoringRule CreateRuleWithScheduledRevision()
     {
-        MonitoringRule rule = CreateRuleWithCurrentRevision();
+        MonitoringRule rule = CreateRule();
         rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, "raise support", null);
-        rule.Schedule(SecondRevisionId, October6At10, October5);
+        rule.Schedule(SecondRevisionId, October6At10, null, ContinuationId, October5);
 
         return rule;
     }

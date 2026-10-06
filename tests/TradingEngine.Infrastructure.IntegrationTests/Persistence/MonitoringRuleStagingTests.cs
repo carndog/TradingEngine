@@ -189,8 +189,8 @@ public sealed class MonitoringRuleStagingTests
             RevisionId(instrumentId, 4),
             CreateDefinition(130),
             October1,
-            Author,
-            new string('x', 513),
+            new string('x', 200),
+            "rolled back",
             null);
 
         await Assert.ThrowsAsync<DbUpdateException>(() => SaveAsync(snapshot));
@@ -216,7 +216,7 @@ public sealed class MonitoringRuleStagingTests
         MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
         Guid successor = RevisionId(instrumentId, 2);
         snapshot.Rule.CreateDraft(successor, CreateDefinition(110), October1, Author, "successor", null);
-        snapshot.Rule.Schedule(successor, October10, October1);
+        snapshot.Rule.Schedule(successor, October10, null, RevisionId(instrumentId, 90), October1);
         Result saved = await SaveAsync(snapshot);
         Assert.That(saved.IsSuccess, Is.True);
 
@@ -327,7 +327,7 @@ public sealed class MonitoringRuleStagingTests
         MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
         Guid successor = RevisionId(instrumentId, 2);
         snapshot.Rule.CreateDraft(successor, CreateDefinition(110), October1, Author, "successor", null);
-        snapshot.Rule.Schedule(successor, October10, October1);
+        snapshot.Rule.Schedule(successor, October10, null, RevisionId(instrumentId, 91), October1);
         Result saved = await SaveAsync(snapshot);
         Assert.That(saved.IsSuccess, Is.True);
 

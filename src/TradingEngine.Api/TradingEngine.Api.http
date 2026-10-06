@@ -170,12 +170,501 @@ Authorization: Bearer {{bearerToken}}
 }
 
 > {%
-    client.global.set("createdInstrumentId", response.body.id);
+    client.global.set("deployedInstrumentId", response.body.id);
 %}
 
 ###
 
 // Deployed API: authenticated owner read, expect 200; unknown ids return 404.
-GET {{deployedHost}}/api/watched-instruments/{{createdInstrumentId}}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}
 Accept: application/json
 Authorization: Bearer {{bearerToken}}
+
+###
+
+// Monitoring-rule revision walkthrough (local API).
+//
+// Runs sequentially against the local registration request above — the one
+// that captures createdInstrumentId on {{host}}. Do not run the deployed
+// registration example before this walkthrough: it captures a different id
+// (deployedInstrumentId) and the walkthrough paths all stay on {{host}}. Move the
+// date variables forward before running so every boundary stays ahead of
+// server now; the ordering must hold:
+//   now < applyUntil < boundedFrom < rescheduleFrom < boundedTo < openFrom.
+// Persisted timestamps must be exact 100 ns multiples; an omitted or JSON
+// null bound means open-ended/unspecified, while a supplied blank or
+// whitespace string is rejected 400 monitoring_rule.instant_invalid. The
+// ?at= query keeps nanosecond precision for comparison.
+// Actor: locally every write records "unverified-local-caller" (registration
+// itself records "watched-instrument-registration"); the deployed API records
+// the Easy Auth principal's object identifier instead.
+@applyUntil = 2030-02-05T00:00:00Z
+@boundedFrom = 2030-02-10T00:00:00Z
+@rescheduleFrom = 2030-02-11T00:00:00Z
+@boundedTo = 2030-02-12T00:00:00Z
+@openFrom = 2030-03-01T00:00:00Z
+
+// Timeline: committed revisions, coverage origin and the concurrency token
+// (also returned as the ETag header). Capture the token, the origin and the
+// base revision id for the walkthrough.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule
+Accept: application/json
+
+> {%
+    client.test("timeline", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revisions.length === 1, "one revision");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+    client.global.set("coverageOrigin", response.body.coverageOrigin);
+    client.global.set("baseRevisionId", response.body.revisions[0].id);
+%}
+
+###
+
+// Historical/shared-boundary lookup: the origin instant selects the revision
+// that starts there (boundaries are half-open, the successor wins). An
+// instant before the origin would return 404 monitoring_rule.no_applicable_revision.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at={{coverageOrigin}}
+Accept: application/json
+
+> {%
+    client.test("origin lookup", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.revision.id === client.global.get("baseRevisionId"),
+            "origin resolves the base revision");
+    });
+%}
+
+###
+
+// Drafts list for the same rule (empty initially).
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+###
+
+// Create a draft. Writes require If-Match with the latest concurrencyToken;
+// missing -> 428, malformed -> 400, stale -> 412, and any rejection leaves
+// the timeline, drafts and token unchanged.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "raise support",
+  "proposedPeriod": { "effectiveFrom": "{{boundedFrom}}", "effectiveTo": "{{boundedTo}}" },
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 105.0,
+        "level": 110.0,
+        "upper": 115.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("draft created", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Read the drafts list to capture the draft id for the next requests.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+> {%
+    client.test("one draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    client.global.set("draftId", response.body.drafts[0].id);
+%}
+
+###
+
+// Edit the draft: replaces its definition, reason and proposal in one write.
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "raise support further",
+  "proposedPeriod": { "effectiveFrom": "{{boundedFrom}}", "effectiveTo": "{{boundedTo}}" },
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 115.0,
+        "level": 120.0,
+        "upper": 125.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("draft edited", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Bounded commit: schedule the draft over [boundedFrom, boundedTo) inside the
+// open-ended tail. The response holds three committed revisions — the trimmed
+// original keeping its id, the draft's revision, and a generated continuation
+// revision carrying the original definition from boundedTo onward. A new GUID
+// is needed here because the original revision retains two separated portions
+// itself cannot hold; when only one boundary of a surviving revision moves,
+// that revision keeps its GUID.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/schedule
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "effectiveFrom": "{{boundedFrom}}",
+  "effectiveTo": "{{boundedTo}}"
+}
+
+> {%
+    client.test("bounded schedule", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revisions.length === 3, "three revisions");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+    client.global.set("committedRevisionId", response.body.revisions[1].id);
+    client.global.set("committedEffectiveTo", response.body.revisions[1].effectiveTo);
+    client.global.set("continuationRevisionId", response.body.revisions[2].id);
+%}
+
+###
+
+// Read the generated continuation: a real committed row numbered 3 with the
+// original definition, created at the commit instant and inheriting its
+// createdBy from the original draft's creator.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{continuationRevisionId}}
+Accept: application/json
+
+> {%
+    client.test("continuation", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revision.id === client.global.get("continuationRevisionId"), "id");
+        client.assert(
+            response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo"),
+            "starts where the scheduled revision ends");
+    });
+%}
+
+###
+
+// Shared-boundary lookup: at exactly boundedFrom the scheduled revision wins;
+// one nanosecond earlier the predecessor applies (nanosecond precision is
+// honoured for comparison-only instants).
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at={{boundedFrom}}
+Accept: application/json
+
+> {%
+    client.test("boundary successor", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.revision.id === client.global.get("committedRevisionId"),
+            "boundary selects the successor");
+    });
+%}
+
+###
+
+// Create a second draft, then apply it from server now until applyUntil in a
+// single write — no need to know the server's clock. applyUntil is before
+// boundedFrom, so the scheduled plan is untouched; a new continuation is
+// generated for [applyUntil, boundedFrom).
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "temporary tightening",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 125.0,
+        "level": 130.0,
+        "upper": 135.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("second draft", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+> {%
+    client.test("one pending draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    client.global.set("applyDraftId", response.body.drafts[0].id);
+%}
+
+###
+
+// Bounded apply-from-now. The pre-request script (<) above the request
+// captures the token that is valid right now so the stale-token replay below
+// can prove rejection.
+< {%
+    client.global.set("staleToken", client.global.get("ruleToken"));
+%}
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "effectiveTo": "{{applyUntil}}"
+}
+
+> {%
+    client.test("bounded apply", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revisions.length === 5, "five revisions");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Replay the stale token captured before the apply: expect 412
+// monitoring_rule.concurrent_change with the timeline untouched. The token is
+// deliberately NOT updated from this error response.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{staleToken}}"
+
+{
+  "changeReason": "stale write",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 135.0,
+        "level": 140.0,
+        "upper": 145.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("stale rejected", function() {
+        client.assert(response.status === 412, "expected 412");
+        client.assert(response.body.code === "monitoring_rule.concurrent_change", "code");
+    });
+%}
+
+###
+
+// Amend the surviving scheduled revision: move its start to rescheduleFrom
+// (at least one of definition/effectiveFrom required; an invalid combined
+// amendment would change nothing).
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "fine tune",
+  "effectiveFrom": "{{rescheduleFrom}}"
+}
+
+> {%
+    client.test("amend", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Open-ended replacement: schedule a fresh draft from openFrom with
+// "effectiveTo": null (omitted or null means open-ended — a blank string
+// would be rejected). The existing continuation survives as
+// [boundedTo, openFrom) keeping its continuationRevisionId; the new revision
+// owns [openFrom, infinity).
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "long-term plan",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 140.0,
+        "level": 145.0,
+        "upper": 150.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("third draft", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+> {%
+    client.test("one pending draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    client.global.set("openDraftId", response.body.drafts[0].id);
+%}
+
+###
+
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{openDraftId}}/schedule
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "effectiveFrom": "{{openFrom}}",
+  "effectiveTo": null
+}
+
+> {%
+    client.test("open-ended schedule", function() {
+        client.assert(response.status === 200, "expected 200");
+        var revisions = response.body.revisions;
+        client.assert(revisions[revisions.length - 1].effectiveTo === null, "open-ended tail");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+    var tail = response.body.revisions;
+    client.global.set("openRevisionId", tail[tail.length - 1].id);
+%}
+
+###
+
+// Remove the rescheduled committed revision; its predecessor's end reopens to
+// boundedTo. (committedRevisionId survived every earlier write because the
+// bounded apply ended at applyUntil, before boundedFrom.)
+DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
+If-Match: "{{ruleToken}}"
+
+> {%
+    client.test("remove revision", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// Discard a draft: create one more so the DELETE targets a live draft id.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "discard me",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 150.0,
+        "level": 155.0,
+        "upper": 160.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("fourth draft", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+> {%
+    client.test("one pending draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    client.global.set("deleteDraftId", response.body.drafts[0].id);
+%}
+
+###
+
+DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{deleteDraftId}}
+If-Match: "{{ruleToken}}"
+
+> {%
+    client.test("draft deleted", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}

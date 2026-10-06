@@ -1,4 +1,3 @@
-using NodaTime;
 using TradingEngine.Domain.Results;
 using TradingEngine.Domain.Revisions;
 using static TradingEngine.Domain.Tests.Revisions.SyntheticTimelines;
@@ -11,7 +10,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void CreateDraft_WithValidInputs_AddsDraftOutsideCommittedTimeline()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         RevisionProposal proposal = new(October(6, 10), null);
 
         Result<Revision<SyntheticLimitDefinition>> result = timeline.CreateDraft(
@@ -41,7 +40,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void CreateDraft_WithEmptyId_ReturnsIdRequiredError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Result<Revision<SyntheticLimitDefinition>> result = timeline.CreateDraft(
             Guid.Empty,
@@ -60,7 +59,7 @@ public sealed class RevisionTimelineDraftTests
     [TestCase("   ")]
     public void CreateDraft_WithMissingCreatedBy_ReturnsCreatedByRequiredError(string? createdBy)
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Result<Revision<SyntheticLimitDefinition>> result = timeline.CreateDraft(
             Id(1),
@@ -77,7 +76,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void CreateDraft_WithDuplicateId_ReturnsDuplicateIdError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Draft(timeline, 1, 10, October(1));
 
         Result<Revision<SyntheticLimitDefinition>> result = timeline.CreateDraft(
@@ -96,7 +95,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void CreateDraft_WithIdOfCommittedRevision_ReturnsDuplicateIdError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Apply(timeline, 1, 10, October(1));
 
         Result<Revision<SyntheticLimitDefinition>> result = timeline.CreateDraft(
@@ -114,7 +113,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void CreateDraft_WithOverlappingProposals_KeepsBothDraftsOutsideTimeline()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         RevisionProposal sharedProposal = new(October(6, 10), null);
 
@@ -134,7 +133,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void EffectiveAt_WhenOnlyDraftProposalCoversInstant_ReturnsNull()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Draft(timeline, 1, 10, October(1), new RevisionProposal(October(1), null));
 
         Revision<SyntheticLimitDefinition>? effective = timeline.EffectiveAt(October(7));
@@ -145,7 +144,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void EffectiveAt_WhenDraftProposalOverlapsCurrentRevision_ReturnsCurrentRevision()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         Draft(timeline, 2, 20, October(5), new RevisionProposal(October(6, 10), null));
 
@@ -157,7 +156,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void EditDraft_WithNewDefinition_ReplacesDefinitionReasonAndProposalWithoutTimelineChange()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, 2, 20, October(5));
         RevisionProposal proposal = new(October(6, 10), October(8));
@@ -180,7 +179,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void EditDraft_WithCommittedRevisionId_ReturnsNotDraftError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
 
         Result result = timeline.EditDraft(current.Id, Limit(99), null, null);
@@ -196,7 +195,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void EditDraft_WithUnknownId_ReturnsNotFoundError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Result result = timeline.EditDraft(Id(9), Limit(10), null, null);
 
@@ -207,7 +206,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void DeleteDraft_WithExistingDraft_RemovesDraftWithoutTimelineChange()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, 2, 20, October(5));
         Revision<SyntheticLimitDefinition> other = Draft(timeline, 3, 30, October(5));
@@ -227,7 +226,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void DeleteDraft_WithCommittedRevisionId_ReturnsNotDraftError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> current = Apply(timeline, 1, 10, October(1));
 
         Result result = timeline.DeleteDraft(current.Id);
@@ -243,7 +242,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void DeleteDraft_WithUnknownId_ReturnsNotFoundError()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Result result = timeline.DeleteDraft(Id(9));
 
@@ -254,7 +253,7 @@ public sealed class RevisionTimelineDraftTests
     [Test]
     public void CreateDraft_WithNullDefinition_ThrowsArgumentNullException()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Assert.That(
             () => timeline.CreateDraft(Id(1), null!, October(1), Author, null, null),

@@ -75,7 +75,7 @@ public sealed class TelemetryServiceCollectionExtensionsTests
         Assert.Multiple(() =>
         {
             Assert.That(
-                hostedServices[^1],
+                hostedServices[hostedServices.Count - 1],
                 Is.TypeOf<StartupTelemetryHostedService>());
             Assert.That(
                 hostedServices.Any(service => service.GetType().Name == "TelemetryHostedService"),

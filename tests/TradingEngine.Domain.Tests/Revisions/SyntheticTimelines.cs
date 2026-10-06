@@ -22,6 +22,25 @@ public static class SyntheticTimelines
         return new SyntheticLimitDefinition(limit, ["synthetic"]);
     }
 
+    public static RevisionTimeline<SyntheticLimitDefinition> Empty()
+    {
+        return RevisionTimeline<SyntheticLimitDefinition>.Restore(
+            Array.Empty<RestoredRevision<SyntheticLimitDefinition>>()).Value;
+    }
+
+    public static RevisionTimeline<SyntheticLimitDefinition> Timeline(
+        int ordinal,
+        int limit,
+        Instant createdAt,
+        string? createdBy = Author)
+    {
+        return RevisionTimeline<SyntheticLimitDefinition>.Create(
+            Id(ordinal),
+            Limit(limit),
+            createdAt,
+            createdBy).Value;
+    }
+
     public static Revision<SyntheticLimitDefinition> Draft(
         RevisionTimeline<SyntheticLimitDefinition> timeline,
         int ordinal,
@@ -36,10 +55,11 @@ public static class SyntheticTimelines
         RevisionTimeline<SyntheticLimitDefinition> timeline,
         int ordinal,
         int limit,
-        Instant now)
+        Instant now,
+        int continuationOrdinal = 900)
     {
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, ordinal, limit, now);
-        timeline.ApplyNow(draft.Id, now);
+        timeline.ApplyNow(draft.Id, Id(continuationOrdinal), now);
 
         return draft;
     }
@@ -49,10 +69,12 @@ public static class SyntheticTimelines
         int ordinal,
         int limit,
         Instant effectiveFrom,
-        Instant now)
+        Instant now,
+        Instant? effectiveTo = null,
+        int continuationOrdinal = 900)
     {
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, ordinal, limit, now);
-        timeline.Schedule(draft.Id, effectiveFrom, now);
+        timeline.Schedule(draft.Id, effectiveFrom, effectiveTo, Id(continuationOrdinal), now);
 
         return draft;
     }

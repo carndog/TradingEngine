@@ -12,7 +12,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void EffectiveAt_AtSharedBoundary_ReturnsSuccessor()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> original = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> successor = Schedule(timeline, 2, 20, October(6, 10), October(5));
 
@@ -29,7 +29,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     {
         Instant start = October(6, 10);
         Instant end = start.PlusTicks(1);
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> first = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> middle = Schedule(timeline, 2, 20, start, October(5));
         Revision<SyntheticLimitDefinition> last = Schedule(timeline, 3, 30, end, October(5));
@@ -50,7 +50,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void EffectiveAt_BeforeFirstRevision_ReturnsNull()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Apply(timeline, 1, 10, October(1));
 
         Assert.That(timeline.EffectiveAt(October(1) - Duration.FromSeconds(1)), Is.Null);
@@ -59,7 +59,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void EffectiveAt_OnEmptyTimeline_ReturnsNull()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
 
         Assert.That(timeline.EffectiveAt(October(1)), Is.Null);
     }
@@ -67,7 +67,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void EffectiveAt_HistoricalInstantAfterRepeatedSplits_ReturnsOriginalDefinitions()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> first = Apply(timeline, 1, 10, October(1));
         SyntheticLimitDefinition firstDefinition = first.Definition;
         Revision<SyntheticLimitDefinition> second = Apply(timeline, 2, 20, October(3));
@@ -91,7 +91,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void Find_WithDraftOrCommittedId_ReturnsMatchingRevision()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Revision<SyntheticLimitDefinition> committed = Apply(timeline, 1, 10, October(1));
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, 2, 20, October(2));
 
@@ -106,7 +106,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void Revisions_WhenRead_ReturnsReadOnlySnapshotDetachedFromTimeline()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Apply(timeline, 1, 10, October(1));
 
         IReadOnlyList<Revision<SyntheticLimitDefinition>> snapshot = timeline.Revisions;
@@ -124,7 +124,7 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void Drafts_WhenRead_ReturnsReadOnlySnapshotDetachedFromTimeline()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         Draft(timeline, 1, 10, October(1));
 
         IReadOnlyList<Revision<SyntheticLimitDefinition>> snapshot = timeline.Drafts;
@@ -141,13 +141,13 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void CreateDraft_WithCallerHeldCollection_LaterMutationDoesNotAffectStoredDefinition()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         string[] tags = ["synthetic"];
         SyntheticLimitDefinition definition = new(10, tags);
         Revision<SyntheticLimitDefinition> draft = timeline
             .CreateDraft(Id(1), definition, October(1), Author, null, null)
             .Value;
-        timeline.ApplyNow(draft.Id, October(1));
+        timeline.ApplyNow(draft.Id, Id(90), October(1));
 
         tags[0] = "mutated";
 
@@ -157,12 +157,12 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void EffectiveAt_AfterIndexAssignmentThroughExposedTags_ReturnsUnchangedDefinition()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         SyntheticLimitDefinition definition = new(10, ["synthetic"]);
         Revision<SyntheticLimitDefinition> revision = timeline
             .CreateDraft(Id(1), definition, October(1), Author, null, null)
             .Value;
-        timeline.ApplyNow(revision.Id, October(1));
+        timeline.ApplyNow(revision.Id, Id(90), October(1));
         Apply(timeline, 2, 20, October(3));
         IList<string> callerHeldTags = (IList<string>)definition.Tags;
         IList<string> exposedTags = (IList<string>)timeline.EffectiveAt(October(2))!.Definition.Tags;
@@ -182,12 +182,12 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void EditDraft_WithReplacementDefinition_DoesNotAlterPreviouslyCommittedDefinitionReference()
     {
-        RevisionTimeline<SyntheticLimitDefinition> timeline = new();
+        RevisionTimeline<SyntheticLimitDefinition> timeline = Empty();
         SyntheticLimitDefinition committedDefinition = Limit(10);
         Revision<SyntheticLimitDefinition> committed = timeline
             .CreateDraft(Id(1), committedDefinition, October(1), Author, null, null)
             .Value;
-        timeline.ApplyNow(committed.Id, October(1));
+        timeline.ApplyNow(committed.Id, Id(90), October(1));
         Revision<SyntheticLimitDefinition> draft = Draft(timeline, 2, 20, October(2));
 
         timeline.EditDraft(draft.Id, Limit(99), null, null);
@@ -226,16 +226,18 @@ public sealed class RevisionTimelineLookupAndProtectionTests
     [Test]
     public void RevisionTimeline_WithDifferentDefinitionType_AppliesSameMechanics()
     {
-        RevisionTimeline<SyntheticLabelDefinition> timeline = new();
+        RevisionTimeline<SyntheticLabelDefinition> timeline =
+            RevisionTimeline<SyntheticLabelDefinition>.Restore(
+                Array.Empty<RestoredRevision<SyntheticLabelDefinition>>()).Value;
         Revision<SyntheticLabelDefinition> first = timeline
             .CreateDraft(Id(1), new SyntheticLabelDefinition("alpha"), October(1), Author, null, null)
             .Value;
-        timeline.ApplyNow(first.Id, October(1));
+        timeline.ApplyNow(first.Id, Id(90), October(1));
         Revision<SyntheticLabelDefinition> second = timeline
             .CreateDraft(Id(2), new SyntheticLabelDefinition("beta"), October(5), Author, "rename", null)
             .Value;
 
-        Result scheduled = timeline.Schedule(second.Id, October(6, 10), October(5));
+        Result scheduled = timeline.Schedule(second.Id, October(6, 10), null, Id(91), October(5));
         Result edited = timeline.EditScheduledRevision(second.Id, new SyntheticLabelDefinition("gamma"), null, October(6, 10));
 
         Assert.Multiple(() =>

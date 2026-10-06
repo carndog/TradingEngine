@@ -63,7 +63,7 @@ public sealed class MonitoringRuleConcurrencyTests
         {
             Assert.That(staleSave.IsFailure, Is.True);
             Assert.That(staleSave.Error, Is.EqualTo(MonitoringRuleErrors.ConcurrentChange));
-            Assert.That(staleSave.Error.Type, Is.EqualTo(ErrorType.Conflict));
+            Assert.That(staleSave.Error.Type, Is.EqualTo(ErrorType.PreconditionFailed));
         });
 
         MonitoringRuleSnapshot reloaded = await LoadAsync(instrumentId);
@@ -119,8 +119,8 @@ public sealed class MonitoringRuleConcurrencyTests
         MonitoringRuleSnapshot first = await LoadAsync(instrumentId);
         MonitoringRuleSnapshot second = await LoadAsync(instrumentId);
 
-        first.Rule.Schedule(RevisionId(84), October10, October5);
-        second.Rule.Schedule(RevisionId(85), October10, October5);
+        first.Rule.Schedule(RevisionId(84), October10, null, RevisionId(91), October5);
+        second.Rule.Schedule(RevisionId(85), October10, null, RevisionId(92), October5);
 
         Result firstSave = await SaveAsync(first);
         Result secondSave = await SaveAsync(second);
@@ -148,7 +148,7 @@ public sealed class MonitoringRuleConcurrencyTests
         MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
         seeded.Rule.CreateDraft(RevisionId(86), CreateDefinition(110m), October5, Author, "victim", null);
         seeded.Rule.CreateDraft(RevisionId(87), CreateDefinition(120m), October5, Author, "future split", null);
-        seeded.Rule.Schedule(RevisionId(87), October10, October5);
+        seeded.Rule.Schedule(RevisionId(87), October10, null, RevisionId(93), October5);
         await SaveAsync(seeded);
 
         long versionBefore = await ReadRowVersionAsync(instrumentId);
@@ -162,13 +162,13 @@ public sealed class MonitoringRuleConcurrencyTests
             RevisionId(88),
             CreateDefinition(130m),
             October5,
-            Author,
+            new string('a', 200),
             "rolled back",
             null);
         Result edited = snapshot.Rule.EditDraft(
             RevisionId(86),
             CreateDefinition(115m),
-            new string('r', 600),
+            "edited then rolled back",
             null);
 
         Assert.Multiple(() =>
@@ -267,7 +267,7 @@ public sealed class MonitoringRuleConcurrencyTests
         Guid instrumentId = await AddInstrumentAsync("MC-CORRUPT-GAP");
         MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
         seeded.Rule.CreateDraft(RevisionId(90), CreateDefinition(110m), October1, Author, "later", null);
-        seeded.Rule.Schedule(RevisionId(90), October10, October1);
+        seeded.Rule.Schedule(RevisionId(90), October10, null, RevisionId(94), October1);
         await SaveAsync(seeded);
 
         await ExecuteSqlAsync(

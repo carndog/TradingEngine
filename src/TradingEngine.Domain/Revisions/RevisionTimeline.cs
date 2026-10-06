@@ -9,9 +9,48 @@ public sealed class RevisionTimeline<TDefinition>
     private readonly List<Revision<TDefinition>> _committed = [];
     private readonly List<Revision<TDefinition>> _drafts = [];
 
+    private RevisionTimeline()
+    {
+    }
+
     public IReadOnlyList<Revision<TDefinition>> Revisions => _committed.ToArray();
 
     public IReadOnlyList<Revision<TDefinition>> Drafts => _drafts.ToArray();
+
+    public Instant? CoverageOrigin => _committed.Count == 0
+        ? null
+        : _committed[0].EffectivePeriod!.EffectiveFrom;
+
+    public static Result<RevisionTimeline<TDefinition>> Create(
+        Guid initialRevisionId,
+        TDefinition initialDefinition,
+        Instant createdAt,
+        string? createdBy)
+    {
+        RevisionTimeline<TDefinition> timeline = new();
+        Result<Revision<TDefinition>> initial = timeline.CreateDraft(
+            initialRevisionId,
+            initialDefinition,
+            createdAt,
+            createdBy,
+            null,
+            null);
+        if (initial.IsFailure)
+        {
+            return initial.Error;
+        }
+
+        Result committed = timeline.ApplyNow(
+            initial.Value.Id,
+            Guid.Empty,
+            createdAt);
+        if (committed.IsFailure)
+        {
+            return committed.Error;
+        }
+
+        return timeline;
+    }
 
     public Revision<TDefinition>? EffectiveAt(Instant instant)
     {
@@ -233,54 +272,28 @@ public sealed class RevisionTimeline<TDefinition>
         return Result.Success();
     }
 
-    public Result ApplyNow(Guid draftId, Instant now)
+    public Result ApplyNow(Guid draftId, Guid continuationId, Instant now)
     {
-        return Schedule(draftId, now, now);
+        return Insert(draftId, now, null, continuationId, now);
     }
 
-    public Result Schedule(Guid draftId, Instant effectiveFrom, Instant now)
+    public Result ApplyNow(
+        Guid draftId,
+        Instant? effectiveTo,
+        Guid continuationId,
+        Instant now)
     {
-        Result<Revision<TDefinition>> draft = FindDraft(draftId);
-        if (draft.IsFailure)
-        {
-            return draft.Error;
-        }
+        return Insert(draftId, now, effectiveTo, continuationId, now);
+    }
 
-        if (effectiveFrom < now)
-        {
-            return RevisionErrors.Backdated;
-        }
-
-        Revision<TDefinition>? occupant = EffectiveAt(effectiveFrom);
-        if (occupant is not null && occupant.EffectivePeriod!.EffectiveFrom == effectiveFrom)
-        {
-            return RevisionErrors.StartConflict;
-        }
-
-        Instant? effectiveTo = occupant is not null
-            ? occupant.EffectivePeriod!.EffectiveTo
-            : NextStartAfter(effectiveFrom);
-        Result<EffectivePeriod> period = EffectivePeriod.Create(effectiveFrom, effectiveTo);
-        if (period.IsFailure)
-        {
-            return period.Error;
-        }
-
-        Result<EffectivePeriod>? closingPeriod = occupant is null
-            ? null
-            : EffectivePeriod.Create(occupant.EffectivePeriod!.EffectiveFrom, effectiveFrom);
-        if (closingPeriod is { IsFailure: true })
-        {
-            return closingPeriod.Error;
-        }
-
-        occupant?.ChangePeriod(closingPeriod!.Value);
-        draft.Value.Commit(period.Value);
-        _drafts.Remove(draft.Value);
-        _committed.Add(draft.Value);
-        Reorder();
-
-        return Result.Success();
+    public Result Schedule(
+        Guid draftId,
+        Instant effectiveFrom,
+        Instant? effectiveTo,
+        Guid continuationId,
+        Instant now)
+    {
+        return Insert(draftId, effectiveFrom, effectiveTo, continuationId, now);
     }
 
     public Result EditScheduledRevision(
@@ -291,52 +304,106 @@ public sealed class RevisionTimeline<TDefinition>
     {
         ArgumentNullException.ThrowIfNull(definition);
 
-        Result<Revision<TDefinition>> revision = FindScheduledRevision(revisionId, now);
-        if (revision.IsFailure)
-        {
-            return revision.Error;
-        }
-
-        revision.Value.Replace(definition, changeReason);
-
-        return Result.Success();
+        return AmendScheduledRevision(revisionId, definition, changeReason, null, now);
     }
 
     public Result Reschedule(Guid revisionId, Instant effectiveFrom, Instant now)
     {
+        return AmendScheduledRevision(revisionId, null, null, effectiveFrom, now);
+    }
+
+    public Result AmendScheduledRevision(
+        Guid revisionId,
+        TDefinition? definition,
+        string? changeReason,
+        Instant? effectiveFrom,
+        Instant now)
+    {
+        if (definition is null && effectiveFrom is null)
+        {
+            return RevisionErrors.NoChangeRequested;
+        }
+
         Result<Revision<TDefinition>> found = FindScheduledRevision(revisionId, now);
         if (found.IsFailure)
         {
             return found.Error;
         }
 
+        Revision<TDefinition> revision = found.Value;
+        if (effectiveFrom is not null)
+        {
+            Result reschedule = ValidateReschedule(revision, effectiveFrom.Value, now);
+            if (reschedule.IsFailure)
+            {
+                return reschedule;
+            }
+        }
+
+        if (definition is not null)
+        {
+            revision.Replace(definition, changeReason);
+        }
+        else if (changeReason is not null)
+        {
+            revision.Replace(revision.Definition, changeReason);
+        }
+
+        if (effectiveFrom is not null)
+        {
+            ApplyReschedule(revision, effectiveFrom.Value);
+        }
+
+        return Result.Success();
+    }
+
+    private Result ValidateReschedule(
+        Revision<TDefinition> revision,
+        Instant effectiveFrom,
+        Instant now)
+    {
         if (effectiveFrom < now)
         {
             return RevisionErrors.Backdated;
         }
 
-        Revision<TDefinition> revision = found.Value;
-        EffectivePeriod current = revision.EffectivePeriod!;
-        Result<EffectivePeriod> period = EffectivePeriod.Create(effectiveFrom, current.EffectiveTo);
+        if (IsOrigin(revision))
+        {
+            return RevisionErrors.CoverageOriginProtected;
+        }
+
+        Result<EffectivePeriod> period = EffectivePeriod.Create(
+            effectiveFrom,
+            revision.EffectivePeriod!.EffectiveTo);
         if (period.IsFailure)
         {
             return period.Error;
         }
 
         Revision<TDefinition>? predecessor = AdjacentPredecessor(revision);
-        Result<EffectivePeriod>? predecessorPeriod = predecessor is null
-            ? null
-            : EffectivePeriod.Create(predecessor.EffectivePeriod!.EffectiveFrom, effectiveFrom);
-        if (predecessorPeriod is { IsFailure: true })
+        if (predecessor is null)
         {
-            return predecessorPeriod.Error;
+            return Result.Success();
         }
 
-        predecessor?.ChangePeriod(predecessorPeriod!.Value);
-        revision.ChangePeriod(period.Value);
-        Reorder();
+        return EffectivePeriod.Create(predecessor.EffectivePeriod!.EffectiveFrom, effectiveFrom)
+            .ToResult();
+    }
 
-        return Result.Success();
+    private void ApplyReschedule(Revision<TDefinition> revision, Instant effectiveFrom)
+    {
+        EffectivePeriod period = EffectivePeriod.Create(
+            effectiveFrom,
+            revision.EffectivePeriod!.EffectiveTo).Value;
+        Revision<TDefinition>? predecessor = AdjacentPredecessor(revision);
+        if (predecessor is not null)
+        {
+            predecessor.ChangePeriod(
+                EffectivePeriod.Create(predecessor.EffectivePeriod!.EffectiveFrom, effectiveFrom).Value);
+        }
+
+        revision.ChangePeriod(period);
+        Reorder();
     }
 
     public Result RemoveScheduledRevision(Guid revisionId, Instant now)
@@ -348,6 +415,11 @@ public sealed class RevisionTimeline<TDefinition>
         }
 
         Revision<TDefinition> revision = found.Value;
+        if (IsOrigin(revision))
+        {
+            return RevisionErrors.CoverageOriginProtected;
+        }
+
         Revision<TDefinition>? predecessor = AdjacentPredecessor(revision);
         Result<EffectivePeriod>? predecessorPeriod = predecessor is null
             ? null
@@ -382,6 +454,143 @@ public sealed class RevisionTimeline<TDefinition>
         return revision;
     }
 
+    private Result Insert(
+        Guid draftId,
+        Instant effectiveFrom,
+        Instant? effectiveTo,
+        Guid continuationId,
+        Instant now)
+    {
+        Result<Revision<TDefinition>> draft = FindDraft(draftId);
+        if (draft.IsFailure)
+        {
+            return draft.Error;
+        }
+
+        if (effectiveFrom < now)
+        {
+            return RevisionErrors.Backdated;
+        }
+
+        Result<EffectivePeriod> committedPeriod = EffectivePeriod.Create(effectiveFrom, effectiveTo);
+        if (committedPeriod.IsFailure)
+        {
+            return committedPeriod.Error;
+        }
+
+        if (_committed.Count > 0 && effectiveFrom < _committed[0].EffectivePeriod!.EffectiveFrom)
+        {
+            return RevisionErrors.UncoveredStart;
+        }
+
+        List<Revision<TDefinition>> covered = _committed
+            .Where(revision => revision.EffectivePeriod!.Overlaps(committedPeriod.Value))
+            .ToList();
+        if (covered.Count == 0)
+        {
+            if (_committed.Count > 0 || effectiveTo is not null)
+            {
+                return RevisionErrors.UncoveredStart;
+            }
+
+            draft.Value.Commit(committedPeriod.Value);
+            _drafts.Remove(draft.Value);
+            _committed.Add(draft.Value);
+            Reorder();
+
+            return Result.Success();
+        }
+
+        Revision<TDefinition> first = covered[0];
+        Revision<TDefinition> last = covered[covered.Count - 1];
+        bool firstBegun = first.HasBegun(now);
+        if (firstBegun && first.EffectivePeriod!.EffectiveFrom == effectiveFrom)
+        {
+            return RevisionErrors.PeriodBegun;
+        }
+
+        bool leftRemains = effectiveFrom > first.EffectivePeriod!.EffectiveFrom;
+        bool rightRemains = effectiveTo is not null
+            && (last.EffectivePeriod!.EffectiveTo is null
+                || last.EffectivePeriod.EffectiveTo > effectiveTo);
+        bool createsContinuation = covered.Count == 1 && leftRemains && rightRemains;
+        if (createsContinuation && continuationId == Guid.Empty)
+        {
+            return RevisionErrors.IdRequired;
+        }
+
+        if (createsContinuation && Find(continuationId) is not null)
+        {
+            return RevisionErrors.DuplicateId;
+        }
+
+        Result<EffectivePeriod>? leftPeriod = leftRemains
+            ? EffectivePeriod.Create(first.EffectivePeriod!.EffectiveFrom, effectiveFrom)
+            : null;
+        if (leftPeriod is { IsFailure: true })
+        {
+            return leftPeriod.Error;
+        }
+
+        Result<EffectivePeriod>? rightPeriod = rightRemains
+            ? EffectivePeriod.Create(effectiveTo!.Value, last.EffectivePeriod!.EffectiveTo)
+            : null;
+        if (rightPeriod is { IsFailure: true })
+        {
+            return rightPeriod.Error;
+        }
+
+        if (leftRemains)
+        {
+            first.ChangePeriod(leftPeriod!.Value);
+        }
+        else if (covered.Count > 1 || rightRemains is false)
+        {
+            _committed.Remove(first);
+        }
+
+        foreach (Revision<TDefinition> revision in covered.Skip(1))
+        {
+            _committed.Remove(revision);
+        }
+
+        if (rightRemains)
+        {
+            if (createsContinuation)
+            {
+                Revision<TDefinition> continuation = Revision<TDefinition>.CreateDraft(
+                    continuationId,
+                    last.Definition,
+                    now,
+                    draft.Value.CreatedBy,
+                    null,
+                    null);
+                continuation.Commit(rightPeriod!.Value);
+                _committed.Add(continuation);
+            }
+            else
+            {
+                last.ChangePeriod(rightPeriod!.Value);
+                if (covered.Count > 1)
+                {
+                    _committed.Add(last);
+                }
+            }
+        }
+
+        draft.Value.Commit(committedPeriod.Value);
+        _drafts.Remove(draft.Value);
+        _committed.Add(draft.Value);
+        Reorder();
+
+        return Result.Success();
+    }
+
+    private bool IsOrigin(Revision<TDefinition> revision)
+    {
+        return _committed.Count > 0 && ReferenceEquals(_committed[0], revision);
+    }
+
     private Result<Revision<TDefinition>> FindScheduledRevision(Guid revisionId, Instant now)
     {
         Revision<TDefinition>? revision = Find(revisionId);
@@ -401,15 +610,6 @@ public sealed class RevisionTimeline<TDefinition>
         }
 
         return revision;
-    }
-
-    private Instant? NextStartAfter(Instant instant)
-    {
-        Revision<TDefinition>? next = _committed
-            .Where(revision => revision.EffectivePeriod!.EffectiveFrom > instant)
-            .MinBy(revision => revision.EffectivePeriod!.EffectiveFrom);
-
-        return next?.EffectivePeriod!.EffectiveFrom;
     }
 
     private Revision<TDefinition>? AdjacentPredecessor(Revision<TDefinition> revision)

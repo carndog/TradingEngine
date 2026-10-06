@@ -115,7 +115,7 @@ public sealed class MonitoringRuleRestoreTests
             Author,
             "raise support",
             null);
-        Result scheduled = rule.Schedule(SecondRevisionId, October6At10, October5);
+        Result scheduled = rule.Schedule(SecondRevisionId, October6At10, null, Guid.NewGuid(), October5);
         Result rescheduled = rule.Reschedule(SecondRevisionId, October10, October5);
         Result removed = rule.RemoveScheduledRevision(SecondRevisionId, October5);
 

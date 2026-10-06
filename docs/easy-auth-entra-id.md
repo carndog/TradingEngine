@@ -31,6 +31,12 @@ These are separate principals with separate jobs. None can substitute for anothe
 
 `excludedPaths` entries are listed explicitly rather than relying on prefix matching, so the policy does not depend on undocumented matching behaviour.
 
+### Principal forwarding into the application
+
+When `configureEntraAuth` is true, Bicep also sets the app setting `Authentication__EasyAuth__TrustPlatformHeaders=true`. Inside the app, `EasyAuthPrincipalMiddleware` then decodes the platform-injected `X-MS-CLIENT-PRINCIPAL` header on `/api` requests so `createdBy` on revision writes records the caller's object identifier; a missing or malformed principal is rejected with 401. Locally the setting is absent and any caller-supplied header is ignored — writes record `unverified-local-caller`.
+
+The application and infrastructure deployment workflows are independent: the app setting only exists after the **infrastructure** deployment has run, so a redeployed API without it still uses the local fallback for `createdBy` even though Easy Auth itself still enforces 401/403. Before smoke-testing lifecycle writes or verifying actor attribution, confirm the setting is present in the Web App configuration; if it is missing, re-run the infrastructure deployment. Real authenticated-actor verification of the claim mapping (`oid` → `nameidentifier` → `sub`) remains outstanding — perform it after both workflows have deployed the current commit.
+
 ## Secretless credential: managed identity federation
 
 Easy Auth normally stores a client secret in the `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` app setting. This deployment instead uses Microsoft's supported **federated identity credential** pattern:
@@ -74,6 +80,7 @@ For Rider, set `deployedHost`, `bearerToken` and `databaseProbeKey` in `src/Trad
 | `GET /auth-check` with owner session or API bearer token | 204 — request reached the API |
 | Same-tenant non-owner on `/auth-check` | 403 — allowlist rejects |
 | Token from another tenant | 401 — issuer rejected |
+| Monitoring-rule write as the owner, then `GET .../monitoring-rule` | `createdBy` on the committed revision is the caller's Entra object ID — requires `Authentication__EasyAuth__TrustPlatformHeaders=true` from the infrastructure deployment; not yet verified |
 
 If a second same-tenant user, a second tenant or a supported Rider token flow is unavailable, record that check as unverified rather than claiming it passed.
 
@@ -93,6 +100,7 @@ If a second same-tenant user, a second tenant or a supported Rider token flow is
 - Web App `identity` becomes `SystemAssigned, UserAssigned` (system-assigned is preserved for SQL).
 - `Microsoft.Web/sites/config` `authsettingsV2` — the policy described above.
 - `OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID` app setting (marked slot-sticky via `slotConfigNames`).
+- `Authentication__EasyAuth__TrustPlatformHeaders` app setting (`true`) — enables the in-app `EasyAuthPrincipalMiddleware` to trust the platform principal header for `createdBy` attribution.
 - Two outputs (`easyAuthIdentityName`, `easyAuthIdentityPrincipalId`) so the portal federated-credential step can find the identity.
 
 The SQL connection string, probe-key setting, system-assigned identity, remaining app settings and the App Service Plan free-offer expiry are untouched; confirm that in the pull-request what-if before merging.

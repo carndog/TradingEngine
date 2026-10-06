@@ -74,6 +74,8 @@ The legacy single-definition table is retained as a read-only archive. Registrat
 - Application validates every instant destined for storage before a Domain operation mutates the aggregate, through `PersistedInstant.Require`. The values that must satisfy the policy are creation timestamps, committed effective boundaries and draft proposal dates. `RegisterWatchedInstrumentHandler` applies it to the captured `IClock` instant before creating the registration, and revision command paths apply it to the persisted boundary before calling `MonitoringRule` timeline operations.
 - The stores re-run the same policy through `MonitoringRuleRowMapping.ValidateInstants` and `PersistedInstant.Require` as a defensive check immediately before writes reach the database.
 
+On the HTTP boundary the request DTOs carry timestamps as strings and `RequestInstants` parses the raw JSON text into a nanosecond-precision `Instant`, so fractional precision is never discarded by `DateTimeOffset` binding before the persisted-instant policy can inspect the original value. Caller-supplied persisted instants that fail the policy return the `monitoring_rule.instant_not_persistable` validation error rather than an exception; the exception path remains for instants that originate inside the process (clock captures, stored rows) where a violation indicates a defect.
+
 Instants used only for comparison — a captured `now` for begun-period checks and the `at` argument of effective-at lookups — are passed to Domain unvalidated, so sub-tick lookup instants keep working and begun-period checks always use the exact supplied value. `IClock` is captured once per operation in Application and the same value is used for checks and mutation; when that captured `now` itself becomes a persisted boundary (for example `ApplyNow`), the policy is applied to it first. Because persisted boundaries are never adjusted, they always round-trip byte-for-byte and in-memory half-open-interval lookups agree with the stored values.
 
 ## Atomic rule saves and concurrency
@@ -98,7 +100,7 @@ The stores translate expected outcomes into the `Result` foundation:
 - A missing instrument configuration returns `watched_instrument.configuration_not_found` as a `NotFound` error.
 - A missing monitoring rule returns `monitoring_rule.not_found` as a `NotFound` error.
 - Adding a rule for an instrument that already has one returns `monitoring_rule.already_exists` as a `Conflict` error.
-- Saving against a stale `rowversion` token, or a concurrent change detected mid-save, returns `monitoring_rule.concurrent_change` as a `Conflict` error.
+- Saving against a stale `rowversion` token, or a concurrent change detected mid-save, returns `monitoring_rule.concurrent_change` as a `PreconditionFailed` error (412 at the API).
 - A configuration read for which no committed revision applies at the requested instant returns `monitoring_rule.no_applicable_revision` as a `NotFound` error.
 - A persisted revision `Id` collision returns `revision.duplicate_id`; a committed effective-start collision returns `revision.start_conflict`; both are `Conflict` errors.
 
@@ -123,6 +125,8 @@ Once the backfill has run, recovery is fix-forward. Restoring the old applicatio
 ## Monitoring-rule usage
 
 `IMonitoringRuleStore` exposes `GetAsync`, `AddAsync` and `SaveAsync`. Loads restore the whole aggregate (committed revisions and drafts with proposals) through `MonitoringRule.Restore`, which re-validates the committed chain before the aggregate is used. Writes persist the aggregate state captured in the snapshot under its concurrency token.
+
+New rules created through `MonitoringRule.Create` always hold one committed revision open-ended from `CreatedAt`. Restoration deliberately tolerates more than that invariant requires: backfilled rules whose coverage starts at the migration cutover instant rather than `CreatedAt`, and draft-only rules, load unchanged. That compatibility exists so persisted and migrated rows keep restoring; it does not relax what `Create` commits.
 
 ## Prerequisites
 
@@ -157,7 +161,7 @@ Migrations never run at application startup. Against the development Azure SQL d
 
 `tests/TradingEngine.Infrastructure.IntegrationTests` runs the stores against a real SQL Server instance in a Testcontainers container. The fixtures apply all migrations at startup and then verify the round-trip, conflict and not-found outcomes, the `xml` column types, canonical XML storage, atomicity of failed writes, cancellation propagation and that unexpected failures throw.
 
-The monitoring-rule fixtures additionally cover draft edit/delete, immediate and scheduled commits, reschedules, removals and in-timeline renumbering under the unique indexes, combined removals and adjacent reschedules in one save (including a start reused after its previous holder moved), rollback when a save fails mid-transaction, stale-token and competing-writer concurrency, corrupt-row rejection, sub-tick instant rejection, exact boundary lookups at `T - 1 ns`, `T` and `T + 1 ns` and inside a 100 ns minimum period through the production read path, applicability reads at and before the first committed boundary, and the migration upgrade path from the legacy schema (backfill, provenance and cutover read semantics). Direct-SQL constraint fixtures verify that the check constraints and restrictive deletes hold without domain validation in the way: drafts with and without proposals, committed rows with missing or non-positive numbers, equal or inverted boundaries, valid closed and open-ended periods, and blocked deletions that preserve history.
+The monitoring-rule fixtures additionally cover draft edit/delete, immediate and scheduled commits (including a bounded apply that persists a real continuation row), reschedules, removals and in-timeline renumbering under the unique indexes, a bounded insert splitting a single period (verifying the generated continuation row's identity, definition and boundaries by reload and row count), a bounded insert crossing multiple future periods, an open-ended insert deleting several future revision rows, combined removals and adjacent reschedules in one save (including a start reused after its previous holder moved), rollback when a save fails mid-transaction, stale-token and competing-writer concurrency, corrupt-row rejection, sub-tick instant rejection, exact boundary lookups at `T - 1 ns`, `T` and `T + 1 ns` and inside a 100 ns minimum period through the production read path, applicability reads at and before the first committed boundary, exact-start immutability of a begun revision, and the migration upgrade path from the legacy schema (backfill, provenance and cutover read semantics). Direct-SQL constraint fixtures verify that the check constraints and restrictive deletes hold without domain validation in the way: drafts with and without proposals, committed rows with missing or non-positive numbers, equal or inverted boundaries, valid closed and open-ended periods, and blocked deletions that preserve history.
 
 ```bash
 dotnet test tests/TradingEngine.Infrastructure.IntegrationTests --configuration Release
