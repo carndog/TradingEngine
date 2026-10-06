@@ -162,13 +162,13 @@ public sealed class MonitoringRuleConcurrencyTests
             RevisionId(88),
             CreateDefinition(130m),
             October5,
-            Author,
+            new string('a', 200),
             "rolled back",
             null);
         Result edited = snapshot.Rule.EditDraft(
             RevisionId(86),
             CreateDefinition(115m),
-            new string('r', 600),
+            "edited then rolled back",
             null);
 
         Assert.Multiple(() =>

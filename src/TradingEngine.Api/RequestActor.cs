@@ -1,20 +1,15 @@
-using System.Security.Claims;
+using TradingEngine.Api.Authentication;
 
 namespace TradingEngine.Api;
 
 internal static class RequestActor
 {
-    private const string UnverifiedLocalCaller = "unverified-local-caller";
+    internal const string UnverifiedLocalCaller = "unverified-local-caller";
 
     internal static string Resolve(HttpContext context)
     {
-        ClaimsPrincipal user = context.User;
-        string? identity = user.FindFirst("preferred_username")?.Value
-            ?? user.FindFirst("oid")?.Value
-            ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        ArgumentNullException.ThrowIfNull(context);
 
-        return string.IsNullOrWhiteSpace(identity)
-            ? UnverifiedLocalCaller
-            : identity;
+        return EasyAuthClientPrincipal.StableIdentifier(context.User) ?? UnverifiedLocalCaller;
     }
 }

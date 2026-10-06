@@ -182,8 +182,19 @@ Authorization: Bearer {{bearerToken}}
 
 ###
 
-// Local API: monitoring-rule timeline. Committed revisions plus the coverage
-// origin and the base64 concurrency token also returned as the ETag header.
+// Monitoring-rule revision walkthrough (local API).
+//
+// Dates: every future boundary below uses these variables — move them forward
+// before running so they stay ahead of server now. Persisted timestamps must
+// be exact 100 ns multiples; the ?at= query keeps nanosecond precision.
+// Actor: locally every write records "unverified-local-caller"; the deployed
+// API records the Easy Auth principal's object identifier instead.
+@boundedFrom = 2030-02-10T00:00:00Z
+@boundedTo = 2030-02-12T00:00:00Z
+@applyUntil = 2030-02-20T00:00:00Z
+
+// Timeline: committed revisions, coverage origin and the concurrency token
+// (also returned as the ETag header). Capture the token for writes.
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule
 Accept: application/json
 
@@ -200,20 +211,22 @@ Accept: application/json
 ###
 
 // Revision effective at an instant; omit ?at= to resolve at server now.
-GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at=2026-10-06T10:00:00Z
+// Sub-tick values such as 2030-02-10T00:00:00.999999999Z are honoured here.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at=2030-02-10T00:00:00Z
 Accept: application/json
 
 ###
 
 // Create a draft. Writes require If-Match with the latest concurrencyToken;
-// missing -> 428, malformed -> 400, stale -> 412.
+// missing -> 428, malformed -> 400, stale -> 412, and any rejection leaves
+// the timeline, drafts and token unchanged.
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
 If-Match: "{{ruleToken}}"
 
 {
   "changeReason": "raise support",
-  "proposedPeriod": { "effectiveFrom": "2026-10-06T10:00:00Z", "effectiveTo": null },
+  "proposedPeriod": { "effectiveFrom": "{{boundedFrom}}", "effectiveTo": "{{boundedTo}}" },
   "definition": {
     "priceScale": 4,
     "supportZones": [
@@ -228,17 +241,7 @@ If-Match: "{{ruleToken}}"
         ]
       }
     ],
-    "resistanceZones": [
-      {
-        "id": "resistance-a",
-        "lower": 120.0,
-        "level": 125.0,
-        "upper": 130.0,
-        "conditions": [
-          { "type": "breakout", "actionId": "publish-signal" }
-        ]
-      }
-    ]
+    "resistanceZones": []
   }
 }
 
@@ -248,10 +251,41 @@ If-Match: "{{ruleToken}}"
 
 ###
 
-// Capture the draft id from GET .../drafts, then commit it open-ended from
-// server now (apply) or over an explicit future range (schedule).
-POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/apply
+// Read the drafts list to capture the draft id for the next requests.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+> {%
+    client.global.set("draftId", response.body.drafts[0].id);
+%}
+
+###
+
+// Edit the draft: replaces its definition, reason and proposal in one write.
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}
+Content-Type: application/json
 If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "raise support further",
+  "proposedPeriod": { "effectiveFrom": "{{boundedFrom}}", "effectiveTo": "{{boundedTo}}" },
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 115.0,
+        "level": 120.0,
+        "upper": 125.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
 
 > {%
     client.global.set("ruleToken", response.body.concurrencyToken);
@@ -259,13 +293,58 @@ If-Match: "{{ruleToken}}"
 
 ###
 
+// Bounded-commit walkthrough: schedule the draft over [boundedFrom, boundedTo)
+// inside the open-ended tail. The response contains three committed revisions —
+// the trimmed original, the draft's revision and a generated continuation
+// carrying the original definition from boundedTo onward. Capture both ids.
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/schedule
 Content-Type: application/json
 If-Match: "{{ruleToken}}"
 
 {
-  "effectiveFrom": "2026-10-06T10:00:00Z",
-  "effectiveTo": null
+  "effectiveFrom": "{{boundedFrom}}",
+  "effectiveTo": "{{boundedTo}}"
+}
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+    client.global.set("committedRevisionId", response.body.revisions[1].id);
+    client.global.set("continuationRevisionId", response.body.revisions[2].id);
+%}
+
+###
+
+// Read the generated continuation revision: a real committed row with the
+// original definition, numbered 3, open-ended from boundedTo.
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{continuationRevisionId}}
+Accept: application/json
+
+###
+
+// Create a second draft, then apply it from server now until applyUntil in a
+// single write — no need to know the server's clock.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "changeReason": "temporary tightening",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 125.0,
+        "level": 130.0,
+        "upper": 135.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
 }
 
 > {%
@@ -274,15 +353,73 @@ If-Match: "{{ruleToken}}"
 
 ###
 
-// Edit a future scheduled revision: optional definition replacement and/or a
-// new effectiveFrom boundary. Begun and origin revisions reject edits.
-PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{revisionId}}
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+
+> {%
+    client.global.set("applyDraftId", response.body.drafts[0].id);
+%}
+
+###
+
+// Stale-token demonstration: keep a copy of the current token, perform a
+// successful write, then replay the old token — expect 412
+// monitoring_rule.concurrent_change with the timeline untouched.
+> {%
+    client.global.set("staleToken", client.global.get("ruleToken"));
+%}
+
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+
+{
+  "effectiveTo": "{{applyUntil}}"
+}
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}
+
+###
+
+// This replay uses the stale token captured before the apply: expect 412.
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{staleToken}}"
+
+{
+  "changeReason": "stale write",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 135.0,
+        "level": 140.0,
+        "upper": 145.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+###
+
+// After the bounded apply the timeline holds [origin -> now], [now ->
+// applyUntil] and a generated continuation from applyUntil carrying whichever
+// definition applied at applyUntil. Send the same apply body with no
+// effectiveTo (or omit the body) for the open-ended apply instead.
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
 Content-Type: application/json
 If-Match: "{{ruleToken}}"
 
 {
   "changeReason": "fine tune",
-  "effectiveFrom": "2026-10-10T00:00:00Z"
+  "effectiveFrom": "2030-02-11T00:00:00Z"
 }
 
 > {%
@@ -291,11 +428,18 @@ If-Match: "{{ruleToken}}"
 
 ###
 
+// A revision amendment needs at least a definition or a new effectiveFrom;
+// changeReason alone returns 400 revision.no_change_requested. An invalid
+// combined amendment (for example a backdated start) changes nothing.
 // Discard a draft, or remove a future revision (the predecessor reopens).
 DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}
 If-Match: "{{ruleToken}}"
 
 ###
 
-DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{revisionId}}
+DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
 If-Match: "{{ruleToken}}"
+
+> {%
+    client.global.set("ruleToken", response.body.concurrencyToken);
+%}

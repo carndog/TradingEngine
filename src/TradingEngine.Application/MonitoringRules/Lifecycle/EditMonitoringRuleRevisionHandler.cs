@@ -1,6 +1,5 @@
 using NodaTime;
 using TradingEngine.Application.Ports;
-using TradingEngine.Domain.MonitoringRules;
 using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Application.MonitoringRules.Lifecycle;
@@ -38,29 +37,12 @@ public sealed class EditMonitoringRuleRevisionHandler
             command.ExpectedConcurrencyToken,
             now,
             false,
-            (rule, captured) => ApplyEdits(rule, command, captured, from),
-            cancellationToken);
-    }
-
-    private static Result ApplyEdits(
-        MonitoringRule rule,
-        EditMonitoringRuleRevision command,
-        Instant captured,
-        Instant? effectiveFrom)
-    {
-        if (command.Definition is not null)
-        {
-            Result edited = rule.EditScheduledRevision(
+            (rule, captured) => rule.AmendScheduledRevision(
                 command.RevisionId,
                 command.Definition,
                 command.ChangeReason,
-                captured);
-            if (edited.IsFailure)
-            {
-                return edited;
-            }
-        }
-
-        return effectiveFrom is not null ? rule.Reschedule(command.RevisionId, effectiveFrom.Value, captured) : Result.Success();
+                from,
+                captured),
+            cancellationToken);
     }
 }

@@ -434,6 +434,107 @@ public sealed class MonitoringRuleTests
         });
     }
 
+    [Test]
+    public void CreateDraft_WithChangeReasonLongerThanLimit_ReturnsChangeReasonTooLongWithoutDraft()
+    {
+        MonitoringRule rule = CreateRule();
+        string reason = new('r', MonitoringRule.ChangeReasonMaxLength + 1);
+
+        Result<Revision<ChartAnalysisDefinition>> result = rule.CreateDraft(
+            SecondRevisionId,
+            CreateDefinition(110m),
+            October5,
+            Author,
+            reason,
+            null);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.ChangeReasonTooLong));
+            Assert.That(rule.Drafts, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void CreateDraft_WithChangeReasonAtLimit_Succeeds()
+    {
+        MonitoringRule rule = CreateRule();
+        string reason = new('r', MonitoringRule.ChangeReasonMaxLength);
+
+        Result<Revision<ChartAnalysisDefinition>> result = rule.CreateDraft(
+            SecondRevisionId,
+            CreateDefinition(110m),
+            October5,
+            Author,
+            reason,
+            null);
+
+        Assert.That(result.IsSuccess, Is.True);
+    }
+
+    [Test]
+    public void EditDraft_WithChangeReasonLongerThanLimit_LeavesDraftUnchanged()
+    {
+        MonitoringRule rule = CreateRule();
+        rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, "original", null);
+
+        Result result = rule.EditDraft(
+            SecondRevisionId,
+            CreateDefinition(120m),
+            new string('r', MonitoringRule.ChangeReasonMaxLength + 1),
+            null);
+
+        Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.ChangeReasonTooLong));
+        Revision<ChartAnalysisDefinition> draft = rule.Drafts[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(draft.ChangeReason, Is.EqualTo("original"));
+            Assert.That(draft.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+        });
+    }
+
+    [Test]
+    public void AmendScheduledRevision_WithChangeReasonLongerThanLimit_LeavesRevisionUnchanged()
+    {
+        MonitoringRule rule = CreateRuleWithScheduledRevision();
+
+        Result result = rule.AmendScheduledRevision(
+            SecondRevisionId,
+            CreateDefinition(120m),
+            new string('r', MonitoringRule.ChangeReasonMaxLength + 1),
+            October10,
+            October5);
+
+        Assert.That(result.Error, Is.EqualTo(MonitoringRuleErrors.ChangeReasonTooLong));
+        Revision<ChartAnalysisDefinition> scheduled = rule.FindRevision(SecondRevisionId)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(scheduled.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+            Assert.That(scheduled.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October6At10));
+        });
+    }
+
+    [Test]
+    public void ApplyNow_WithEnd_CommitsTemporaryChangeAndContinuesCurrentDefinition()
+    {
+        MonitoringRule rule = CreateRule();
+        rule.CreateDraft(SecondRevisionId, CreateDefinition(110m), October5, Author, "temporary", null);
+
+        Result result = rule.ApplyNow(SecondRevisionId, October10, ContinuationId, October5);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(rule.Revisions, Has.Count.EqualTo(3));
+            Assert.That(rule.EffectiveAt(October5)!.Id, Is.EqualTo(SecondRevisionId));
+            Assert.That(rule.EffectiveAt(October6At10)!.Definition.SupportZones[0].Level, Is.EqualTo(110m));
+            Assert.That(rule.EffectiveAt(October10)!.Id, Is.EqualTo(ContinuationId));
+            Assert.That(rule.EffectiveAt(October10)!.Definition.SupportZones[0].Level, Is.EqualTo(100m));
+            Assert.That(rule.Revisions[2].EffectivePeriod!.EffectiveTo, Is.Null);
+        });
+    }
+
     private static MonitoringRule CreateRule()
     {
         return MonitoringRule.Create(

@@ -100,6 +100,7 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
     configureEntraAuth
       ? {
           OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID: easyAuthIdentity.?properties.clientId ?? ''
+          Authentication__EasyAuth__TrustPlatformHeaders: 'true'
         }
       : {},
     applicationInsightsConnectionString != ''

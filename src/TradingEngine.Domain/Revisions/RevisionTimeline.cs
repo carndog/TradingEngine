@@ -42,7 +42,7 @@ public sealed class RevisionTimeline<TDefinition>
 
         Result committed = timeline.ApplyNow(
             initial.Value.Id,
-            Guid.CreateVersion7(),
+            Guid.Empty,
             createdAt);
         if (committed.IsFailure)
         {
@@ -277,6 +277,15 @@ public sealed class RevisionTimeline<TDefinition>
         return Insert(draftId, now, null, continuationId, now);
     }
 
+    public Result ApplyNow(
+        Guid draftId,
+        Instant? effectiveTo,
+        Guid continuationId,
+        Instant now)
+    {
+        return Insert(draftId, now, effectiveTo, continuationId, now);
+    }
+
     public Result Schedule(
         Guid draftId,
         Instant effectiveFrom,
@@ -295,56 +304,106 @@ public sealed class RevisionTimeline<TDefinition>
     {
         ArgumentNullException.ThrowIfNull(definition);
 
-        Result<Revision<TDefinition>> revision = FindScheduledRevision(revisionId, now);
-        if (revision.IsFailure)
-        {
-            return revision.Error;
-        }
-
-        revision.Value.Replace(definition, changeReason);
-
-        return Result.Success();
+        return AmendScheduledRevision(revisionId, definition, changeReason, null, now);
     }
 
     public Result Reschedule(Guid revisionId, Instant effectiveFrom, Instant now)
     {
+        return AmendScheduledRevision(revisionId, null, null, effectiveFrom, now);
+    }
+
+    public Result AmendScheduledRevision(
+        Guid revisionId,
+        TDefinition? definition,
+        string? changeReason,
+        Instant? effectiveFrom,
+        Instant now)
+    {
+        if (definition is null && effectiveFrom is null)
+        {
+            return RevisionErrors.NoChangeRequested;
+        }
+
         Result<Revision<TDefinition>> found = FindScheduledRevision(revisionId, now);
         if (found.IsFailure)
         {
             return found.Error;
         }
 
+        Revision<TDefinition> revision = found.Value;
+        if (effectiveFrom is not null)
+        {
+            Result reschedule = ValidateReschedule(revision, effectiveFrom.Value, now);
+            if (reschedule.IsFailure)
+            {
+                return reschedule;
+            }
+        }
+
+        if (definition is not null)
+        {
+            revision.Replace(definition, changeReason);
+        }
+        else if (changeReason is not null)
+        {
+            revision.Replace(revision.Definition, changeReason);
+        }
+
+        if (effectiveFrom is not null)
+        {
+            ApplyReschedule(revision, effectiveFrom.Value);
+        }
+
+        return Result.Success();
+    }
+
+    private Result ValidateReschedule(
+        Revision<TDefinition> revision,
+        Instant effectiveFrom,
+        Instant now)
+    {
         if (effectiveFrom < now)
         {
             return RevisionErrors.Backdated;
         }
 
-        Revision<TDefinition> revision = found.Value;
         if (IsOrigin(revision))
         {
             return RevisionErrors.CoverageOriginProtected;
         }
-        EffectivePeriod current = revision.EffectivePeriod!;
-        Result<EffectivePeriod> period = EffectivePeriod.Create(effectiveFrom, current.EffectiveTo);
+
+        Result<EffectivePeriod> period = EffectivePeriod.Create(
+            effectiveFrom,
+            revision.EffectivePeriod!.EffectiveTo);
         if (period.IsFailure)
         {
             return period.Error;
         }
 
         Revision<TDefinition>? predecessor = AdjacentPredecessor(revision);
-        Result<EffectivePeriod>? predecessorPeriod = predecessor is null
-            ? null
-            : EffectivePeriod.Create(predecessor.EffectivePeriod!.EffectiveFrom, effectiveFrom);
-        if (predecessorPeriod is { IsFailure: true })
+        if (predecessor is null)
         {
-            return predecessorPeriod.Error;
+            return Result.Success();
         }
 
-        predecessor?.ChangePeriod(predecessorPeriod!.Value);
-        revision.ChangePeriod(period.Value);
-        Reorder();
+        return EffectivePeriod.Create(predecessor.EffectivePeriod!.EffectiveFrom, effectiveFrom)
+            .ToResult();
+    }
 
-        return Result.Success();
+    private void ApplyReschedule(Revision<TDefinition> revision, Instant effectiveFrom)
+    {
+        EffectivePeriod period = EffectivePeriod.Create(
+            effectiveFrom,
+            revision.EffectivePeriod!.EffectiveTo).Value;
+        Revision<TDefinition>? predecessor = AdjacentPredecessor(revision);
+        if (predecessor is not null)
+        {
+            predecessor.ChangePeriod(
+                EffectivePeriod.Create(predecessor.EffectivePeriod!.EffectiveFrom, effectiveFrom).Value);
+        }
+
+        revision.ChangePeriod(period);
+        Reorder();
     }
 
     public Result RemoveScheduledRevision(Guid revisionId, Instant now)

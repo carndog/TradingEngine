@@ -25,4 +25,15 @@ internal static class ApiProblemDetails
                 ["code"] = error.Code
             });
     }
+
+    internal static ProblemHttpResult Unauthorized(string code, string detail)
+    {
+        return TypedResults.Problem(
+            statusCode: StatusCodes.Status401Unauthorized,
+            detail: detail,
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = code
+            });
+    }
 }

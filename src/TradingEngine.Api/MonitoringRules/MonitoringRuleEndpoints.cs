@@ -1,5 +1,6 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using NodaTime;
-using NodaTime.Text;
 using TradingEngine.Application.MonitoringRules;
 using TradingEngine.Application.MonitoringRules.Drafts;
 using TradingEngine.Application.MonitoringRules.Lifecycle;
@@ -90,7 +91,7 @@ internal static class MonitoringRuleEndpoints
         HttpContext context,
         CancellationToken cancellationToken)
     {
-        (Instant? instant, Error? parseError) = ParseOptionalInstant(at);
+        (Instant? instant, Error? parseError) = RequestInstants.Optional(at);
         if (parseError is not null)
         {
             return ApiProblemDetails.Problem(parseError);
@@ -153,6 +154,12 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(definition.Error);
         }
 
+        (RevisionProposal? proposal, Error? proposalError) = ToProposal(request.ProposedPeriod);
+        if (proposalError is not null)
+        {
+            return ApiProblemDetails.Problem(proposalError);
+        }
+
         (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
         if (tokenError is not null)
         {
@@ -164,7 +171,7 @@ internal static class MonitoringRuleEndpoints
                 instrumentId,
                 definition.Value,
                 request.ChangeReason,
-                ToProposal(request.ProposedPeriod),
+                proposal,
                 token,
                 RequestActor.Resolve(context)),
             cancellationToken);
@@ -196,6 +203,12 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(definition.Error);
         }
 
+        (RevisionProposal? proposal, Error? proposalError) = ToProposal(request.ProposedPeriod);
+        if (proposalError is not null)
+        {
+            return ApiProblemDetails.Problem(proposalError);
+        }
+
         (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
         if (tokenError is not null)
         {
@@ -208,7 +221,7 @@ internal static class MonitoringRuleEndpoints
                 draftId,
                 definition.Value,
                 request.ChangeReason,
-                ToProposal(request.ProposedPeriod),
+                proposal,
                 token),
             cancellationToken);
 
@@ -238,10 +251,17 @@ internal static class MonitoringRuleEndpoints
     private static async Task<IResult> ApplyDraftAsync(
         Guid instrumentId,
         Guid draftId,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ApplyMonitoringRuleRequest? request,
         ApplyMonitoringRuleDraftHandler handler,
         HttpContext context,
         CancellationToken cancellationToken)
     {
+        (Instant? effectiveTo, Error? toError) = RequestInstants.Optional(request?.EffectiveTo);
+        if (toError is not null)
+        {
+            return ApiProblemDetails.Problem(toError);
+        }
+
         (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
         if (tokenError is not null)
         {
@@ -249,7 +269,7 @@ internal static class MonitoringRuleEndpoints
         }
 
         Result<MonitoringRuleSnapshot> snapshot = await handler.HandleAsync(
-            new ApplyMonitoringRuleDraft(instrumentId, draftId, token),
+            new ApplyMonitoringRuleDraft(instrumentId, draftId, effectiveTo, token),
             cancellationToken);
 
         return CommitResponse(context, snapshot);
@@ -268,9 +288,16 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(MonitoringRuleErrors.RequestRequired);
         }
 
-        if (request.EffectiveFrom is null)
+        Result<Instant> effectiveFrom = RequestInstants.Required(request.EffectiveFrom);
+        if (effectiveFrom.IsFailure)
         {
-            return ApiProblemDetails.Problem(MonitoringRuleErrors.InstantInvalid);
+            return ApiProblemDetails.Problem(effectiveFrom.Error);
+        }
+
+        (Instant? effectiveTo, Error? toError) = RequestInstants.Optional(request.EffectiveTo);
+        if (toError is not null)
+        {
+            return ApiProblemDetails.Problem(toError);
         }
 
         (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
@@ -283,10 +310,8 @@ internal static class MonitoringRuleEndpoints
             new ScheduleMonitoringRuleDraft(
                 instrumentId,
                 draftId,
-                Instant.FromDateTimeOffset(request.EffectiveFrom.Value),
-                request.EffectiveTo is null
-                    ? null
-                    : Instant.FromDateTimeOffset(request.EffectiveTo.Value),
+                effectiveFrom.Value,
+                effectiveTo,
                 token),
             cancellationToken);
 
@@ -318,6 +343,12 @@ internal static class MonitoringRuleEndpoints
             definition = mapped.Value;
         }
 
+        (Instant? effectiveFrom, Error? fromError) = RequestInstants.Optional(request.EffectiveFrom);
+        if (fromError is not null)
+        {
+            return ApiProblemDetails.Problem(fromError);
+        }
+
         (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
         if (tokenError is not null)
         {
@@ -330,9 +361,7 @@ internal static class MonitoringRuleEndpoints
                 revisionId,
                 definition,
                 request.ChangeReason,
-                request.EffectiveFrom is null
-                    ? null
-                    : Instant.FromDateTimeOffset(request.EffectiveFrom.Value),
+                effectiveFrom,
                 token),
             cancellationToken);
 
@@ -415,19 +444,6 @@ internal static class MonitoringRuleEndpoints
         }
     }
 
-    private static (Instant? Instant, Error? Error) ParseOptionalInstant(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return (null, null);
-        }
-
-        ParseResult<Instant> parsed = InstantPattern.ExtendedIso.Parse(value);
-        return parsed.Success
-            ? (parsed.Value, null)
-            : (null, MonitoringRuleErrors.InstantInvalid);
-    }
-
     private static Result<ChartAnalysisDefinition> ToDefinition(
         MonitoringRuleDefinitionDto dto)
     {
@@ -437,20 +453,26 @@ internal static class MonitoringRuleEndpoints
             dto.ResistanceZones);
     }
 
-    private static RevisionProposal? ToProposal(RevisionPeriodDto? period)
+    private static (RevisionProposal? Proposal, Error? Error) ToProposal(RevisionPeriodDto? period)
     {
         if (period is null)
         {
-            return null;
+            return (null, null);
         }
 
-        return new RevisionProposal(
-            period.EffectiveFrom is null
-                ? null
-                : Instant.FromDateTimeOffset(period.EffectiveFrom.Value),
-            period.EffectiveTo is null
-                ? null
-                : Instant.FromDateTimeOffset(period.EffectiveTo.Value));
+        (Instant? from, Error? fromError) = RequestInstants.Optional(period.EffectiveFrom);
+        if (fromError is not null)
+        {
+            return (null, fromError);
+        }
+
+        (Instant? to, Error? toError) = RequestInstants.Optional(period.EffectiveTo);
+        if (toError is not null)
+        {
+            return (null, toError);
+        }
+
+        return (new RevisionProposal(from, to), null);
     }
 
     private static MonitoringRuleTimelineResponse ToTimelineResponse(

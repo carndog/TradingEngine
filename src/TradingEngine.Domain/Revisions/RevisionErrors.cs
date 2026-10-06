@@ -48,6 +48,10 @@ public static class RevisionErrors
         "revision.uncovered_start",
         "The committed range must start at or after the timeline's coverage origin.");
 
+    public static readonly Error NoChangeRequested = Error.Validation(
+        "revision.no_change_requested",
+        "A revision amendment must supply a replacement definition, a new effective start, or both.");
+
     public static readonly Error CoverageOriginProtected = Error.Conflict(
         "revision.coverage_origin_protected",
         "The revision holding the coverage origin cannot be rescheduled or removed.");

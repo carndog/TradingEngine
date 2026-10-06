@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NodaTime;
+using TradingEngine.Api.Authentication;
 using TradingEngine.Api.Diagnostics;
 using TradingEngine.Api.MonitoringRules;
 using TradingEngine.Api.WatchedInstruments;
@@ -23,6 +24,8 @@ builder.Services.AddHealthChecks()
         failureStatus: null,
         tags: ["database"]));
 builder.Services.AddSingleton<ApplicationVersionProvider>();
+builder.Services.Configure<EasyAuthOptions>(
+    builder.Configuration.GetSection(EasyAuthOptions.SectionName));
 builder.Services.AddApiTelemetry(builder.Configuration, builder.Environment.EnvironmentName);
 builder.Services.AddSingleton<IClock>(SystemClock.Instance);
 builder.Services.AddScoped<RegisterWatchedInstrumentHandler>(provider =>
@@ -104,6 +107,10 @@ app.MapGet(
     .AllowAnonymous();
 
 app.MapGet("/auth-check", () => TypedResults.NoContent());
+
+app.UseWhen(
+    context => context.Request.Path.StartsWithSegments("/api"),
+    branch => branch.UseMiddleware<EasyAuthPrincipalMiddleware>());
 
 app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();

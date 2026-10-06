@@ -32,12 +32,23 @@ Every mutating endpoint requires the current concurrency token in an `If-Match` 
 | `POST .../monitoring-rule/drafts` | Create a draft | `200` timeline response |
 | `PUT .../monitoring-rule/drafts/{draftId}` | Replace a draft's definition, reason and proposal | `200` timeline response |
 | `DELETE .../monitoring-rule/drafts/{draftId}` | Discard a draft | `200` timeline response |
-| `POST .../monitoring-rule/drafts/{draftId}/apply` | Commit a draft open-ended from server now | `200` timeline response |
+| `POST .../monitoring-rule/drafts/{draftId}/apply` | Commit a draft from server now; `effectiveTo` bounds it | `200` timeline response |
 | `POST .../monitoring-rule/drafts/{draftId}/schedule` | Commit a draft over `[effectiveFrom, effectiveTo)` | `200` timeline response |
-| `PUT .../monitoring-rule/revisions/{revisionId}` | Edit a future revision's definition and/or move its start | `200` timeline response |
+| `PUT .../monitoring-rule/revisions/{revisionId}` | Amend a future revision's definition and/or start | `200` timeline response |
 | `DELETE .../monitoring-rule/revisions/{revisionId}` | Remove a future revision; predecessor reopens | `200` timeline response |
 
 All paths are relative to `/api/watched-instruments/{instrumentId}`.
+
+## Timestamp handling
+
+Every timestamp field in a request or query is an ISO-8601 string (for example `"2026-10-06T10:00:00.5Z"` or `"2030-01-01T01:00:00+01:00"`). The API parses the raw string directly into a nanosecond-precision `Instant`; nothing is coerced through `DateTimeOffset`, so sub-millisecond precision is never silently dropped during binding.
+
+Two different precision rules apply, deliberately:
+
+- **Persisted instants** — draft `proposedPeriod` dates, commit `effectiveFrom`/`effectiveTo` boundaries and revision `effectiveFrom` amendments become stored `datetime2(7)` values. They must lie within the `datetime2(7)` range and be exact 100 ns multiples. Any finer value — for example `"2030-01-01T00:00:00.000000001Z"` — is rejected with `400` `monitoring_rule.instant_not_persistable`. Values are never truncated or rounded to make them fit.
+- **Comparison instants** — the `at` query parameter is only compared against stored boundaries, so it keeps full nanosecond precision and `at=...999999999Z` resolves the exact predecessor of a boundary at the next tick.
+
+Malformed or missing required timestamps return `400` `monitoring_rule.instant_invalid`. Rejected requests leave definitions, periods, drafts and the concurrency token unchanged.
 
 ### Request bodies
 
@@ -65,13 +76,15 @@ All paths are relative to `/api/watched-instruments/{instrumentId}`.
 }
 ```
 
-`proposedPeriod` may be null or carry either bound; it records intent and is never enforced automatically. `definition` is required and is validated by the same chart-analysis rules used at registration.
+`proposedPeriod` may be null or carry either bound; it records intent and is never enforced automatically. `definition` is required and is validated by the same chart-analysis rules used at registration. `changeReason` is limited to 512 characters (`monitoring_rule.change_reason_too_long`).
 
 `POST /drafts/{draftId}/schedule` accepts `{ "effectiveFrom": "2026-10-06T10:00:00Z", "effectiveTo": null }`. `effectiveFrom` is required and must be at or after server now; `effectiveTo` null commits open-ended and replaces all covered future revisions.
 
-`PUT /revisions/{revisionId}` accepts `{ "changeReason": "…", "definition": {…}, "effectiveFrom": "…" }`; both fields are optional — `definition` replaces the scheduled definition, `effectiveFrom` reschedules the start boundary.
+`POST /drafts/{draftId}/apply` accepts an optional body `{ "effectiveTo": "2026-10-08T00:00:00Z" }`. Without a body (or with a null `effectiveTo`) it commits the draft open-ended starting exactly at the server's captured `now`. With `effectiveTo` it commits a temporary change from now until that instant and automatically preserves the definition that would have applied at `effectiveTo` — the current definition when the tail is open-ended, or the successor that owns `effectiveTo` when the bound crosses a future revision. The client never needs to know the server's clock or perform a second write.
 
-`POST /drafts/{draftId}/apply`, `DELETE /drafts/{draftId}` and `DELETE /revisions/{revisionId}` take no body.
+`PUT /revisions/{revisionId}` accepts `{ "changeReason": "…", "definition": {…}, "effectiveFrom": "…" }`; `definition` replaces the scheduled definition and `effectiveFrom` reschedules the start boundary. At least one of `definition` or `effectiveFrom` must be supplied: an empty body — and a `changeReason`-only body, which by itself requests no change — returns `400` `revision.no_change_requested`. A combined definition edit and reschedule is validated atomically: if the new start is invalid (backdated, origin-protected or breaking the predecessor's period) nothing changes — neither the definition nor the boundary — and the token is not consumed.
+
+`DELETE /drafts/{draftId}` and `DELETE /revisions/{revisionId}` take no body.
 
 ### Response shapes
 
@@ -97,13 +110,18 @@ Failures are RFC 7807 Problem Details with a stable `code` extension.
 | --- | --- | --- |
 | 400 | `monitoring_rule.request_required` | Missing body on an endpoint that needs one |
 | 400 | `monitoring_rule.definition_required` | Draft request without a definition |
+| 400 | `monitoring_rule.change_reason_too_long` | `changeReason` over the 512-character storage limit |
 | 400 | `monitoring_rule.instant_invalid` | Unparseable `at` or missing `effectiveFrom` |
-| 400 | `monitoring_rule.instant_not_persistable` | Instant finer than 100 ns or outside the persisted range |
+| 400 | `monitoring_rule.instant_not_persistable` | Persisted instant finer than 100 ns or outside the stored range |
 | 400 | `monitoring_rule.concurrency_token_invalid` | Malformed `If-Match` value |
 | 400 | `chart_analysis.*` | Definition validation failures (zone boundaries, condition types, duplicates) |
-| 400 | `revision.backdated` | Commit start earlier than server now |
+| 400 | `revision.backdated` | Commit or reschedule start earlier than server now |
 | 400 | `revision.invalid_period` | Zero-length or inverted requested period |
 | 400 | `revision.uncovered_start` | Insert start before the coverage origin |
+| 400 | `revision.no_change_requested` | Revision amendment supplies neither a definition nor a new start |
+| 401 | `authentication.principal_required` | Trusted-headers mode: `X-MS-CLIENT-PRINCIPAL` header missing |
+| 401 | `authentication.principal_malformed` | Trusted-headers mode: principal header cannot be decoded |
+| 401 | `authentication.principal_identifier_missing` | Trusted-headers mode: no object or subject identifier claim |
 | 404 | `monitoring_rule.not_found` | No rule for the instrument |
 | 404 | `monitoring_rule.no_applicable_revision` | Nothing committed at `at` (before the origin) |
 | 404 | `revision.not_found` | Unknown draft or revision id |
@@ -113,4 +131,42 @@ Failures are RFC 7807 Problem Details with a stable `code` extension.
 | 412 | `monitoring_rule.concurrent_change` | Stale `If-Match` token |
 | 428 | `monitoring_rule.concurrency_token_required` | Missing `If-Match` on a write |
 
-`createdBy` on committed revisions is resolved from the caller identity (`preferred_username`, `oid` or `sub` claim). Locally, without Easy Auth, it records `unverified-local-caller`.
+## Actor identity
+
+`createdBy` on drafts and committed revisions is resolved from the caller identity by `RequestActor`:
+
+- Deployed under Easy Auth, the platform injects a base64 `X-MS-CLIENT-PRINCIPAL` JSON payload. `EasyAuthPrincipalMiddleware` decodes it on `/api` requests — but only when `Authentication:EasyAuth:TrustPlatformHeaders` is `true`, which Bicep sets only alongside `configureEntraAuth`. A principal without a stable identifier, or a missing/malformed header while trust is enabled, is rejected with `401` before the endpoint runs.
+- The recorded actor is the first present of the `http://schemas.microsoft.com/identity/claims/objectidentifier` claim, `oid`, `nameidentifier`, then `sub` — an object or subject identifier, not a display name. `preferred_username` is carried on the principal but is never used as the actor.
+- Locally the platform header is not trusted, so a caller-supplied `X-MS-CLIENT-PRINCIPAL` is ignored and the actor falls back to `unverified-local-caller`.
+
+Caller-supplied identity fields are never read from the request body. Real Azure identity verification of this mapping is a deployment smoke test; see [easy-auth-entra-id.md](easy-auth-entra-id.md).
+
+## Worked timeline examples
+
+All dates are synthetic; substitute fresh future dates when running these. Revisions are labelled `rev-base` (the committed tail at 100.0), `rev-b` etc.; continuation ids are generated by the API.
+
+### Bounded insert inside one period
+
+Before: `[rev-base: 100, origin → open]`
+
+`POST /drafts` then `POST /drafts/{id}/schedule` with `{ "effectiveFrom": "<Tue>", "effectiveTo": "<Thu>" }` for a 120 definition.
+
+After: `[rev-base: origin → Tue]` `[rev-b: Tue → Thu]` `[rev-cont: Thu → open]` where `rev-cont` is a new committed revision carrying the base definition — created, numbered 3 and persisted like any other revision, not derived at read time.
+
+### Bounded insert spanning a future boundary
+
+Before: `[rev-base: origin → open]`, plus scheduled `[rev-green: Wed → open]` at 120.
+
+Schedule `rev-red` at 130 over `[Tue, Thu)`.
+
+After: `[rev-base: origin → Tue]` `[rev-red: Tue → Thu]` `[rev-green: Thu → open]` — `rev-green` keeps its identity and definition; only its start moves to the insert's end.
+
+### Open-ended insert removing future revisions
+
+Before: `[rev-base: origin → open]`, plus scheduled `[rev-green: Wed → open]` at 120.
+
+Schedule `rev-red` at 130 over `[Tue, null)`.
+
+After: `[rev-base: origin → Tue]` `[rev-red: Tue → open]` — `rev-green` is deleted from the committed chain and `GET /revisions/{rev-green}` returns `404`.
+
+A runnable version of the bounded-continuation walkthrough — including draft editing and a stale-token retry — is scripted in `src/TradingEngine.Api/TradingEngine.Api.http`.

@@ -44,6 +44,10 @@ public static class MonitoringRuleErrors
         "monitoring_rule.definition_required",
         "A chart-analysis definition is required.");
 
+    public static readonly Error ChangeReasonTooLong = Error.Validation(
+        "monitoring_rule.change_reason_too_long",
+        "A change reason cannot exceed 512 characters.");
+
     public static readonly Error ConcurrencyTokenRequired = Error.PreconditionRequired(
         "monitoring_rule.concurrency_token_required",
         "A monitoring-rule change requires the current concurrency token via the If-Match header.");

@@ -1,5 +1,5 @@
 namespace TradingEngine.Contracts.MonitoringRules;
 
 public sealed record ScheduleMonitoringRuleRequest(
-    DateTimeOffset? EffectiveFrom,
-    DateTimeOffset? EffectiveTo);
+    string? EffectiveFrom,
+    string? EffectiveTo);

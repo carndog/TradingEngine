@@ -189,8 +189,8 @@ public sealed class MonitoringRuleStagingTests
             RevisionId(instrumentId, 4),
             CreateDefinition(130),
             October1,
-            Author,
-            new string('x', 513),
+            new string('x', 200),
+            "rolled back",
             null);
 
         await Assert.ThrowsAsync<DbUpdateException>(() => SaveAsync(snapshot));

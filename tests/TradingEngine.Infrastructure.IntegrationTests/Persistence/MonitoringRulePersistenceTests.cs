@@ -23,6 +23,7 @@ public sealed class MonitoringRulePersistenceTests
     private static readonly Instant October6 = Instant.FromUtc(2026, 10, 6, 0, 0);
     private static readonly Instant October10 = Instant.FromUtc(2026, 10, 10, 0, 0);
     private static readonly Instant October12 = Instant.FromUtc(2026, 10, 12, 0, 0);
+    private static readonly Instant October15 = Instant.FromUtc(2026, 10, 15, 0, 0);
     private const string Author = "synthetic-user";
 
     private MsSqlContainer _container = null!;
@@ -390,6 +391,197 @@ public sealed class MonitoringRulePersistenceTests
     }
 
     [Test]
+    public async Task SaveAsync_BoundedInsertInsideSinglePeriod_PersistsGeneratedContinuationRow()
+    {
+        Guid instrumentId = await AddInstrumentAsync("MR-CONT-1");
+        MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
+        Guid originalRevisionId = snapshot.Rule.Revisions[0].Id;
+        snapshot.Rule.CreateDraft(RevisionId(101), CreateDefinition(120m), October1, Author, "temporary", null);
+        Result scheduled = snapshot.Rule.Schedule(RevisionId(101), October5, October10, RevisionId(102), October1);
+        Assert.That(scheduled.IsSuccess, Is.True);
+
+        Result saved = await SaveAsync(snapshot);
+
+        Assert.That(saved.IsSuccess, Is.True);
+        MonitoringRuleSnapshot reloaded = await LoadAsync(instrumentId);
+        Revision<ChartAnalysisDefinition> continuation = reloaded.Rule.FindRevision(RevisionId(102))!;
+        int continuationRows = await CountOpenEndedRevisionRowsAsync(RevisionId(102), October10);
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                reloaded.Rule.Revisions.Select(revision => revision.Id),
+                Is.EqualTo(new[] { originalRevisionId, RevisionId(101), RevisionId(102) }));
+            Assert.That(reloaded.Rule.Revisions[0].EffectivePeriod!.EffectiveTo, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveTo, Is.EqualTo(October10));
+            Assert.That(continuation.RevisionNumber, Is.EqualTo(3));
+            Assert.That(continuation.EffectivePeriod!.EffectiveFrom, Is.EqualTo(October10));
+            Assert.That(continuation.EffectivePeriod!.IsOpenEnded, Is.True);
+            Assert.That(continuation.Definition.SupportZones[0].Level, Is.EqualTo(100m));
+            Assert.That(continuation.CreatedAt, Is.EqualTo(October1));
+            Assert.That(continuation.CreatedBy, Is.EqualTo(Author));
+            Assert.That(continuation.ChangeReason, Is.Null);
+            Assert.That(continuationRows, Is.EqualTo(1));
+            Assert.That(reloaded.Rule.EffectiveAt(October10 - Duration.FromTicks(1))!.Id, Is.EqualTo(RevisionId(101)));
+            Assert.That(reloaded.Rule.EffectiveAt(October10)!.Id, Is.EqualTo(RevisionId(102)));
+        });
+    }
+
+    [Test]
+    public async Task SaveAsync_BoundedInsertCrossingMultipleFuturePeriods_TrimsRemovesAndMovesSuccessor()
+    {
+        Guid instrumentId = await AddInstrumentAsync("MR-CROSS-1");
+        MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
+        Guid originalRevisionId = seeded.Rule.Revisions[0].Id;
+        seeded.Rule.CreateDraft(RevisionId(111), CreateDefinition(110m), October1, Author, "first future", null);
+        seeded.Rule.Schedule(RevisionId(111), October6, null, RevisionId(118), October1);
+        seeded.Rule.CreateDraft(RevisionId(112), CreateDefinition(120m), October1, Author, "second future", null);
+        seeded.Rule.Schedule(RevisionId(112), October10, null, RevisionId(119), October1);
+        await SaveAsync(seeded);
+
+        MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
+        snapshot.Rule.CreateDraft(RevisionId(113), CreateDefinition(130m), October1, Author, "spanning", null);
+        Result scheduled = snapshot.Rule.Schedule(RevisionId(113), October5, October12, RevisionId(117), October1);
+        Assert.That(scheduled.IsSuccess, Is.True);
+
+        Result saved = await SaveAsync(snapshot);
+
+        Assert.That(saved.IsSuccess, Is.True);
+        MonitoringRuleSnapshot reloaded = await LoadAsync(instrumentId);
+        int removedRows = await CountRevisionRowsAsync(RevisionId(111));
+        int continuationRows = await CountRevisionRowsAsync(RevisionId(117));
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                reloaded.Rule.Revisions.Select(revision => revision.Id),
+                Is.EqualTo(new[] { originalRevisionId, RevisionId(113), RevisionId(112) }));
+            Assert.That(
+                reloaded.Rule.Revisions.Select(revision => revision.RevisionNumber),
+                Is.EqualTo(new int?[] { 1, 2, 3 }));
+            Assert.That(reloaded.Rule.Revisions[0].EffectivePeriod!.EffectiveTo, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveTo, Is.EqualTo(October12));
+            Assert.That(reloaded.Rule.Revisions[2].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October12));
+            Assert.That(reloaded.Rule.Revisions[2].EffectivePeriod!.IsOpenEnded, Is.True);
+            Assert.That(reloaded.Rule.Revisions[2].Definition.SupportZones[0].Level, Is.EqualTo(120m));
+            Assert.That(removedRows, Is.EqualTo(0));
+            Assert.That(continuationRows, Is.EqualTo(0));
+            Assert.That(reloaded.Rule.EffectiveAt(October6)!.Id, Is.EqualTo(RevisionId(113)));
+            Assert.That(reloaded.Rule.EffectiveAt(October12)!.Id, Is.EqualTo(RevisionId(112)));
+        });
+    }
+
+    [Test]
+    public async Task SaveAsync_OpenEndedInsert_DeletesMultipleFutureRevisionRows()
+    {
+        Guid instrumentId = await AddInstrumentAsync("MR-OPEN-1");
+        MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
+        Guid originalRevisionId = seeded.Rule.Revisions[0].Id;
+        seeded.Rule.CreateDraft(RevisionId(121), CreateDefinition(110m), October1, Author, "first future", null);
+        seeded.Rule.Schedule(RevisionId(121), October6, null, RevisionId(128), October1);
+        seeded.Rule.CreateDraft(RevisionId(122), CreateDefinition(120m), October1, Author, "second future", null);
+        seeded.Rule.Schedule(RevisionId(122), October10, null, RevisionId(129), October1);
+        await SaveAsync(seeded);
+
+        MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
+        snapshot.Rule.CreateDraft(RevisionId(123), CreateDefinition(130m), October1, Author, "replacement", null);
+        Result scheduled = snapshot.Rule.Schedule(RevisionId(123), October5, null, RevisionId(127), October1);
+        Assert.That(scheduled.IsSuccess, Is.True);
+
+        Result saved = await SaveAsync(snapshot);
+
+        Assert.That(saved.IsSuccess, Is.True);
+        MonitoringRuleSnapshot reloaded = await LoadAsync(instrumentId);
+        int ruleRows = await CountRuleRevisionRowsAsync(instrumentId);
+        int firstRemovedRows = await CountRevisionRowsAsync(RevisionId(121));
+        int secondRemovedRows = await CountRevisionRowsAsync(RevisionId(122));
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                reloaded.Rule.Revisions.Select(revision => revision.Id),
+                Is.EqualTo(new[] { originalRevisionId, RevisionId(123) }));
+            Assert.That(reloaded.Rule.Revisions[0].EffectivePeriod!.EffectiveTo, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.IsOpenEnded, Is.True);
+            Assert.That(reloaded.Rule.Revisions[1].RevisionNumber, Is.EqualTo(2));
+            Assert.That(ruleRows, Is.EqualTo(2));
+            Assert.That(firstRemovedRows, Is.EqualTo(0));
+            Assert.That(secondRemovedRows, Is.EqualTo(0));
+            Assert.That(reloaded.Rule.EffectiveAt(October15)!.Id, Is.EqualTo(RevisionId(123)));
+        });
+    }
+
+    [Test]
+    public async Task SaveAsync_BoundedApplyNow_PersistsTemporaryChangeAndContinuation()
+    {
+        Guid instrumentId = await AddInstrumentAsync("MR-APPLY-2");
+        MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
+        Guid originalRevisionId = snapshot.Rule.Revisions[0].Id;
+        snapshot.Rule.CreateDraft(RevisionId(131), CreateDefinition(110m), October5, Author, "temporary now", null);
+        Result applied = snapshot.Rule.ApplyNow(RevisionId(131), October10, RevisionId(132), October5);
+        Assert.That(applied.IsSuccess, Is.True);
+
+        Result saved = await SaveAsync(snapshot);
+
+        Assert.That(saved.IsSuccess, Is.True);
+        MonitoringRuleSnapshot reloaded = await LoadAsync(instrumentId);
+        int continuationRows = await CountOpenEndedRevisionRowsAsync(RevisionId(132), October10);
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                reloaded.Rule.Revisions.Select(revision => revision.Id),
+                Is.EqualTo(new[] { originalRevisionId, RevisionId(131), RevisionId(132) }));
+            Assert.That(reloaded.Rule.Revisions[0].EffectivePeriod!.EffectiveTo, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October5));
+            Assert.That(reloaded.Rule.Revisions[1].EffectivePeriod!.EffectiveTo, Is.EqualTo(October10));
+            Assert.That(reloaded.Rule.Revisions[2].EffectivePeriod!.EffectiveFrom, Is.EqualTo(October10));
+            Assert.That(reloaded.Rule.Revisions[2].EffectivePeriod!.IsOpenEnded, Is.True);
+            Assert.That(reloaded.Rule.Revisions[2].Definition.SupportZones[0].Level, Is.EqualTo(100m));
+            Assert.That(continuationRows, Is.EqualTo(1));
+            Assert.That(reloaded.Rule.Drafts, Is.Empty);
+            Assert.That(reloaded.Rule.EffectiveAt(October6)!.Id, Is.EqualTo(RevisionId(131)));
+            Assert.That(reloaded.Rule.EffectiveAt(October10)!.Id, Is.EqualTo(RevisionId(132)));
+        });
+    }
+
+    [Test]
+    public async Task SaveAsync_EditRevisionAtExactStart_ReturnsPeriodBegunAndKeepsHistoryResolvable()
+    {
+        Guid instrumentId = await AddInstrumentAsync("MR-IMMUT-1");
+        MonitoringRuleSnapshot seeded = await LoadAsync(instrumentId);
+        Guid originalRevisionId = seeded.Rule.Revisions[0].Id;
+        seeded.Rule.CreateDraft(RevisionId(141), CreateDefinition(110m), October5, Author, "applied", null);
+        seeded.Rule.ApplyNow(RevisionId(141), RevisionId(142), October5);
+        await SaveAsync(seeded);
+
+        MonitoringRuleSnapshot snapshot = await LoadAsync(instrumentId);
+        Result edited = snapshot.Rule.EditScheduledRevision(
+            RevisionId(141),
+            CreateDefinition(125m),
+            "too late",
+            October5);
+        Result rescheduled = snapshot.Rule.Reschedule(RevisionId(141), October6, October5);
+        Result removed = snapshot.Rule.RemoveScheduledRevision(RevisionId(141), October5);
+
+        Result saved = await SaveAsync(snapshot);
+
+        MonitoringRuleSnapshot reloaded = await LoadAsync(instrumentId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(edited.Error, Is.EqualTo(RevisionErrors.PeriodBegun));
+            Assert.That(rescheduled.Error, Is.EqualTo(RevisionErrors.PeriodBegun));
+            Assert.That(removed.Error, Is.EqualTo(RevisionErrors.PeriodBegun));
+            Assert.That(saved.IsSuccess, Is.True);
+            Assert.That(reloaded.Rule.Revisions, Has.Count.EqualTo(2));
+            Assert.That(reloaded.Rule.Revisions[1].Definition.SupportZones[0].Level, Is.EqualTo(110m));
+            Assert.That(reloaded.Rule.Revisions[1].ChangeReason, Is.EqualTo("applied"));
+            Assert.That(reloaded.Rule.EffectiveAt(October5 - Duration.FromTicks(1))!.Id, Is.EqualTo(originalRevisionId));
+            Assert.That(reloaded.Rule.EffectiveAt(October5 - Duration.FromTicks(1))!.Definition.SupportZones[0].Level, Is.EqualTo(100m));
+            Assert.That(reloaded.Rule.EffectiveAt(October5)!.Id, Is.EqualTo(RevisionId(141)));
+        });
+    }
+
+    [Test]
     public async Task SaveAsync_RescheduleFutureRevision_MovesBoundaryAndPredecessorEnd()
     {
         Guid instrumentId = await AddInstrumentAsync("MR-RESCHED-1");
@@ -614,6 +806,37 @@ public sealed class MonitoringRulePersistenceTests
         command.CommandText = sql;
 
         return await command.ExecuteScalarAsync();
+    }
+
+    private async Task<int> CountRevisionRowsAsync(Guid revisionId)
+    {
+        await using TradingEngineDbContext context = CreateContext();
+
+        return await context.Database
+            .SqlQuery<int>(
+                $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions WHERE Id = {revisionId}")
+            .SingleAsync();
+    }
+
+    private async Task<int> CountOpenEndedRevisionRowsAsync(Guid revisionId, Instant effectiveFrom)
+    {
+        await using TradingEngineDbContext context = CreateContext();
+        DateTime from = effectiveFrom.ToDateTimeUtc();
+
+        return await context.Database
+            .SqlQuery<int>(
+                $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions WHERE Id = {revisionId} AND EffectiveFrom = {from} AND EffectiveTo IS NULL")
+            .SingleAsync();
+    }
+
+    private async Task<int> CountRuleRevisionRowsAsync(Guid instrumentId)
+    {
+        await using TradingEngineDbContext context = CreateContext();
+
+        return await context.Database
+            .SqlQuery<int>(
+                $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions r JOIN MonitoringRules m ON r.MonitoringRuleId = m.Id WHERE m.WatchedInstrumentId = {instrumentId}")
+            .SingleAsync();
     }
 
     private static Guid RevisionId(int ordinal)

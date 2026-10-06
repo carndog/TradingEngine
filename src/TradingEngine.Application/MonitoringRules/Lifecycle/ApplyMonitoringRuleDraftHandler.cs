@@ -24,6 +24,13 @@ public sealed class ApplyMonitoringRuleDraftHandler
         ArgumentNullException.ThrowIfNull(command);
         Instant now = _clock.GetCurrentInstant();
 
+        (Instant? to, Error? toError) = MonitoringRuleCommandSupport
+            .RequirePersistable(command.EffectiveTo);
+        if (toError is not null)
+        {
+            return toError;
+        }
+
         return await MonitoringRuleCommandSupport.MutateAsync(
             _store,
             command.InstrumentId,
@@ -32,6 +39,7 @@ public sealed class ApplyMonitoringRuleDraftHandler
             true,
             (rule, captured) => rule.ApplyNow(
                 command.DraftId,
+                to,
                 Guid.NewGuid(),
                 captured),
             cancellationToken);

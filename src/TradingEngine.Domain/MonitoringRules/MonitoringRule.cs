@@ -6,6 +6,8 @@ namespace TradingEngine.Domain.MonitoringRules;
 
 public sealed class MonitoringRule
 {
+    public const int ChangeReasonMaxLength = 512;
+
     private readonly RevisionTimeline<ChartAnalysisDefinition> _timeline;
 
     private MonitoringRule(
@@ -118,6 +120,11 @@ public sealed class MonitoringRule
     {
         ArgumentNullException.ThrowIfNull(definition);
 
+        if (ChangeReasonTooLong(changeReason))
+        {
+            return MonitoringRuleErrors.ChangeReasonTooLong;
+        }
+
         return _timeline.CreateDraft(draftId, definition, createdAt, createdBy, changeReason, proposal);
     }
 
@@ -128,6 +135,11 @@ public sealed class MonitoringRule
         RevisionProposal? proposal)
     {
         ArgumentNullException.ThrowIfNull(definition);
+
+        if (ChangeReasonTooLong(changeReason))
+        {
+            return MonitoringRuleErrors.ChangeReasonTooLong;
+        }
 
         return _timeline.EditDraft(draftId, definition, changeReason, proposal);
     }
@@ -140,6 +152,15 @@ public sealed class MonitoringRule
     public Result ApplyNow(Guid draftId, Guid continuationId, Instant now)
     {
         return _timeline.ApplyNow(draftId, continuationId, now);
+    }
+
+    public Result ApplyNow(
+        Guid draftId,
+        Instant? effectiveTo,
+        Guid continuationId,
+        Instant now)
+    {
+        return _timeline.ApplyNow(draftId, effectiveTo, continuationId, now);
     }
 
     public Result Schedule(
@@ -160,7 +181,7 @@ public sealed class MonitoringRule
     {
         ArgumentNullException.ThrowIfNull(definition);
 
-        return _timeline.EditScheduledRevision(revisionId, definition, changeReason, now);
+        return AmendScheduledRevision(revisionId, definition, changeReason, null, now);
     }
 
     public Result Reschedule(Guid revisionId, Instant effectiveFrom, Instant now)
@@ -168,8 +189,28 @@ public sealed class MonitoringRule
         return _timeline.Reschedule(revisionId, effectiveFrom, now);
     }
 
+    public Result AmendScheduledRevision(
+        Guid revisionId,
+        ChartAnalysisDefinition? definition,
+        string? changeReason,
+        Instant? effectiveFrom,
+        Instant now)
+    {
+        if (ChangeReasonTooLong(changeReason))
+        {
+            return MonitoringRuleErrors.ChangeReasonTooLong;
+        }
+
+        return _timeline.AmendScheduledRevision(revisionId, definition, changeReason, effectiveFrom, now);
+    }
+
     public Result RemoveScheduledRevision(Guid revisionId, Instant now)
     {
         return _timeline.RemoveScheduledRevision(revisionId, now);
+    }
+
+    private static bool ChangeReasonTooLong(string? changeReason)
+    {
+        return changeReason is not null && changeReason.Length > ChangeReasonMaxLength;
     }
 }
