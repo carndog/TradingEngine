@@ -91,11 +91,11 @@ Reference matrix: the criterion-by-criterion review on [issue #45](https://githu
 4. Exactly one applicable committed revision per instant from the origin; contiguous half-open chain with an open-ended tail.
 5. Bounded and open-ended insertion, multi-period overlap, and automatic continuation carrying the pre-operation definition at the end boundary.
 6. Pre-`now` state and identities preserved; backdating, invalid periods and begun-period edits rejected.
-7. Generated continuations get distinct caller-supplied GUIDs, `createdAt` = commit instant and `createdBy` = committing actor; preserved prefixes keep their identity.
+7. Generated continuations get distinct caller-supplied GUIDs, `createdAt` = commit instant and `createdBy` inherited from the original draft's creator — committing a draft preserves its existing creation metadata; preserved prefixes keep their identity.
 8. Effective-order business numbering; begun revisions never renumber; GUIDs are identity, numbers are display.
 9. Applicability/editability derived from periods and the supplied `now`; no stored `Superseded` state or activation job.
 
-**Drafts and lifecycle operations (9)** — all met.
+**Drafts and lifecycle operations (8)** — all met.
 
 10. Multiple independent drafts: create/retrieve/edit/delete, including copying an existing definition into a draft (definition replacement on `PUT /drafts/{id}`).
 11. Optional proposal dates kept separate from committed periods; overlapping proposals allowed; drafts never auto-apply.

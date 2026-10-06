@@ -170,13 +170,13 @@ Authorization: Bearer {{bearerToken}}
 }
 
 > {%
-    client.global.set("createdInstrumentId", response.body.id);
+    client.global.set("deployedInstrumentId", response.body.id);
 %}
 
 ###
 
 // Deployed API: authenticated owner read, expect 200; unknown ids return 404.
-GET {{deployedHost}}/api/watched-instruments/{{createdInstrumentId}}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}
 Accept: application/json
 Authorization: Bearer {{bearerToken}}
 
@@ -184,7 +184,10 @@ Authorization: Bearer {{bearerToken}}
 
 // Monitoring-rule revision walkthrough (local API).
 //
-// Runs sequentially against the freshly created instrument above. Move the
+// Runs sequentially against the local registration request above — the one
+// that captures createdInstrumentId on {{host}}. Do not run the deployed
+// registration example before this walkthrough: it captures a different id
+// (deployedInstrumentId) and the walkthrough paths all stay on {{host}}. Move the
 // date variables forward before running so every boundary stays ahead of
 // server now; the ordering must hold:
 //   now < applyUntil < boundedFrom < rescheduleFrom < boundedTo < openFrom.
@@ -351,13 +354,15 @@ If-Match: "{{ruleToken}}"
     });
     client.global.set("ruleToken", response.body.concurrencyToken);
     client.global.set("committedRevisionId", response.body.revisions[1].id);
+    client.global.set("committedEffectiveTo", response.body.revisions[1].effectiveTo);
     client.global.set("continuationRevisionId", response.body.revisions[2].id);
 %}
 
 ###
 
 // Read the generated continuation: a real committed row numbered 3 with the
-// original definition, created at the commit instant by the same actor.
+// original definition, created at the commit instant and inheriting its
+// createdBy from the original draft's creator.
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{continuationRevisionId}}
 Accept: application/json
 
@@ -365,7 +370,9 @@ Accept: application/json
     client.test("continuation", function() {
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.revision.id === client.global.get("continuationRevisionId"), "id");
-        client.assert(response.body.revision.effectiveFrom === "{{boundedTo}}", "starts at boundedTo");
+        client.assert(
+            response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo"),
+            "starts where the scheduled revision ends");
     });
 %}
 
@@ -438,14 +445,15 @@ Accept: application/json
 
 ###
 
-// Bounded apply-from-now. The pre-request script (<) captures the token that
-// is valid right now so the stale-token replay below can prove rejection.
-POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
-Content-Type: application/json
-If-Match: "{{ruleToken}}"
+// Bounded apply-from-now. The pre-request script (<) above the request
+// captures the token that is valid right now so the stale-token replay below
+// can prove rejection.
 < {%
     client.global.set("staleToken", client.global.get("ruleToken"));
 %}
+POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
 
 {
   "effectiveTo": "{{applyUntil}}"

@@ -139,17 +139,17 @@ Failures are RFC 7807 Problem Details with a stable `code` extension.
 
 ## Actor identity
 
-`createdBy` on drafts and committed revisions is resolved from the caller identity by `RequestActor`:
+`createdBy` is recorded in three distinct places: the registration commit seeds a system actor, draft creation resolves the authenticated caller via `RequestActor`, and generated continuations inherit the draft's existing author. Only the draft path reads caller identity:
 
 - Deployed under Easy Auth, the platform injects a base64 `X-MS-CLIENT-PRINCIPAL` JSON payload. `EasyAuthPrincipalMiddleware` decodes it on `/api` requests — but only when `Authentication:EasyAuth:TrustPlatformHeaders` is `true`, which Bicep sets only alongside `configureEntraAuth`. A principal without a stable identifier, or a missing/malformed header while trust is enabled, is rejected with `401` before the endpoint runs.
 - The recorded actor is the first present of the `http://schemas.microsoft.com/identity/claims/objectidentifier` claim, `oid`, `nameidentifier`, then `sub` — an object or subject identifier, not a display name. `preferred_username` is carried on the principal but is never used as the actor.
 - Locally the platform header is not trusted, so a caller-supplied `X-MS-CLIENT-PRINCIPAL` is ignored and the actor falls back to `unverified-local-caller`.
 
-Three creation paths record different authors:
+In detail:
 
 - **Registration** — `SqlServerWatchedInstrumentStore` seeds the initial committed revision with `createdBy = "watched-instrument-registration"`. That is the existing baseline behaviour for the creation commit; `RequestActor` is not involved.
-- **Drafts and their commits** — `RequestActor` supplies `createdBy` for drafts, and the draft's actor carries onto the committed revision it becomes.
-- **Generated continuations** — a continuation minted by a bounded insertion is a real committed row whose `createdAt` is the commit instant and whose `createdBy` is the committing draft's actor; it carries the covered revision's definition, not its identity or metadata. A revision that survives with a moved boundary (for example the tail after an open-ended insert) instead keeps its own GUID and original metadata.
+- **Drafts and their commits** — `RequestActor` supplies `createdBy` at draft creation only. Applying or scheduling a draft does not resolve a new actor: committing preserves the draft's existing creation metadata, including its `createdBy`.
+- **Generated continuations** — a continuation minted by a bounded insertion is a real committed row whose `createdAt` is the commit instant and whose `createdBy` is inherited from the original draft's creator; it carries the covered revision's definition, not its identity or other metadata. A revision that survives with a moved boundary — for example the tail whose start moves to the end of a bounded insertion — instead keeps its own GUID and original metadata.
 
 Caller-supplied identity fields are never read from the request body; no expanded authorship or audit feature is provided. Real Azure identity verification of this mapping is a deployment smoke test; see [easy-auth-entra-id.md](easy-auth-entra-id.md).
 
