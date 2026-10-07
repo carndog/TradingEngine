@@ -41,6 +41,9 @@ public sealed class TelemetryExportPipelineTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting(
+                    "ConnectionStrings:TradingEngine",
+                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
+                builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};" +
                     "IngestionEndpoint=https://localhost/");
@@ -288,13 +291,16 @@ public sealed class TelemetryExportPipelineTests
     }
 
     [Test]
-    public void Startup_WhenNoConnectionString_StillEmitsStartedEventToRegisteredProviders()
+    public void Startup_WhenNoTelemetryConnectionString_StillEmitsStartedEventToRegisteredProviders()
     {
         RecordingLoggerProvider recorder = new();
 
         using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.UseSetting(
+                    "ConnectionStrings:TradingEngine",
+                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
                 builder.ConfigureServices(services =>
                     services.AddSingleton<ILoggerProvider>(recorder));
             });

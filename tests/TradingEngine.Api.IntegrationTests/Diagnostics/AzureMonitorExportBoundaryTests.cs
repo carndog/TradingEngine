@@ -36,6 +36,9 @@ public sealed class AzureMonitorExportBoundaryTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting(
+                    "ConnectionStrings:TradingEngine",
+                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
+                builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};IngestionEndpoint=https://localhost/");
                 builder.ConfigureServices(services =>

@@ -1,0 +1,191 @@
+// Deployed API checks (Easy Auth). Run top-to-bottom against the deployed
+// Web App. Define deployedHost, bearerToken and databaseProbeKey in
+// http-client.private.env.json next to this file; that file is gitignored.
+// See docs/easy-auth-entra-id.md for how to obtain a token as the owner.
+// The local walkthrough lives in TradingEngine.Api.http and needs no token.
+//
+// http-client.private.env.json example:
+// {
+//   "dev": {
+//     "deployedHost": "https://<web-app-default-hostname>",
+//     "bearerToken": "<API access token from an approved client application>",
+//     "databaseProbeKey": "<probe key>"
+//   }
+// }
+//
+// The anonymous registration below is where a run starts: its pre-request
+// script clears stale variables and generates runId/runSymbol exactly like
+// the local file. Record the logged runId for
+// tools/Remove-TradingEngineTestRun.ps1; deployed synthetic rows land in the
+// same Azure Dev database and are removed by the same cleanup.
+
+// Anonymous smoke-test endpoints: expect 200 without any token.
+GET {{deployedHost}}/health
+Accept: application/json
+
+###
+
+GET {{deployedHost}}/version
+Accept: application/json
+
+###
+
+// Anonymous request to the protected API check: expect 401 from Easy Auth.
+GET {{deployedHost}}/auth-check
+Accept: application/json
+
+> {%
+    client.test("anonymous rejected", function() {
+        client.assert(response.status === 401, "expected 401");
+    });
+%}
+
+###
+
+// Owner request to the protected API check: expect 204 with no body.
+GET {{deployedHost}}/auth-check
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("owner accepted", function() {
+        client.assert(response.status === 204, "expected 204");
+    });
+%}
+
+###
+
+// Database readiness probe: anonymous by policy but gated by the probe key.
+// Without the header expect 404; with it expect 200 and {"status":"Healthy"}.
+GET {{deployedHost}}/health/database
+Accept: application/json
+X-Database-Probe-Key: {{databaseProbeKey}}
+
+> {%
+    client.test("database healthy", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.status === "Healthy", "status");
+    });
+%}
+
+###
+
+// Start of a run: anonymous administration request, expect 401 from Easy
+// Auth and no rows written. The generated symbol is used by the authenticated
+// registration next; generating it here keeps even a misconfigured deployment
+// from creating an unscoped instrument.
+< {%
+    ["deployedInstrumentId"].forEach(function (name) { client.global.clear(name); });
+
+    var runId = (Date.now().toString(36)
+        + Math.floor(Math.random() * 1296).toString(36)).toUpperCase();
+    client.global.set("runId", runId);
+    client.global.set("runSymbol", "RUN-" + runId + "-DEMO");
+    client.log("runId=" + runId
+        + " - keep this value for cleanup: "
+        + "tools/Remove-TradingEngineTestRun.ps1 -RunId " + runId + " -Apply");
+%}
+POST {{deployedHost}}/api/watched-instruments
+Content-Type: application/json
+
+{
+  "symbol": "{{runSymbol}}",
+  "exchange": "XTEST",
+  "quoteCurrency": "GBP",
+  "samplingIntervalSeconds": 60,
+  "monitoringState": "configured",
+  "priceScale": 4,
+  "supportZones": [
+    {
+      "id": "support-a",
+      "lower": 95.0,
+      "level": 100.0,
+      "upper": 105.0,
+      "conditions": [
+        { "type": "buy-zone", "actionId": "publish-signal" },
+        { "type": "support-loss", "actionId": "publish-signal" }
+      ]
+    }
+  ],
+  "resistanceZones": []
+}
+
+> {%
+    client.test("anonymous write rejected", function() {
+        client.assert(response.status === 401, "expected 401");
+    });
+%}
+
+###
+
+// Authenticated owner request, expect 201 with a Location header. The
+// instrument stays "configured" and is never monitored; its RUN-<runId>-DEMO
+// symbol marks it as synthetic for the cleanup script.
+< {%
+    if (client.global.isEmpty("runSymbol")) {
+        throw new Error("runSymbol is unset - run the anonymous registration above first.");
+    }
+%}
+POST {{deployedHost}}/api/watched-instruments
+Content-Type: application/json
+Authorization: Bearer {{bearerToken}}
+
+{
+  "symbol": "{{runSymbol}}",
+  "exchange": "XTEST",
+  "quoteCurrency": "GBP",
+  "samplingIntervalSeconds": 60,
+  "monitoringState": "configured",
+  "priceScale": 4,
+  "supportZones": [
+    {
+      "id": "support-a",
+      "lower": 95.0,
+      "level": 100.0,
+      "upper": 105.0,
+      "conditions": [
+        { "type": "buy-zone", "actionId": "publish-signal" },
+        { "type": "support-loss", "actionId": "publish-signal" }
+      ]
+    }
+  ],
+  "resistanceZones": [
+    {
+      "id": "resistance-a",
+      "lower": 120.0,
+      "level": 125.0,
+      "upper": 130.0,
+      "conditions": [
+        { "type": "breakout", "actionId": "publish-signal" }
+      ]
+    }
+  ]
+}
+
+> {%
+    client.test("registered", function() {
+        client.assert(response.status === 201, "expected 201");
+    });
+    if (response.status === 201) {
+        client.global.set("deployedInstrumentId", response.body.id);
+    }
+%}
+
+###
+
+// Authenticated owner read, expect 200; unknown ids return 404.
+< {%
+    if (client.global.isEmpty("deployedInstrumentId")) {
+        throw new Error("deployedInstrumentId is unset - rerun the authenticated registration.");
+    }
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("read back", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.symbol === client.global.get("runSymbol"), "symbol");
+    });
+%}

@@ -14,7 +14,7 @@ public sealed class DiagnosticsEndpointTests
     [SetUp]
     public void SetUp()
     {
-        _factory = new WebApplicationFactory<Program>();
+        _factory = CreateFactory();
     }
 
     [TearDown]
@@ -73,7 +73,7 @@ public sealed class DiagnosticsEndpointTests
     }
 
     [Test]
-    public async Task HealthDatabase_WhenProbeKeyMatchesAndDatabaseNotConfigured_ReturnsUnhealthy()
+    public async Task HealthDatabase_WhenProbeKeyMatchesAndDatabaseUnreachable_ReturnsUnhealthy()
     {
         using WebApplicationFactory<Program> factory = CreateFactoryWithProbeKey("synthetic-probe-key");
         HttpClient client = factory.CreateClient();
@@ -91,7 +91,7 @@ public sealed class DiagnosticsEndpointTests
     }
 
     [Test]
-    public async Task Health_WhenDatabaseNotConfigured_ReturnsHealthy()
+    public async Task Health_WhenDatabaseUnreachable_ReturnsHealthy()
     {
         HttpClient client = _factory.CreateClient();
 
@@ -125,14 +125,28 @@ public sealed class DiagnosticsEndpointTests
         });
     }
 
+    private static WebApplicationFactory<Program> CreateFactory()
+    {
+        return new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+                builder.UseSetting(
+                    "ConnectionStrings:TradingEngine",
+                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False"));
+    }
+
     private WebApplicationFactory<Program> CreateFactoryWithProbeKey(string probeKey)
     {
         return _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting(
+                "ConnectionStrings:TradingEngine",
+                "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
             builder.ConfigureAppConfiguration((_, configuration) =>
                 configuration.AddInMemoryCollection(
                     new Dictionary<string, string?>
                     {
                         ["Diagnostics:DatabaseProbeKey"] = probeKey
-                    })));
+                    }));
+        });
     }
 }

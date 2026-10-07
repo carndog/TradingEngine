@@ -70,7 +70,7 @@ Easy Auth does not exist locally. `dotnet run --project src/TradingEngine.Api` s
 
 After the Bicep deployment creates the managed identity, add its federated credential to the app registration. In a private browser window, open `https://<web-app-default-hostname>/auth-check` to confirm an anonymous request receives 401. Then open `https://<web-app-default-hostname>/.auth/login/aad?post_login_redirect_uri=/auth-check`, sign in as the owner and confirm `/auth-check` returns 204. This uses the App Service browser sign-in endpoint and needs no Azure CLI command. A 204 proves the request reached the ASP.NET API without exposing claims or tokens.
 
-For Rider, set `deployedHost`, `bearerToken` and `databaseProbeKey` in `src/TradingEngine.Api/http-client.private.env.json` (gitignored), then use `src/TradingEngine.Api/TradingEngine.Api.http`. The bearer token must be an access token for this API acquired by an approved client application. Configuring a native client and delegated API scope for that flow is a separate step; do not assume a generic Azure CLI token has the right audience or consent.
+For Rider, set `deployedHost`, `bearerToken` and `databaseProbeKey` in `src/TradingEngine.Api/http-client.private.env.json` (gitignored), then use `src/TradingEngine.Api/TradingEngine.Api.Deployed.http`. The bearer token must be an access token for this API acquired by an approved client application. Configuring a native client and delegated API scope for that flow is a separate step; do not assume a generic Azure CLI token has the right audience or consent.
 
 | Check | Expected |
 | --- | --- |

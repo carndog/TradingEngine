@@ -72,10 +72,17 @@ builder.Services.AddScoped<RemoveMonitoringRuleRevisionHandler>(provider =>
         provider.GetRequiredService<IMonitoringRuleStore>(),
         provider.GetRequiredService<IClock>()));
 
-if (string.IsNullOrWhiteSpace(connectionString) is false)
+if (string.IsNullOrWhiteSpace(connectionString))
 {
-    builder.Services.AddTradingEngineInfrastructure(connectionString);
+    throw new InvalidOperationException(
+        "ConnectionStrings:TradingEngine is not configured. For local development set the " +
+        "passwordless Azure Dev connection string via 'dotnet user-secrets' or the " +
+        "ConnectionStrings__TradingEngine environment variable on the Rider run configuration " +
+        "(see docs/rider-local-azure-dev.md). Deployed instances receive it from the App " +
+        "Service ConnectionStrings__TradingEngine application setting.");
 }
+
+builder.Services.AddTradingEngineInfrastructure(connectionString);
 
 WebApplication app = builder.Build();
 
