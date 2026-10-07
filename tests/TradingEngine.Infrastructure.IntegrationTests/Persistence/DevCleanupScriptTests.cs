@@ -16,6 +16,7 @@ public sealed class DevCleanupScriptTests
     private MsSqlContainer _container = null!;
     private string _connectionString = null!;
     private string _databaseName = null!;
+    private string _serverName = null!;
     private string _scriptTemplate = null!;
     private ChartAnalysisDefinitionXmlSerializer _serializer = null!;
 
@@ -26,6 +27,7 @@ public sealed class DevCleanupScriptTests
         await _container.StartAsync();
         _connectionString = _container.GetConnectionString();
         _databaseName = new SqlConnectionStringBuilder(_connectionString).InitialCatalog;
+        _serverName = await ServerNameAsync();
         _scriptTemplate = await File.ReadAllTextAsync(
             Path.Combine(TestContext.CurrentContext.TestDirectory, "DevCleanup.sql"));
         _serializer = new ChartAnalysisDefinitionXmlSerializer();
@@ -102,7 +104,23 @@ public sealed class DevCleanupScriptTests
     public async Task Apply_WhenDatabaseNameMismatch_FailsBeforeDeleting()
     {
         Guid target = await SeedInstrumentAsync("RUN-T81D-DEMO", MonitoringState.Configured);
-        string script = BuildScript("T81D", "NotTheConnectedDatabase", apply: true);
+        string script = BuildScript("T81D", _serverName, "NotTheConnectedDatabase", apply: true);
+
+        SqlException? exception = await Assert.ThrowsAsync<SqlException>(
+            () => ExecuteScriptAsync(script));
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(exception, Is.Not.Null);
+            Assert.That(await InstrumentCountAsync(target), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task Apply_WhenServerNameMismatch_FailsBeforeDeleting()
+    {
+        Guid target = await SeedInstrumentAsync("RUN-T81S-DEMO", MonitoringState.Configured);
+        string script = BuildScript("T81S", "NotTheConnectedServer", _databaseName, apply: true);
 
         SqlException? exception = await Assert.ThrowsAsync<SqlException>(
             () => ExecuteScriptAsync(script));
@@ -167,15 +185,24 @@ public sealed class DevCleanupScriptTests
 
     private async Task RunCleanupAsync(string runId, bool apply)
     {
-        await ExecuteScriptAsync(BuildScript(runId, _databaseName, apply));
+        await ExecuteScriptAsync(BuildScript(runId, _serverName, _databaseName, apply));
     }
 
-    private string BuildScript(string runId, string databaseName, bool apply)
+    private string BuildScript(string runId, string serverName, string databaseName, bool apply)
     {
         return _scriptTemplate
             .Replace("$(RUN_ID)", runId)
+            .Replace("$(EXPECTED_SERVER)", serverName)
             .Replace("$(EXPECTED_DATABASE)", databaseName)
             .Replace("$(APPLY)", apply ? "1" : "0");
+    }
+
+    private async Task<string> ServerNameAsync()
+    {
+        await using SqlConnection connection = new(_connectionString);
+        await connection.OpenAsync();
+        await using SqlCommand command = new("SELECT @@SERVERNAME", connection);
+        return (string)(await command.ExecuteScalarAsync())!;
     }
 
     private async Task ExecuteScriptAsync(string script)

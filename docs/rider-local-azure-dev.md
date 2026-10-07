@@ -57,11 +57,15 @@ is a deployed check.
   synthetic symbol `RUN-<runId>-DEMO`, and ordered future dates; copy the
   logged `runId` from the response output — the cleanup script needs it.
   Dependent requests abort instead of writing when an earlier step failed.
-- `src/TradingEngine.Api/TradingEngine.Api.Deployed.http` — deployed smoke
-  checks (health, version, auth-check, database probe, anonymous-vs-owner
-  registration). Values live in `http-client.private.env.json` (gitignored);
-  see `docs/easy-auth-entra-id.md` for token acquisition. Deployed auth is a
-  separate concern from the local SQL connection above.
+- `src/TradingEngine.Api/TradingEngine.Api.Deployed.http` — deployed checks
+  covering health, version, auth-check, the database probe,
+  anonymous-vs-owner registration and the full monitoring-rule lifecycle
+  with bearer authentication. Values live in `http-client.private.env.json`
+  (gitignored); see `docs/easy-auth-entra-id.md` for token acquisition. Set
+  `principalObjectId` there to assert `createdBy` equals the owner's Entra
+  object id; without it the file only asserts writes are attributed to a
+  real caller rather than the local fallback. Deployed auth is a separate
+  concern from the local SQL connection above.
 
 Synthetic instruments are registered `configured` and never monitored, so no
 trading-path behaviour is exercised.
@@ -71,13 +75,19 @@ trading-path behaviour is exercised.
 Each run leaves its instrument, monitoring rule and revision rows in Azure
 Dev — including interrupted runs where registration succeeded before a later
 request failed. `tools/Remove-TradingEngineTestRun.ps1` removes exactly one
-run's rows; it validates the Azure Dev server/database names, requires the
-explicit `-RunId`, matches only `RUN-<runId>-%` symbols on exchange `XTEST`
-that are still `Configured`, previews the selection, and only `-Apply`
-deletes inside a transaction in foreign-key order
-(MonitoringRuleRevisions -> MonitoringRules -> ChartAnalysisDefinitions ->
-WatchedInstruments). Repeating it is a safe no-op. Requires `sqlcmd`
-(go-sqlcmd) on PATH and the same `az login` identity.
+run's rows. The approved Azure Dev target lives in private configuration:
+copy `tools/azure-dev-target.example.psd1` to
+`tools/azure-dev-target.local.psd1` (gitignored) and fill in the real server
+FQDN and database name. `-Server`/`-Database` must match it exactly — a
+similarly named server or database is rejected before `sqlcmd` runs — and
+the SQL script re-verifies the connected server (`@@SERVERNAME`) and
+database (`DB_NAME()`) before touching rows. It requires the explicit
+`-RunId`, matches only `RUN-<runId>-%` symbols on exchange `XTEST` that are
+still `Configured`, previews the selection, and only `-Apply` deletes inside
+a transaction in foreign-key order (MonitoringRuleRevisions ->
+MonitoringRules -> ChartAnalysisDefinitions -> WatchedInstruments).
+Repeating it is a safe no-op. Requires `sqlcmd` (go-sqlcmd) on PATH and the
+same `az login` identity.
 
 Preview:
 

@@ -24,6 +24,7 @@ Thumbs.db
 appsettings.*.local.json
 secrets.json
 http-client.private.env.json
+azure-dev-target.local.psd1
 
 ## Packages and logs
 *.nupkg

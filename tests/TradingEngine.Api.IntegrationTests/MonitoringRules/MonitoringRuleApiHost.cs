@@ -35,9 +35,7 @@ internal sealed class MonitoringRuleApiHost : IDisposable
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.UseSetting(
-                    "ConnectionStrings:TradingEngine",
-                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
+                builder.UseSyntheticConnectionString();
                 builder.ConfigureAppConfiguration((_, config) =>
                     config.AddInMemoryCollection(configuration));
                 builder.ConfigureServices(services =>

@@ -128,19 +128,14 @@ public sealed class DiagnosticsEndpointTests
     private static WebApplicationFactory<Program> CreateFactory()
     {
         return new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
-                builder.UseSetting(
-                    "ConnectionStrings:TradingEngine",
-                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False"));
+            .WithWebHostBuilder(builder => builder.UseSyntheticConnectionString());
     }
 
     private WebApplicationFactory<Program> CreateFactoryWithProbeKey(string probeKey)
     {
         return _factory.WithWebHostBuilder(builder =>
         {
-            builder.UseSetting(
-                "ConnectionStrings:TradingEngine",
-                "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
+            builder.UseSyntheticConnectionString();
             builder.ConfigureAppConfiguration((_, configuration) =>
                 configuration.AddInMemoryCollection(
                     new Dictionary<string, string?>

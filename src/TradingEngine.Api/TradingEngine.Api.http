@@ -14,7 +14,11 @@
 // Azure Dev database afterwards.
 //
 // Requests guarded by a pre-request check abort with an error instead of
-// writing when an earlier step failed and left a variable unset.
+// writing when the previous step did not complete successfully: each
+// dependent request requires the "walkthroughStep" left by its predecessor
+// and clears it before sending, so a failed request - whether the response
+// was wrong or never arrived - blocks every later dependent request even
+// when ids and tokens from an earlier run are still present.
 @host = http://localhost:5068
 
 GET {{host}}/health
@@ -35,7 +39,7 @@ Accept: application/json
         "createdInstrumentId", "ruleToken", "coverageOrigin", "baseRevisionId",
         "draftId", "committedRevisionId", "committedEffectiveTo",
         "continuationRevisionId", "staleToken", "applyDraftId", "openDraftId",
-        "openRevisionId", "deleteDraftId"
+        "openRevisionId", "deleteDraftId", "walkthroughStep"
     ].forEach(function (name) { client.global.clear(name); });
 
     var runId = (Date.now().toString(36)
@@ -90,8 +94,9 @@ Content-Type: application/json
     client.test("registered", function() {
         client.assert(response.status === 201, "expected 201");
     });
-    if (response.status === 201) {
+    if (response.status === 201 && response.body && response.body.id) {
         client.global.set("createdInstrumentId", response.body.id);
+        client.global.set("walkthroughStep", "registered");
     }
 %}
 
@@ -99,9 +104,12 @@ Content-Type: application/json
 
 // Read back the registration (point-in-time read, no lookup instant).
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "registered" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("read-back requires a completed registration - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}
 Accept: application/json
@@ -109,7 +117,15 @@ Accept: application/json
 > {%
     client.test("read back", function() {
         client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.id === client.global.get("createdInstrumentId"),
+            "returns the created instrument");
     });
+    if (response.status === 200
+        && response.body
+        && response.body.id === client.global.get("createdInstrumentId")) {
+        client.global.set("walkthroughStep", "read-back");
+    }
 %}
 
 ###
@@ -129,9 +145,12 @@ Accept: application/json
 // (also returned as the ETag header). Capture the token, the origin and the
 // base revision id for the walkthrough.
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "read-back" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("timeline requires the completed read-back - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule
 Accept: application/json
@@ -141,10 +160,17 @@ Accept: application/json
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.revisions.length === 1, "one revision");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length === 1
+        && response.body.revisions[0].id
+        && response.body.coverageOrigin) {
         client.global.set("ruleToken", response.body.concurrencyToken);
         client.global.set("coverageOrigin", response.body.coverageOrigin);
         client.global.set("baseRevisionId", response.body.revisions[0].id);
+        client.global.set("walkthroughStep", "timeline");
     }
 %}
 
@@ -154,9 +180,14 @@ Accept: application/json
 // that starts there (boundaries are half-open, the successor wins). An
 // instant before the origin would return 404 monitoring_rule.no_applicable_revision.
 < {%
-    if (client.global.isEmpty("coverageOrigin")) {
-        throw new Error("coverageOrigin is unset - rerun the timeline request first.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var coverageOrigin = client.global.get("coverageOrigin");
+    if (step !== "timeline" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !coverageOrigin || coverageOrigin.trim() === "") {
+        throw new Error("origin lookup requires the completed timeline read - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at={{coverageOrigin}}
 Accept: application/json
@@ -168,15 +199,24 @@ Accept: application/json
             response.body.revision.id === client.global.get("baseRevisionId"),
             "origin resolves the base revision");
     });
+    if (response.status === 200
+        && response.body
+        && response.body.revision
+        && response.body.revision.id === client.global.get("baseRevisionId")) {
+        client.global.set("walkthroughStep", "origin-lookup");
+    }
 %}
 
 ###
 
 // Drafts list for the same rule (empty initially).
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "origin-lookup" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed origin lookup - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -184,7 +224,11 @@ Accept: application/json
 > {%
     client.test("drafts empty", function() {
         client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 0, "no drafts");
     });
+    if (response.status === 200 && response.body && response.body.drafts) {
+        client.global.set("walkthroughStep", "drafts-listed");
+    }
 %}
 
 ###
@@ -193,9 +237,14 @@ Accept: application/json
 // missing -> 428, malformed -> 400, stale -> 412, and any rejection leaves
 // the timeline, drafts and token unchanged.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "drafts-listed" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("draft creation requires the completed drafts list - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -226,8 +275,9 @@ If-Match: "{{ruleToken}}"
     client.test("draft created", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "draft-created");
     }
 %}
 
@@ -235,9 +285,12 @@ If-Match: "{{ruleToken}}"
 
 // Read the drafts list to capture the draft id for the next requests.
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "draft-created" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed draft creation - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -247,8 +300,13 @@ Accept: application/json
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.drafts.length === 1, "one draft");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
         client.global.set("draftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "draft-listed");
     }
 %}
 
@@ -256,10 +314,15 @@ Accept: application/json
 
 // Edit the draft: replaces its definition, reason and proposal in one write.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("draftId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var draftId = client.global.get("draftId");
+    if (step !== "draft-listed" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !draftId || draftId.trim() === "") {
+        throw new Error("draft edit requires the completed draft creation - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}
 Content-Type: application/json
@@ -290,8 +353,9 @@ If-Match: "{{ruleToken}}"
     client.test("draft edited", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "draft-edited");
     }
 %}
 
@@ -305,10 +369,15 @@ If-Match: "{{ruleToken}}"
 // itself cannot hold; when only one boundary of a surviving revision moves,
 // that revision keeps its GUID.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("draftId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var draftId = client.global.get("draftId");
+    if (step !== "draft-edited" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !draftId || draftId.trim() === "") {
+        throw new Error("scheduling requires the completed draft edit - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/schedule
 Content-Type: application/json
@@ -324,11 +393,19 @@ If-Match: "{{ruleToken}}"
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.revisions.length === 3, "three revisions");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length === 3
+        && response.body.revisions[1].id
+        && response.body.revisions[1].effectiveTo
+        && response.body.revisions[2].id) {
         client.global.set("ruleToken", response.body.concurrencyToken);
         client.global.set("committedRevisionId", response.body.revisions[1].id);
         client.global.set("committedEffectiveTo", response.body.revisions[1].effectiveTo);
         client.global.set("continuationRevisionId", response.body.revisions[2].id);
+        client.global.set("walkthroughStep", "bounded-scheduled");
     }
 %}
 
@@ -338,9 +415,14 @@ If-Match: "{{ruleToken}}"
 // original definition, created at the commit instant and inheriting its
 // createdBy from the original draft's creator.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("continuationRevisionId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var continuationRevisionId = client.global.get("continuationRevisionId");
+    if (step !== "bounded-scheduled" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !continuationRevisionId || continuationRevisionId.trim() === "") {
+        throw new Error("continuation read requires the completed schedule - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{continuationRevisionId}}
 Accept: application/json
@@ -353,6 +435,13 @@ Accept: application/json
             response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo"),
             "starts where the scheduled revision ends");
     });
+    if (response.status === 200
+        && response.body
+        && response.body.revision
+        && response.body.revision.id === client.global.get("continuationRevisionId")
+        && response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo")) {
+        client.global.set("walkthroughStep", "continuation-read");
+    }
 %}
 
 ###
@@ -361,9 +450,14 @@ Accept: application/json
 // one nanosecond earlier the predecessor applies (nanosecond precision is
 // honoured for comparison-only instants).
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("committedRevisionId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var committedRevisionId = client.global.get("committedRevisionId");
+    if (step !== "continuation-read" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !committedRevisionId || committedRevisionId.trim() === "") {
+        throw new Error("boundary lookup requires the completed continuation read - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at={{boundedFrom}}
 Accept: application/json
@@ -375,6 +469,12 @@ Accept: application/json
             response.body.revision.id === client.global.get("committedRevisionId"),
             "boundary selects the successor");
     });
+    if (response.status === 200
+        && response.body
+        && response.body.revision
+        && response.body.revision.id === client.global.get("committedRevisionId")) {
+        client.global.set("walkthroughStep", "boundary-lookup");
+    }
 %}
 
 ###
@@ -384,9 +484,14 @@ Accept: application/json
 // boundedFrom, so the scheduled plan is untouched; a new continuation is
 // generated for [applyUntil, boundedFrom).
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "boundary-lookup" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("second draft requires the completed boundary lookup - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -416,17 +521,21 @@ If-Match: "{{ruleToken}}"
     client.test("second draft", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "second-draft");
     }
 %}
 
 ###
 
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "second-draft" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed second draft - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -436,8 +545,13 @@ Accept: application/json
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.drafts.length === 1, "one draft");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
         client.global.set("applyDraftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "apply-draft-listed");
     }
 %}
 
@@ -446,11 +560,16 @@ Accept: application/json
 // Bounded apply-from-now. The pre-request script captures the token that is
 // valid right now so the stale-token replay below can prove rejection.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("applyDraftId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var applyDraftId = client.global.get("applyDraftId");
+    if (step !== "apply-draft-listed" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !applyDraftId || applyDraftId.trim() === "") {
+        throw new Error("apply requires the completed drafts list - run the file from the registration request.");
     }
-    client.global.set("staleToken", client.global.get("ruleToken"));
+    client.global.clear("walkthroughStep");
+    client.global.set("staleToken", ruleToken);
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
 Content-Type: application/json
@@ -465,8 +584,13 @@ If-Match: "{{ruleToken}}"
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.revisions.length === 5, "five revisions");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length === 5) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "apply-bounded");
     }
 %}
 
@@ -476,9 +600,14 @@ If-Match: "{{ruleToken}}"
 // apply. Expect 412 monitoring_rule.concurrent_change with the timeline
 // untouched. The token is deliberately NOT updated from this error response.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("staleToken")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var staleToken = client.global.get("staleToken");
+    if (step !== "apply-bounded" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !staleToken || staleToken.trim() === "") {
+        throw new Error("stale-token check requires the completed apply - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -508,6 +637,11 @@ If-Match: "{{staleToken}}"
         client.assert(response.status === 412, "expected 412");
         client.assert(response.body.code === "monitoring_rule.concurrent_change", "code");
     });
+    if (response.status === 412
+        && response.body
+        && response.body.code === "monitoring_rule.concurrent_change") {
+        client.global.set("walkthroughStep", "stale-verified");
+    }
 %}
 
 ###
@@ -516,10 +650,16 @@ If-Match: "{{staleToken}}"
 // (at least one of definition/effectiveFrom required; an invalid combined
 // amendment would change nothing).
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("committedRevisionId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var committedRevisionId = client.global.get("committedRevisionId");
+    if (step !== "stale-verified" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === ""
+        || !committedRevisionId || committedRevisionId.trim() === "") {
+        throw new Error("amendment requires the completed stale-token check - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
 Content-Type: application/json
@@ -534,8 +674,9 @@ If-Match: "{{ruleToken}}"
     client.test("amend", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "amended");
     }
 %}
 
@@ -547,9 +688,14 @@ If-Match: "{{ruleToken}}"
 // [boundedTo, openFrom) keeping its continuationRevisionId; the new revision
 // owns [openFrom, infinity).
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "amended" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("third draft requires the completed amendment - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -579,17 +725,21 @@ If-Match: "{{ruleToken}}"
     client.test("third draft", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "third-draft");
     }
 %}
 
 ###
 
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "third-draft" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed third draft - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -599,18 +749,28 @@ Accept: application/json
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.drafts.length === 1, "one draft");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
         client.global.set("openDraftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "open-draft-listed");
     }
 %}
 
 ###
 
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("openDraftId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var openDraftId = client.global.get("openDraftId");
+    if (step !== "open-draft-listed" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !openDraftId || openDraftId.trim() === "") {
+        throw new Error("open-ended schedule requires the completed drafts list - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{openDraftId}}/schedule
 Content-Type: application/json
@@ -627,10 +787,17 @@ If-Match: "{{ruleToken}}"
         var revisions = response.body.revisions;
         client.assert(revisions[revisions.length - 1].effectiveTo === null, "open-ended tail");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length > 0
+        && response.body.revisions[response.body.revisions.length - 1].effectiveTo === null
+        && response.body.revisions[response.body.revisions.length - 1].id) {
         client.global.set("ruleToken", response.body.concurrencyToken);
         var tail = response.body.revisions;
         client.global.set("openRevisionId", tail[tail.length - 1].id);
+        client.global.set("walkthroughStep", "open-scheduled");
     }
 %}
 
@@ -640,10 +807,16 @@ If-Match: "{{ruleToken}}"
 // boundedTo. (committedRevisionId survived every earlier write because the
 // bounded apply ended at applyUntil, before boundedFrom.)
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("committedRevisionId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var committedRevisionId = client.global.get("committedRevisionId");
+    if (step !== "open-scheduled" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === ""
+        || !committedRevisionId || committedRevisionId.trim() === "") {
+        throw new Error("revision removal requires the completed open-ended schedule - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
 If-Match: "{{ruleToken}}"
@@ -652,8 +825,9 @@ If-Match: "{{ruleToken}}"
     client.test("remove revision", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "revision-removed");
     }
 %}
 
@@ -661,9 +835,14 @@ If-Match: "{{ruleToken}}"
 
 // Discard a draft: create one more so the DELETE targets a live draft id.
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "revision-removed" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("fourth draft requires the completed revision removal - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -692,17 +871,21 @@ If-Match: "{{ruleToken}}"
     client.test("fourth draft", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "fourth-draft");
     }
 %}
 
 ###
 
 < {%
-    if (client.global.isEmpty("createdInstrumentId")) {
-        throw new Error("createdInstrumentId is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "fourth-draft" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed fourth draft - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -712,18 +895,28 @@ Accept: application/json
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.drafts.length === 1, "one draft");
     });
-    if (response.status === 200) {
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
         client.global.set("deleteDraftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "delete-draft-listed");
     }
 %}
 
 ###
 
 < {%
-    if (client.global.isEmpty("createdInstrumentId") || client.global.isEmpty("ruleToken")
-        || client.global.isEmpty("deleteDraftId")) {
-        throw new Error("walkthrough state is unset - rerun from the registration request.");
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var deleteDraftId = client.global.get("deleteDraftId");
+    if (step !== "delete-draft-listed" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !deleteDraftId || deleteDraftId.trim() === "") {
+        throw new Error("draft deletion requires the completed drafts list - run the file from the registration request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{deleteDraftId}}
 If-Match: "{{ruleToken}}"
@@ -732,7 +925,40 @@ If-Match: "{{ruleToken}}"
     client.test("draft deleted", function() {
         client.assert(response.status === 200, "expected 200");
     });
-    if (response.status === 200) {
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
         client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "draft-deleted");
+    }
+%}
+
+###
+
+// Deletion restriction: the revision holding the coverage origin can never be
+// rescheduled or removed. Expect 409 revision.coverage_origin_protected and
+// the timeline unchanged; the token is deliberately not updated.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var baseRevisionId = client.global.get("baseRevisionId");
+    if (step !== "draft-deleted" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === ""
+        || !baseRevisionId || baseRevisionId.trim() === "") {
+        throw new Error("origin-removal check requires the completed draft deletion - run the file from the registration request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{baseRevisionId}}
+If-Match: "{{ruleToken}}"
+
+> {%
+    client.test("origin removal rejected", function() {
+        client.assert(response.status === 409, "expected 409");
+        client.assert(response.body.code === "revision.coverage_origin_protected", "code");
+    });
+    if (response.status === 409
+        && response.body
+        && response.body.code === "revision.coverage_origin_protected") {
+        client.global.set("walkthroughStep", "origin-removal-rejected");
     }
 %}

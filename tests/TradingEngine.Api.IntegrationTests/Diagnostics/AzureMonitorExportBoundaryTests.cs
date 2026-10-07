@@ -35,9 +35,7 @@ public sealed class AzureMonitorExportBoundaryTests
         WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.UseSetting(
-                    "ConnectionStrings:TradingEngine",
-                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
+                builder.UseSyntheticConnectionString();
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};IngestionEndpoint=https://localhost/");

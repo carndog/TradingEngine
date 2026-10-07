@@ -28,9 +28,7 @@ public sealed class WatchedInstrumentEndpointTests
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.UseSetting(
-                    "ConnectionStrings:TradingEngine",
-                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False");
+                builder.UseSyntheticConnectionString();
                 builder.ConfigureServices(services =>
                     services.AddSingleton<IWatchedInstrumentStore>(_store));
             });

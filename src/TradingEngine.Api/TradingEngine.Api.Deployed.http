@@ -9,15 +9,24 @@
 //   "dev": {
 //     "deployedHost": "https://<web-app-default-hostname>",
 //     "bearerToken": "<API access token from an approved client application>",
-//     "databaseProbeKey": "<probe key>"
+//     "databaseProbeKey": "<probe key>",
+//     "principalObjectId": "<optional: owner Entra object id for actor checks>"
 //   }
 // }
 //
 // The anonymous registration below is where a run starts: its pre-request
-// script clears stale variables and generates runId/runSymbol exactly like
-// the local file. Record the logged runId for
+// script clears stale variables and generates runId/runSymbol plus every
+// date boundary exactly like the local file. Record the logged runId for
 // tools/Remove-TradingEngineTestRun.ps1; deployed synthetic rows land in the
 // same Azure Dev database and are removed by the same cleanup.
+//
+// Requests after the smoke checks run the #45 monitoring-rule lifecycle over
+// the bearer token. A dependent request requires the "walkthroughStep" left
+// by its predecessor and clears it before sending, so a failed step blocks
+// every later request even when ids/tokens from an earlier run remain.
+// When principalObjectId is configured the draft checks assert createdBy
+// equals it; otherwise they only assert writes are attributed to a real
+// caller rather than the unverified local fallback.
 
 // Anonymous smoke-test endpoints: expect 200 without any token.
 GET {{deployedHost}}/health
@@ -75,12 +84,29 @@ X-Database-Probe-Key: {{databaseProbeKey}}
 // registration next; generating it here keeps even a misconfigured deployment
 // from creating an unscoped instrument.
 < {%
-    ["deployedInstrumentId"].forEach(function (name) { client.global.clear(name); });
+    [
+        "deployedInstrumentId", "ruleToken", "coverageOrigin", "baseRevisionId",
+        "draftId", "draftActor", "committedRevisionId", "committedEffectiveTo",
+        "continuationRevisionId", "staleToken", "applyDraftId", "openDraftId",
+        "openRevisionId", "deleteDraftId", "walkthroughStep"
+    ].forEach(function (name) { client.global.clear(name); });
+
+    var expectedActor = request.environment.get("principalObjectId");
+    if (expectedActor && expectedActor.trim() !== "") {
+        client.global.set("expectedActor", expectedActor.trim());
+    } else {
+        client.global.clear("expectedActor");
+    }
 
     var runId = (Date.now().toString(36)
         + Math.floor(Math.random() * 1296).toString(36)).toUpperCase();
     client.global.set("runId", runId);
     client.global.set("runSymbol", "RUN-" + runId + "-DEMO");
+    client.global.set("applyUntil", new Date(Date.now() + 5 * 86400000).toISOString());
+    client.global.set("boundedFrom", new Date(Date.now() + 10 * 86400000).toISOString());
+    client.global.set("rescheduleFrom", new Date(Date.now() + 11 * 86400000).toISOString());
+    client.global.set("boundedTo", new Date(Date.now() + 12 * 86400000).toISOString());
+    client.global.set("openFrom", new Date(Date.now() + 30 * 86400000).toISOString());
     client.log("runId=" + runId
         + " - keep this value for cleanup: "
         + "tools/Remove-TradingEngineTestRun.ps1 -RunId " + runId + " -Apply");
@@ -114,6 +140,9 @@ Content-Type: application/json
     client.test("anonymous write rejected", function() {
         client.assert(response.status === 401, "expected 401");
     });
+    if (response.status === 401) {
+        client.global.set("walkthroughStep", "anonymous-write-rejected");
+    }
 %}
 
 ###
@@ -122,9 +151,16 @@ Content-Type: application/json
 // instrument stays "configured" and is never monitored; its RUN-<runId>-DEMO
 // symbol marks it as synthetic for the cleanup script.
 < {%
-    if (client.global.isEmpty("runSymbol")) {
-        throw new Error("runSymbol is unset - run the anonymous registration above first.");
+    var step = client.global.get("walkthroughStep");
+    var runSymbol = client.global.get("runSymbol");
+    var bearerToken = request.environment.get("bearerToken");
+    if (step !== "anonymous-write-rejected" || !runSymbol || runSymbol.trim() === "") {
+        throw new Error("registration requires the anonymous rejection above - run the file from the anonymous request.");
     }
+    if (!bearerToken || bearerToken.trim() === "") {
+        throw new Error("bearerToken is missing or blank in http-client.private.env.json - see docs/easy-auth-entra-id.md.");
+    }
+    client.global.clear("walkthroughStep");
 %}
 POST {{deployedHost}}/api/watched-instruments
 Content-Type: application/json
@@ -166,8 +202,9 @@ Authorization: Bearer {{bearerToken}}
     client.test("registered", function() {
         client.assert(response.status === 201, "expected 201");
     });
-    if (response.status === 201) {
+    if (response.status === 201 && response.body && response.body.id) {
         client.global.set("deployedInstrumentId", response.body.id);
+        client.global.set("walkthroughStep", "registered");
     }
 %}
 
@@ -175,9 +212,12 @@ Authorization: Bearer {{bearerToken}}
 
 // Authenticated owner read, expect 200; unknown ids return 404.
 < {%
-    if (client.global.isEmpty("deployedInstrumentId")) {
-        throw new Error("deployedInstrumentId is unset - rerun the authenticated registration.");
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "registered" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("read-back requires the completed registration - run the file from the anonymous request.");
     }
+    client.global.clear("walkthroughStep");
 %}
 GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}
 Accept: application/json
@@ -188,4 +228,867 @@ Authorization: Bearer {{bearerToken}}
         client.assert(response.status === 200, "expected 200");
         client.assert(response.body.symbol === client.global.get("runSymbol"), "symbol");
     });
+    if (response.status === 200
+        && response.body
+        && response.body.symbol === client.global.get("runSymbol")) {
+        client.global.set("walkthroughStep", "read-back");
+    }
+%}
+
+###
+
+// Monitoring-rule revision lifecycle (issue #45), authenticated. Same
+// sequence as TradingEngine.Api.http: persisted timestamps must be exact
+// 100 ns multiples, an omitted or null bound is open-ended and a supplied
+// blank bound is rejected 400. Writes record the Easy Auth principal's
+// object identifier as createdBy; see the actor assertion on the drafts
+// list after the first draft.
+
+// Timeline: committed revisions, coverage origin and the concurrency token.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "read-back" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("timeline requires the completed read-back - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("timeline", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revisions.length === 1, "one revision");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length === 1
+        && response.body.revisions[0].id
+        && response.body.coverageOrigin) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("coverageOrigin", response.body.coverageOrigin);
+        client.global.set("baseRevisionId", response.body.revisions[0].id);
+        client.global.set("walkthroughStep", "timeline");
+    }
+%}
+
+###
+
+// Historical/shared-boundary lookup: the origin instant selects the base
+// revision (half-open boundaries, the successor wins).
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var coverageOrigin = client.global.get("coverageOrigin");
+    if (step !== "timeline" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !coverageOrigin || coverageOrigin.trim() === "") {
+        throw new Error("origin lookup requires the completed timeline read - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/revisions/applicable?at={{coverageOrigin}}
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("origin lookup", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.revision.id === client.global.get("baseRevisionId"),
+            "origin resolves the base revision");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.revision
+        && response.body.revision.id === client.global.get("baseRevisionId")) {
+        client.global.set("walkthroughStep", "origin-lookup");
+    }
+%}
+
+###
+
+// Drafts list for the same rule (empty initially).
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "origin-lookup" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed origin lookup - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("drafts empty", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 0, "no drafts");
+    });
+    if (response.status === 200 && response.body && response.body.drafts) {
+        client.global.set("walkthroughStep", "drafts-listed");
+    }
+%}
+
+###
+
+// Create a draft. Writes require If-Match with the latest concurrencyToken;
+// missing -> 428, malformed -> 400, stale -> 412.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "drafts-listed" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("draft creation requires the completed drafts list - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "raise support",
+  "proposedPeriod": { "effectiveFrom": "{{boundedFrom}}", "effectiveTo": "{{boundedTo}}" },
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 105.0,
+        "level": 110.0,
+        "upper": 115.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("draft created", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "draft-created");
+    }
+%}
+
+###
+
+// Read the drafts list: captures the draft id and verifies the authenticated
+// actor. With principalObjectId configured, createdBy must equal it; without
+// it, createdBy must be a real caller, not the unverified local fallback.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "draft-created" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed draft creation - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    var draft = response.body && response.body.drafts && response.body.drafts.length === 1
+        ? response.body.drafts[0]
+        : null;
+    client.test("one draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(draft !== null && draft.id, "one draft");
+    });
+    if (draft) {
+        var expectedActor = client.global.get("expectedActor");
+        client.log("draft createdBy=" + draft.createdBy);
+        client.test("authenticated actor", function() {
+            if (expectedActor) {
+                client.assert(
+                    draft.createdBy === expectedActor,
+                    "createdBy is the caller principal object id");
+            } else {
+                client.assert(
+                    draft.createdBy !== "unverified-local-caller"
+                        && draft.createdBy !== "watched-instrument-registration",
+                    "createdBy records the caller, not a local fallback");
+            }
+        });
+        client.global.set("draftId", draft.id);
+        client.global.set("draftActor", draft.createdBy);
+        client.global.set("walkthroughStep", "draft-listed");
+    }
+%}
+
+###
+
+// Edit the draft: replaces its definition, reason and proposal in one write.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var draftId = client.global.get("draftId");
+    if (step !== "draft-listed" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !draftId || draftId.trim() === "") {
+        throw new Error("draft edit requires the completed drafts list - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+PUT {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts/{{draftId}}
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "raise support further",
+  "proposedPeriod": { "effectiveFrom": "{{boundedFrom}}", "effectiveTo": "{{boundedTo}}" },
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 115.0,
+        "level": 120.0,
+        "upper": 125.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("draft edited", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "draft-edited");
+    }
+%}
+
+###
+
+// Bounded commit: schedule the draft over [boundedFrom, boundedTo) inside
+// the open-ended tail; the generated continuation keeps the original
+// definition from boundedTo onward. The committed revision keeps the draft's
+// createdBy, so it must equal the actor captured above.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var draftId = client.global.get("draftId");
+    if (step !== "draft-edited" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !draftId || draftId.trim() === "") {
+        throw new Error("scheduling requires the completed draft edit - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts/{{draftId}}/schedule
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "effectiveFrom": "{{boundedFrom}}",
+  "effectiveTo": "{{boundedTo}}"
+}
+
+> {%
+    client.test("bounded schedule", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revisions.length === 3, "three revisions");
+        client.assert(
+            response.body.revisions[1].createdBy === client.global.get("draftActor"),
+            "committed revision keeps the draft's creator");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length === 3
+        && response.body.revisions[1].id
+        && response.body.revisions[1].effectiveTo
+        && response.body.revisions[2].id) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("committedRevisionId", response.body.revisions[1].id);
+        client.global.set("committedEffectiveTo", response.body.revisions[1].effectiveTo);
+        client.global.set("continuationRevisionId", response.body.revisions[2].id);
+        client.global.set("walkthroughStep", "bounded-scheduled");
+    }
+%}
+
+###
+
+// Read the generated continuation: a committed row numbered 3 that starts
+// where the scheduled revision ends and inherits the draft's creator.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var continuationRevisionId = client.global.get("continuationRevisionId");
+    if (step !== "bounded-scheduled" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !continuationRevisionId || continuationRevisionId.trim() === "") {
+        throw new Error("continuation read requires the completed schedule - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/revisions/{{continuationRevisionId}}
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("continuation", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revision.id === client.global.get("continuationRevisionId"), "id");
+        client.assert(
+            response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo"),
+            "starts where the scheduled revision ends");
+        client.assert(
+            response.body.revision.createdBy === client.global.get("draftActor"),
+            "inherits the draft's creator");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.revision
+        && response.body.revision.id === client.global.get("continuationRevisionId")
+        && response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo")) {
+        client.global.set("walkthroughStep", "continuation-read");
+    }
+%}
+
+###
+
+// Shared-boundary lookup: at exactly boundedFrom the scheduled revision wins.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var committedRevisionId = client.global.get("committedRevisionId");
+    if (step !== "continuation-read" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !committedRevisionId || committedRevisionId.trim() === "") {
+        throw new Error("boundary lookup requires the completed continuation read - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/revisions/applicable?at={{boundedFrom}}
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("boundary successor", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.revision.id === client.global.get("committedRevisionId"),
+            "boundary selects the successor");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.revision
+        && response.body.revision.id === client.global.get("committedRevisionId")) {
+        client.global.set("walkthroughStep", "boundary-lookup");
+    }
+%}
+
+###
+
+// Create a second draft, then apply it from server now until applyUntil in a
+// single write; a new continuation is generated for [applyUntil, boundedFrom).
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "boundary-lookup" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("second draft requires the completed boundary lookup - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "temporary tightening",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 125.0,
+        "level": 130.0,
+        "upper": 135.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("second draft", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "second-draft");
+    }
+%}
+
+###
+
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "second-draft" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed second draft - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("one pending draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
+        client.global.set("applyDraftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "apply-draft-listed");
+    }
+%}
+
+###
+
+// Bounded apply-from-now. The pre-request script captures the token that is
+// valid right now so the stale-token replay below can prove rejection.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var applyDraftId = client.global.get("applyDraftId");
+    if (step !== "apply-draft-listed" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !applyDraftId || applyDraftId.trim() === "") {
+        throw new Error("apply requires the completed drafts list - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+    client.global.set("staleToken", ruleToken);
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "effectiveTo": "{{applyUntil}}"
+}
+
+> {%
+    client.test("bounded apply", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.revisions.length === 5, "five revisions");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length === 5) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "apply-bounded");
+    }
+%}
+
+###
+
+// Deliberately expected failure: replay the stale token captured before the
+// apply. Expect 412 monitoring_rule.concurrent_change; the token is NOT
+// updated from this error response.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var staleToken = client.global.get("staleToken");
+    if (step !== "apply-bounded" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !staleToken || staleToken.trim() === "") {
+        throw new Error("stale-token check requires the completed apply - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{staleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "stale write",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 135.0,
+        "level": 140.0,
+        "upper": 145.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("stale rejected", function() {
+        client.assert(response.status === 412, "expected 412");
+        client.assert(response.body.code === "monitoring_rule.concurrent_change", "code");
+    });
+    if (response.status === 412
+        && response.body
+        && response.body.code === "monitoring_rule.concurrent_change") {
+        client.global.set("walkthroughStep", "stale-verified");
+    }
+%}
+
+###
+
+// Amend the surviving scheduled revision: move its start to rescheduleFrom.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var committedRevisionId = client.global.get("committedRevisionId");
+    if (step !== "stale-verified" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === ""
+        || !committedRevisionId || committedRevisionId.trim() === "") {
+        throw new Error("amendment requires the completed stale-token check - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+PUT {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "fine tune",
+  "effectiveFrom": "{{rescheduleFrom}}"
+}
+
+> {%
+    client.test("amend", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "amended");
+    }
+%}
+
+###
+
+// Open-ended replacement: schedule a fresh draft from openFrom with
+// "effectiveTo": null (open-ended). The continuation survives as
+// [boundedTo, openFrom); the new revision owns [openFrom, infinity).
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "amended" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("third draft requires the completed amendment - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "long-term plan",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 140.0,
+        "level": 145.0,
+        "upper": 150.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("third draft", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "third-draft");
+    }
+%}
+
+###
+
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "third-draft" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed third draft - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("one pending draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
+        client.global.set("openDraftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "open-draft-listed");
+    }
+%}
+
+###
+
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var openDraftId = client.global.get("openDraftId");
+    if (step !== "open-draft-listed" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !openDraftId || openDraftId.trim() === "") {
+        throw new Error("open-ended schedule requires the completed drafts list - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts/{{openDraftId}}/schedule
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "effectiveFrom": "{{openFrom}}",
+  "effectiveTo": null
+}
+
+> {%
+    client.test("open-ended schedule", function() {
+        client.assert(response.status === 200, "expected 200");
+        var revisions = response.body.revisions;
+        client.assert(revisions[revisions.length - 1].effectiveTo === null, "open-ended tail");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken
+        && response.body.revisions
+        && response.body.revisions.length > 0
+        && response.body.revisions[response.body.revisions.length - 1].effectiveTo === null
+        && response.body.revisions[response.body.revisions.length - 1].id) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        var tail = response.body.revisions;
+        client.global.set("openRevisionId", tail[tail.length - 1].id);
+        client.global.set("walkthroughStep", "open-scheduled");
+    }
+%}
+
+###
+
+// Remove the rescheduled committed revision; its predecessor's end reopens
+// to boundedTo.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var committedRevisionId = client.global.get("committedRevisionId");
+    if (step !== "open-scheduled" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === ""
+        || !committedRevisionId || committedRevisionId.trim() === "") {
+        throw new Error("revision removal requires the completed open-ended schedule - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+DELETE {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("remove revision", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "revision-removed");
+    }
+%}
+
+###
+
+// Discard a draft: create one more so the DELETE targets a live draft id.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    if (step !== "revision-removed" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "") {
+        throw new Error("fourth draft requires the completed revision removal - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+POST {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Content-Type: application/json
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "changeReason": "discard me",
+  "definition": {
+    "priceScale": 4,
+    "supportZones": [
+      {
+        "id": "support-a",
+        "lower": 150.0,
+        "level": 155.0,
+        "upper": 160.0,
+        "conditions": [
+          { "type": "buy-zone", "actionId": "publish-signal" }
+        ]
+      }
+    ],
+    "resistanceZones": []
+  }
+}
+
+> {%
+    client.test("fourth draft", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "fourth-draft");
+    }
+%}
+
+###
+
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "fourth-draft" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("drafts list requires the completed fourth draft - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("one pending draft", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.drafts.length === 1, "one draft");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.drafts
+        && response.body.drafts.length === 1
+        && response.body.drafts[0].id) {
+        client.global.set("deleteDraftId", response.body.drafts[0].id);
+        client.global.set("walkthroughStep", "delete-draft-listed");
+    }
+%}
+
+###
+
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var deleteDraftId = client.global.get("deleteDraftId");
+    if (step !== "delete-draft-listed" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === "" || !deleteDraftId || deleteDraftId.trim() === "") {
+        throw new Error("draft deletion requires the completed drafts list - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+DELETE {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/drafts/{{deleteDraftId}}
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("draft deleted", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+    if (response.status === 200 && response.body && response.body.concurrencyToken) {
+        client.global.set("ruleToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "draft-deleted");
+    }
+%}
+
+###
+
+// Deletion restriction: the revision holding the coverage origin can never
+// be rescheduled or removed. Expect 409 revision.coverage_origin_protected;
+// the token is deliberately not updated.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var ruleToken = client.global.get("ruleToken");
+    var baseRevisionId = client.global.get("baseRevisionId");
+    if (step !== "draft-deleted" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !ruleToken || ruleToken.trim() === ""
+        || !baseRevisionId || baseRevisionId.trim() === "") {
+        throw new Error("origin-removal check requires the completed draft deletion - run the file from the anonymous request.");
+    }
+    client.global.clear("walkthroughStep");
+%}
+DELETE {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/monitoring-rule/revisions/{{baseRevisionId}}
+If-Match: "{{ruleToken}}"
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("origin removal rejected", function() {
+        client.assert(response.status === 409, "expected 409");
+        client.assert(response.body.code === "revision.coverage_origin_protected", "code");
+    });
+    if (response.status === 409
+        && response.body
+        && response.body.code === "revision.coverage_origin_protected") {
+        client.global.set("walkthroughStep", "origin-removal-rejected");
+    }
 %}

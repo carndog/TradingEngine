@@ -10,7 +10,7 @@ public sealed class StartupConfigurationTests
     {
         using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
-                builder.UseSetting("ConnectionStrings:TradingEngine", null));
+                builder.UseSetting(ApiTestHost.ConnectionStringKey, null));
 
         Exception? thrown = Assert.Catch(() => factory.CreateClient());
 
@@ -22,7 +22,7 @@ public sealed class StartupConfigurationTests
     {
         using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
-                builder.UseSetting("ConnectionStrings:TradingEngine", "   "));
+                builder.UseSetting(ApiTestHost.ConnectionStringKey, "   "));
 
         Exception? thrown = Assert.Catch(() => factory.CreateClient());
 
@@ -34,9 +34,7 @@ public sealed class StartupConfigurationTests
     {
         using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
-                builder.UseSetting(
-                    "ConnectionStrings:TradingEngine",
-                    "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False"));
+                builder.UseSyntheticConnectionString());
 
         using HttpClient client = factory.CreateClient();
 

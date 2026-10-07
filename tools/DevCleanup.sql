@@ -3,6 +3,7 @@
 -- drives it through sqlcmd and supplies the variables below.
 --
 --   $(RUN_ID)             run id logged by the .http walkthrough
+--   $(EXPECTED_SERVER)    short name of the approved Azure Dev SQL server
 --   $(EXPECTED_DATABASE)  database name the caller connected to
 --   $(APPLY)              '1' deletes, '0' previews only
 --
@@ -17,6 +18,7 @@ SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
 DECLARE @RunId nvarchar(64) = N'$(RUN_ID)';
+DECLARE @ExpectedServer nvarchar(128) = N'$(EXPECTED_SERVER)';
 DECLARE @ExpectedDatabase nvarchar(128) = N'$(EXPECTED_DATABASE)';
 DECLARE @Apply bit = CAST(N'$(APPLY)' AS bit);
 
@@ -24,6 +26,12 @@ IF @RunId IS NULL OR LEN(@RunId) < 4 OR LEN(@RunId) > 32
     OR @RunId LIKE N'%[^0-9A-Z]%'
 BEGIN
     ;THROW 51000, 'RUN_ID must be 4-32 characters of A-Z0-9.', 1;
+END;
+
+IF @ExpectedServer IS NULL OR @ExpectedServer = N''
+    OR LOWER(@@SERVERNAME) <> LOWER(@ExpectedServer)
+BEGIN
+    ;THROW 51002, 'Connected server does not match the configured Azure Dev EXPECTED_SERVER.', 1;
 END;
 
 IF DB_NAME() <> @ExpectedDatabase
