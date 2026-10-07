@@ -325,11 +325,13 @@ Accept: application/json
 Authorization: Bearer {{bearerToken}}
 
 > {%
+    var drafts = response.body ? response.body.drafts : null;
+    var draftsEmpty = drafts !== null && drafts.length === 0;
     client.test("drafts empty", function() {
         client.assert(response.status === 200, "expected 200");
-        client.assert(response.body.drafts.length === 0, "no drafts");
+        client.assert(draftsEmpty, "no drafts");
     });
-    if (response.status === 200 && response.body && response.body.drafts) {
+    if (response.status === 200 && draftsEmpty) {
         client.global.set("walkthroughStep", "drafts-listed");
     }
 %}
@@ -405,25 +407,27 @@ Authorization: Bearer {{bearerToken}}
     var draft = response.body && response.body.drafts && response.body.drafts.length === 1
         ? response.body.drafts[0]
         : null;
+    var draftIdOk = draft !== null
+        && typeof draft.id === "string" && draft.id.trim() !== "";
+    var createdBy = draft ? draft.createdBy : null;
+    var expectedActor = client.global.get("expectedActor");
+    var actorOk = typeof createdBy === "string" && createdBy.trim() !== ""
+        && createdBy !== "unverified-local-caller"
+        && createdBy !== "watched-instrument-registration"
+        && (expectedActor === null || createdBy === expectedActor);
+    client.log("draft createdBy=" + createdBy);
     client.test("one draft", function() {
         client.assert(response.status === 200, "expected 200");
-        client.assert(draft !== null && draft.id, "one draft");
+        client.assert(draftIdOk, "one draft with a nonblank id");
     });
-    if (draft) {
-        var expectedActor = client.global.get("expectedActor");
-        client.log("draft createdBy=" + draft.createdBy);
-        client.test("authenticated actor", function() {
-            if (expectedActor) {
-                client.assert(
-                    draft.createdBy === expectedActor,
-                    "createdBy is the caller principal object id");
-            } else {
-                client.assert(
-                    draft.createdBy !== "unverified-local-caller"
-                        && draft.createdBy !== "watched-instrument-registration",
-                    "createdBy records the caller, not a local fallback");
-            }
-        });
+    client.test("authenticated actor", function() {
+        if (expectedActor) {
+            client.assert(actorOk, "createdBy is the caller principal object id");
+        } else {
+            client.assert(actorOk, "createdBy records the caller, not a local fallback");
+        }
+    });
+    if (response.status === 200 && draftIdOk && actorOk) {
         client.global.set("draftId", draft.id);
         client.global.set("draftActor", draft.createdBy);
         client.global.set("walkthroughStep", "draft-listed");
@@ -508,25 +512,34 @@ Authorization: Bearer {{bearerToken}}
 }
 
 > {%
+    var revisions = response.body && response.body.revisions && response.body.revisions.length === 3
+        ? response.body.revisions
+        : null;
+    var committed = revisions ? revisions[1] : null;
+    var committedIdOk = committed !== null
+        && typeof committed.id === "string" && committed.id.trim() !== ""
+        && !!committed.effectiveTo;
+    var continuation = revisions ? revisions[2] : null;
+    var continuationIdOk = continuation !== null
+        && typeof continuation.id === "string" && continuation.id.trim() !== "";
+    var actorOk = committed !== null
+        && committed.createdBy === client.global.get("draftActor");
     client.test("bounded schedule", function() {
         client.assert(response.status === 200, "expected 200");
-        client.assert(response.body.revisions.length === 3, "three revisions");
-        client.assert(
-            response.body.revisions[1].createdBy === client.global.get("draftActor"),
-            "committed revision keeps the draft's creator");
+        client.assert(revisions !== null, "three revisions");
+        client.assert(actorOk, "committed revision keeps the draft's creator");
     });
     if (response.status === 200
         && response.body
         && response.body.concurrencyToken
-        && response.body.revisions
-        && response.body.revisions.length === 3
-        && response.body.revisions[1].id
-        && response.body.revisions[1].effectiveTo
-        && response.body.revisions[2].id) {
+        && revisions !== null
+        && committedIdOk
+        && continuationIdOk
+        && actorOk) {
         client.global.set("ruleToken", response.body.concurrencyToken);
-        client.global.set("committedRevisionId", response.body.revisions[1].id);
-        client.global.set("committedEffectiveTo", response.body.revisions[1].effectiveTo);
-        client.global.set("continuationRevisionId", response.body.revisions[2].id);
+        client.global.set("committedRevisionId", committed.id);
+        client.global.set("committedEffectiveTo", committed.effectiveTo);
+        client.global.set("continuationRevisionId", continuation.id);
         client.global.set("walkthroughStep", "bounded-scheduled");
     }
 %}
@@ -550,21 +563,20 @@ Accept: application/json
 Authorization: Bearer {{bearerToken}}
 
 > {%
+    var revision = response.body && response.body.revision ? response.body.revision : null;
+    var idOk = revision !== null
+        && revision.id === client.global.get("continuationRevisionId");
+    var fromOk = revision !== null
+        && revision.effectiveFrom === client.global.get("committedEffectiveTo");
+    var actorOk = revision !== null
+        && revision.createdBy === client.global.get("draftActor");
     client.test("continuation", function() {
         client.assert(response.status === 200, "expected 200");
-        client.assert(response.body.revision.id === client.global.get("continuationRevisionId"), "id");
-        client.assert(
-            response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo"),
-            "starts where the scheduled revision ends");
-        client.assert(
-            response.body.revision.createdBy === client.global.get("draftActor"),
-            "inherits the draft's creator");
+        client.assert(idOk, "id");
+        client.assert(fromOk, "starts where the scheduled revision ends");
+        client.assert(actorOk, "inherits the draft's creator");
     });
-    if (response.status === 200
-        && response.body
-        && response.body.revision
-        && response.body.revision.id === client.global.get("continuationRevisionId")
-        && response.body.revision.effectiveFrom === client.global.get("committedEffectiveTo")) {
+    if (response.status === 200 && idOk && fromOk && actorOk) {
         client.global.set("walkthroughStep", "continuation-read");
     }
 %}

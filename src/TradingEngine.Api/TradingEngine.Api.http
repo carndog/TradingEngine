@@ -222,11 +222,13 @@ GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/dra
 Accept: application/json
 
 > {%
+    var drafts = response.body ? response.body.drafts : null;
+    var draftsEmpty = drafts !== null && drafts.length === 0;
     client.test("drafts empty", function() {
         client.assert(response.status === 200, "expected 200");
-        client.assert(response.body.drafts.length === 0, "no drafts");
+        client.assert(draftsEmpty, "no drafts");
     });
-    if (response.status === 200 && response.body && response.body.drafts) {
+    if (response.status === 200 && draftsEmpty) {
         client.global.set("walkthroughStep", "drafts-listed");
     }
 %}
