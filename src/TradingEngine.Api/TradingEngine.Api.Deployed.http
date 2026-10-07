@@ -326,7 +326,7 @@ Authorization: Bearer {{bearerToken}}
 
 > {%
     var drafts = response.body ? response.body.drafts : null;
-    var draftsEmpty = drafts !== null && drafts.length === 0;
+    var draftsEmpty = Array.isArray(drafts) && drafts.length === 0;
     client.test("drafts empty", function() {
         client.assert(response.status === 200, "expected 200");
         client.assert(draftsEmpty, "no drafts");
@@ -414,7 +414,9 @@ Authorization: Bearer {{bearerToken}}
     var actorOk = typeof createdBy === "string" && createdBy.trim() !== ""
         && createdBy !== "unverified-local-caller"
         && createdBy !== "watched-instrument-registration"
-        && (expectedActor === null || createdBy === expectedActor);
+        && (expectedActor === null
+            || expectedActor === undefined
+            || createdBy === expectedActor);
     client.log("draft createdBy=" + createdBy);
     client.test("one draft", function() {
         client.assert(response.status === 200, "expected 200");

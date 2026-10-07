@@ -223,7 +223,7 @@ Accept: application/json
 
 > {%
     var drafts = response.body ? response.body.drafts : null;
-    var draftsEmpty = drafts !== null && drafts.length === 0;
+    var draftsEmpty = Array.isArray(drafts) && drafts.length === 0;
     client.test("drafts empty", function() {
         client.assert(response.status === 200, "expected 200");
         client.assert(draftsEmpty, "no drafts");
