@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <UserSecretsId>dfd524a0-50b8-4ac3-9aba-5fc4201cc3a8</UserSecretsId>
+  </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TradingEngine.Api.IntegrationTests" />
   </ItemGroup>

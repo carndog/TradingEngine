@@ -15,10 +15,14 @@
 //
 // Requests guarded by a pre-request check abort with an error instead of
 // writing when the previous step did not complete successfully: each
-// dependent request requires the "walkthroughStep" left by its predecessor
-// and clears it before sending, so a failed request - whether the response
+// dependent request requires the "walkthroughStep" left by its predecessor,
+// and the token only advances when a response handler validates the
+// expected status and payload, so a failed request - whether the response
 // was wrong or never arrived - blocks every later dependent request even
-// when ids and tokens from an earlier run are still present.
+// when ids and tokens from an earlier run are still present. The checks
+// must not consume the token: Rider can evaluate a pre-request script more
+// than once per request, so a clear inside the guard would remove the value
+// before the request is actually sent.
 @host = http://localhost:5068
 
 GET {{host}}/health
@@ -51,9 +55,6 @@ Accept: application/json
     client.global.set("rescheduleFrom", new Date(Date.now() + 11 * 86400000).toISOString());
     client.global.set("boundedTo", new Date(Date.now() + 12 * 86400000).toISOString());
     client.global.set("openFrom", new Date(Date.now() + 30 * 86400000).toISOString());
-    client.log("runId=" + runId
-        + " - keep this value for cleanup: "
-        + "tools/Remove-TradingEngineTestRun.ps1 -RunId " + runId + " -Apply");
 %}
 POST {{host}}/api/watched-instruments
 Content-Type: application/json
@@ -97,6 +98,10 @@ Content-Type: application/json
     if (response.status === 201 && response.body && response.body.id) {
         client.global.set("createdInstrumentId", response.body.id);
         client.global.set("walkthroughStep", "registered");
+        var runId = response.body.symbol.substring(4, response.body.symbol.length - 5);
+        client.log("runId=" + runId
+            + " - keep this value for cleanup: "
+            + "tools/Remove-TradingEngineTestRun.ps1 -RunId " + runId + " -Apply");
     }
 %}
 
@@ -109,7 +114,6 @@ Content-Type: application/json
     if (step !== "registered" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("read-back requires a completed registration - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}
 Accept: application/json
@@ -150,7 +154,6 @@ Accept: application/json
     if (step !== "read-back" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("timeline requires the completed read-back - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule
 Accept: application/json
@@ -187,7 +190,6 @@ Accept: application/json
         || !coverageOrigin || coverageOrigin.trim() === "") {
         throw new Error("origin lookup requires the completed timeline read - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at={{coverageOrigin}}
 Accept: application/json
@@ -216,7 +218,6 @@ Accept: application/json
     if (step !== "origin-lookup" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("drafts list requires the completed origin lookup - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -246,7 +247,6 @@ Accept: application/json
         || !ruleToken || ruleToken.trim() === "") {
         throw new Error("draft creation requires the completed drafts list - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -292,7 +292,6 @@ If-Match: "{{ruleToken}}"
     if (step !== "draft-created" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("drafts list requires the completed draft creation - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -324,7 +323,6 @@ Accept: application/json
         || !ruleToken || ruleToken.trim() === "" || !draftId || draftId.trim() === "") {
         throw new Error("draft edit requires the completed draft creation - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}
 Content-Type: application/json
@@ -379,7 +377,6 @@ If-Match: "{{ruleToken}}"
         || !ruleToken || ruleToken.trim() === "" || !draftId || draftId.trim() === "") {
         throw new Error("scheduling requires the completed draft edit - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{draftId}}/schedule
 Content-Type: application/json
@@ -424,7 +421,6 @@ If-Match: "{{ruleToken}}"
         || !continuationRevisionId || continuationRevisionId.trim() === "") {
         throw new Error("continuation read requires the completed schedule - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{continuationRevisionId}}
 Accept: application/json
@@ -459,7 +455,6 @@ Accept: application/json
         || !committedRevisionId || committedRevisionId.trim() === "") {
         throw new Error("boundary lookup requires the completed continuation read - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/applicable?at={{boundedFrom}}
 Accept: application/json
@@ -493,7 +488,6 @@ Accept: application/json
         || !ruleToken || ruleToken.trim() === "") {
         throw new Error("second draft requires the completed boundary lookup - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -537,7 +531,6 @@ If-Match: "{{ruleToken}}"
     if (step !== "second-draft" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("drafts list requires the completed second draft - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -570,7 +563,6 @@ Accept: application/json
         || !ruleToken || ruleToken.trim() === "" || !applyDraftId || applyDraftId.trim() === "") {
         throw new Error("apply requires the completed drafts list - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
     client.global.set("staleToken", ruleToken);
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{applyDraftId}}/apply
@@ -609,7 +601,6 @@ If-Match: "{{ruleToken}}"
         || !staleToken || staleToken.trim() === "") {
         throw new Error("stale-token check requires the completed apply - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -626,7 +617,8 @@ If-Match: "{{staleToken}}"
         "level": 140.0,
         "upper": 145.0,
         "conditions": [
-          { "type": "buy-zone", "actionId": "publish-signal" }
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
         ]
       }
     ],
@@ -661,7 +653,6 @@ If-Match: "{{staleToken}}"
         || !committedRevisionId || committedRevisionId.trim() === "") {
         throw new Error("amendment requires the completed stale-token check - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
 Content-Type: application/json
@@ -697,7 +688,6 @@ If-Match: "{{ruleToken}}"
         || !ruleToken || ruleToken.trim() === "") {
         throw new Error("third draft requires the completed amendment - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -741,7 +731,6 @@ If-Match: "{{ruleToken}}"
     if (step !== "third-draft" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("drafts list requires the completed third draft - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -772,7 +761,6 @@ Accept: application/json
         || !ruleToken || ruleToken.trim() === "" || !openDraftId || openDraftId.trim() === "") {
         throw new Error("open-ended schedule requires the completed drafts list - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{openDraftId}}/schedule
 Content-Type: application/json
@@ -818,7 +806,6 @@ If-Match: "{{ruleToken}}"
         || !committedRevisionId || committedRevisionId.trim() === "") {
         throw new Error("revision removal requires the completed open-ended schedule - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{committedRevisionId}}
 If-Match: "{{ruleToken}}"
@@ -844,7 +831,6 @@ If-Match: "{{ruleToken}}"
         || !ruleToken || ruleToken.trim() === "") {
         throw new Error("fourth draft requires the completed revision removal - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 POST {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Content-Type: application/json
@@ -861,7 +847,8 @@ If-Match: "{{ruleToken}}"
         "level": 155.0,
         "upper": 160.0,
         "conditions": [
-          { "type": "buy-zone", "actionId": "publish-signal" }
+          { "type": "buy-zone", "actionId": "publish-signal" },
+          { "type": "support-loss", "actionId": "publish-signal" }
         ]
       }
     ],
@@ -887,7 +874,6 @@ If-Match: "{{ruleToken}}"
     if (step !== "fourth-draft" || !createdInstrumentId || createdInstrumentId.trim() === "") {
         throw new Error("drafts list requires the completed fourth draft - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts
 Accept: application/json
@@ -918,7 +904,6 @@ Accept: application/json
         || !ruleToken || ruleToken.trim() === "" || !deleteDraftId || deleteDraftId.trim() === "") {
         throw new Error("draft deletion requires the completed drafts list - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/drafts/{{deleteDraftId}}
 If-Match: "{{ruleToken}}"
@@ -936,8 +921,11 @@ If-Match: "{{ruleToken}}"
 ###
 
 // Deletion restriction: the revision holding the coverage origin can never be
-// rescheduled or removed. Expect 409 revision.coverage_origin_protected and
-// the timeline unchanged; the token is deliberately not updated.
+// rescheduled or removed. Here the origin revision has already begun - the
+// coverage origin is the registration instant - so removal is rejected 409
+// revision.period_begun with the timeline unchanged; a future-origin
+// timeline would return revision.coverage_origin_protected instead. The
+// token is deliberately not updated.
 < {%
     var step = client.global.get("walkthroughStep");
     var createdInstrumentId = client.global.get("createdInstrumentId");
@@ -948,7 +936,6 @@ If-Match: "{{ruleToken}}"
         || !baseRevisionId || baseRevisionId.trim() === "") {
         throw new Error("origin-removal check requires the completed draft deletion - run the file from the registration request.");
     }
-    client.global.clear("walkthroughStep");
 %}
 DELETE {{host}}/api/watched-instruments/{{createdInstrumentId}}/monitoring-rule/revisions/{{baseRevisionId}}
 If-Match: "{{ruleToken}}"
@@ -956,11 +943,11 @@ If-Match: "{{ruleToken}}"
 > {%
     client.test("origin removal rejected", function() {
         client.assert(response.status === 409, "expected 409");
-        client.assert(response.body.code === "revision.coverage_origin_protected", "code");
+        client.assert(response.body.code === "revision.period_begun", "code");
     });
     if (response.status === 409
         && response.body
-        && response.body.code === "revision.coverage_origin_protected") {
+        && response.body.code === "revision.period_begun") {
         client.global.set("walkthroughStep", "origin-removal-rejected");
     }
 %}

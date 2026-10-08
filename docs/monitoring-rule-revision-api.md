@@ -133,7 +133,7 @@ Failures are RFC 7807 Problem Details with a stable `code` extension.
 | 404 | `revision.not_found` | Unknown draft or revision id |
 | 409 | `revision.duplicate_id` | Identifier collision on commit |
 | 409 | `revision.period_begun` | Edit or commit touching a period that already began |
-| 409 | `revision.coverage_origin_protected` | Reschedule/remove targeting the origin revision |
+| 409 | `revision.coverage_origin_protected` | Reschedule/remove targeting a future origin revision; a begun origin revision returns `revision.period_begun` |
 | 412 | `monitoring_rule.concurrent_change` | Stale `If-Match` token |
 | 428 | `monitoring_rule.concurrency_token_required` | Missing `If-Match` on a write |
 
