@@ -19,4 +19,8 @@
     <ProjectReference Include="../../src/TradingEngine.Domain/TradingEngine.Domain.csproj" />
     <ProjectReference Include="../../src/TradingEngine.Infrastructure/TradingEngine.Infrastructure.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../tools/DevCleanup.sql" Link="DevCleanup.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

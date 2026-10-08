@@ -40,6 +40,7 @@ public sealed class TelemetryExportPipelineTests
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.UseSyntheticConnectionString();
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};" +
@@ -288,13 +289,14 @@ public sealed class TelemetryExportPipelineTests
     }
 
     [Test]
-    public void Startup_WhenNoConnectionString_StillEmitsStartedEventToRegisteredProviders()
+    public void Startup_WhenNoTelemetryConnectionString_StillEmitsStartedEventToRegisteredProviders()
     {
         RecordingLoggerProvider recorder = new();
 
         using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.UseSyntheticConnectionString();
                 builder.ConfigureServices(services =>
                     services.AddSingleton<ILoggerProvider>(recorder));
             });

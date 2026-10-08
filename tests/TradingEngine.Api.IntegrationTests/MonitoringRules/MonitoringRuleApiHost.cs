@@ -30,22 +30,12 @@ internal sealed class MonitoringRuleApiHost : IDisposable
     {
         Store = new StubMonitoringRuleStore();
         Clock = new FakeClock(Now);
-        Dictionary<string, string?> configuration = new()
-        {
-            ["ConnectionStrings:TradingEngine"] =
-                "Server=localhost;Database=TradingEngineApiTests;Trusted_Connection=True;Encrypt=False"
-        };
-        if (settings is not null)
-        {
-            foreach (KeyValuePair<string, string?> setting in settings)
-            {
-                configuration[setting.Key] = setting.Value;
-            }
-        }
+        Dictionary<string, string?> configuration = new(settings ?? new Dictionary<string, string?>());
 
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.UseSyntheticConnectionString();
                 builder.ConfigureAppConfiguration((_, config) =>
                     config.AddInMemoryCollection(configuration));
                 builder.ConfigureServices(services =>

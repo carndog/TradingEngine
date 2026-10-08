@@ -35,6 +35,7 @@ public sealed class AzureMonitorExportBoundaryTests
         WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.UseSyntheticConnectionString();
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};IngestionEndpoint=https://localhost/");

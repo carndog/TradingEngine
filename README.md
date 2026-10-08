@@ -52,7 +52,7 @@ The API exposes three deployment-safe smoke-test endpoints:
 
 On the deployed App Service these three stay anonymously reachable by policy while every other path requires a Microsoft Entra ID owner token through Easy Auth; see [Entra ID Easy Auth for the deployed API](docs/easy-auth-entra-id.md).
 
-For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`.
+For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`; the deployed-API checks live in `src/TradingEngine.Api/TradingEngine.Api.Deployed.http`. Rider connection setup, the repeatable walkthrough and Azure Dev cleanup are covered in [Local API in Rider against Azure Dev](docs/rider-local-azure-dev.md).
 
 See [Solution boundaries and dependency rules](docs/architecture.md) for the Hexagonal Architecture conventions enforced by the architecture tests, and [Current configuration persistence](docs/current-configuration-persistence.md) for the EF Core SQL Server schema, migrations and integration testing.
 

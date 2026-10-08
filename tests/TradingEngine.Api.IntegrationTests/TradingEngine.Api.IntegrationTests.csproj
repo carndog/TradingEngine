@@ -15,7 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Testcontainers.MsSql" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../../src/TradingEngine.Api/TradingEngine.Api.csproj" />
     <ProjectReference Include="../../src/TradingEngine.Contracts/TradingEngine.Contracts.csproj" />
+    <ProjectReference Include="../../src/TradingEngine.Infrastructure/TradingEngine.Infrastructure.csproj" />
   </ItemGroup>
 </Project>
