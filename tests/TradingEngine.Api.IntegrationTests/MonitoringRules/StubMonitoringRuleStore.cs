@@ -15,8 +15,21 @@ internal sealed class StubMonitoringRuleStore : IMonitoringRuleStore
     private IReadOnlyList<RestoredRevision<ChartAnalysisDefinition>> _persisted = [];
     private byte _version = 1;
     private byte[] _token = [1];
+    private int _getCount;
+    private int _activeReads;
+    private int _maxActiveReads;
 
     public int SaveCount { get; private set; }
+
+    public int GetCount => _getCount;
+
+    public int ActiveReads => _activeReads;
+
+    public int MaxActiveReads => _maxActiveReads;
+
+    public Task? ReadGate { get; set; }
+
+    public bool ThrowOnRead { get; set; }
 
     public string CurrentToken => Convert.ToBase64String(_token);
 
@@ -31,19 +44,39 @@ internal sealed class StubMonitoringRuleStore : IMonitoringRuleStore
         return Restore();
     }
 
-    public Task<Result<MonitoringRuleSnapshot>> GetAsync(
+    public async Task<Result<MonitoringRuleSnapshot>> GetAsync(
         Guid instrumentId,
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (_ruleId == Guid.Empty || instrumentId != _instrumentId)
+        Interlocked.Increment(ref _getCount);
+        TrackReadStart();
+        try
         {
-            return Task.FromResult<Result<MonitoringRuleSnapshot>>(MonitoringRuleErrors.NotFound);
-        }
+            cancellationToken.ThrowIfCancellationRequested();
 
-        return Task.FromResult(
-            Result<MonitoringRuleSnapshot>.Success(new MonitoringRuleSnapshot(Restore(), _token)));
+            if (ThrowOnRead)
+            {
+                throw new InvalidOperationException("Synthetic store failure.");
+            }
+
+            Task? gate = ReadGate;
+            if (gate is not null)
+            {
+                await gate.WaitAsync(cancellationToken);
+            }
+
+            if (_ruleId == Guid.Empty || instrumentId != _instrumentId)
+            {
+                return MonitoringRuleErrors.NotFound;
+            }
+
+            return Result<MonitoringRuleSnapshot>.Success(
+                new MonitoringRuleSnapshot(Restore(), _token));
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeReads);
+        }
     }
 
     public Task<Result> AddAsync(
@@ -76,6 +109,16 @@ internal sealed class StubMonitoringRuleStore : IMonitoringRuleStore
         _token = [_version];
         SaveCount++;
         return Task.FromResult(Result.Success());
+    }
+
+    private void TrackReadStart()
+    {
+        int active = Interlocked.Increment(ref _activeReads);
+        int observed = _maxActiveReads;
+        while (active > observed)
+        {
+            observed = Interlocked.CompareExchange(ref _maxActiveReads, active, observed);
+        }
     }
 
     private void Publish(MonitoringRule rule)
