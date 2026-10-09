@@ -6,8 +6,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NodaTime;
 using NodaTime.Testing;
+using TradingEngine.Api.IntegrationTests.RateLimiting;
+using TradingEngine.Api.RateLimiting;
 using TradingEngine.Application.Ports;
 using TradingEngine.Contracts.MonitoringRules;
 using TradingEngine.Contracts.WatchedInstruments;
@@ -26,7 +29,11 @@ internal sealed class MonitoringRuleApiHost : IDisposable
 
     private readonly WebApplicationFactory<Program> _factory;
 
-    public MonitoringRuleApiHost(IDictionary<string, string?>? settings = null)
+    public MonitoringRuleApiHost(
+        IDictionary<string, string?>? settings = null,
+        IRequestBudgetLimiter? budgetLimiter = null,
+        CountingProbeHealthCheck? probeCheck = null,
+        IConcurrencyLimiterFactory? concurrencyFactory = null)
     {
         Store = new StubMonitoringRuleStore();
         Clock = new FakeClock(Now);
@@ -42,6 +49,37 @@ internal sealed class MonitoringRuleApiHost : IDisposable
                 {
                     services.AddSingleton<IMonitoringRuleStore>(Store);
                     services.AddSingleton<IClock>(Clock);
+
+                    if (budgetLimiter is not null)
+                    {
+                        services.AddSingleton<IRequestBudgetLimiter>(budgetLimiter);
+                    }
+
+                    if (concurrencyFactory is not null)
+                    {
+                        services.AddSingleton<IConcurrencyLimiterFactory>(concurrencyFactory);
+                    }
+
+                    if (probeCheck is not null)
+                    {
+                        services.PostConfigure<HealthCheckServiceOptions>(options =>
+                        {
+                            List<HealthCheckRegistration> existing = options.Registrations
+                                .Where(registration => string.Equals(
+                                    registration.Name, "database", StringComparison.Ordinal))
+                                .ToList();
+                            foreach (HealthCheckRegistration registration in existing)
+                            {
+                                options.Registrations.Remove(registration);
+                            }
+
+                            options.Registrations.Add(new HealthCheckRegistration(
+                                "database",
+                                _ => probeCheck,
+                                failureStatus: null,
+                                tags: ["database"]));
+                        });
+                    }
                 });
             });
         Client = _factory.CreateClient();

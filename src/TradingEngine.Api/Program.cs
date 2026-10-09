@@ -3,6 +3,7 @@ using TradingEngine.Api;
 using TradingEngine.Api.Authentication;
 using TradingEngine.Api.Diagnostics;
 using TradingEngine.Api.MonitoringRules;
+using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.WatchedInstruments;
 using TradingEngine.Infrastructure;
 
@@ -23,12 +24,23 @@ if (string.IsNullOrWhiteSpace(connectionString))
 builder.Services
     .AddApiDiagnostics(builder.Configuration, builder.Environment.EnvironmentName, connectionString)
     .AddEasyAuth(builder.Configuration)
+    .AddApiRateLimiting(builder.Configuration)
     .AddSystemClock()
     .AddWatchedInstruments()
     .AddMonitoringRules()
     .AddTradingEngineInfrastructure(connectionString);
 
 WebApplication app = builder.Build();
+
+app.UseWhen(
+    context => context.Request.Path.StartsWithSegments("/health/database"),
+    branch => branch.UseMiddleware<DatabaseProbeKeyMiddleware>());
+
+app.UseWhen(
+    context => context.Request.Path.StartsWithSegments("/api"),
+    branch => branch.UseMiddleware<EasyAuthPrincipalMiddleware>());
+
+app.UseRateLimiter();
 
 app.MapHealthChecks(
         "/health",
@@ -37,11 +49,8 @@ app.MapHealthChecks(
             Predicate = check => check.Tags.Contains("database") is false,
             ResponseWriter = HealthResponseWriter.WriteAsync
         })
-    .AllowAnonymous();
-
-app.UseWhen(
-    context => context.Request.Path.StartsWithSegments("/health/database"),
-    branch => branch.UseMiddleware<DatabaseProbeKeyMiddleware>());
+    .AllowAnonymous()
+    .DisableRateLimiting();
 
 app.MapHealthChecks(
         "/health/database",
@@ -55,13 +64,11 @@ app.MapHealthChecks(
 app.MapGet(
         "/version",
         (ApplicationVersionProvider versionProvider) => TypedResults.Ok(versionProvider.GetCurrent()))
-    .AllowAnonymous();
+    .AllowAnonymous()
+    .DisableRateLimiting();
 
-app.MapGet("/auth-check", () => TypedResults.NoContent());
-
-app.UseWhen(
-    context => context.Request.Path.StartsWithSegments("/api"),
-    branch => branch.UseMiddleware<EasyAuthPrincipalMiddleware>());
+app.MapGet("/auth-check", () => TypedResults.NoContent())
+    .DisableRateLimiting();
 
 app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();

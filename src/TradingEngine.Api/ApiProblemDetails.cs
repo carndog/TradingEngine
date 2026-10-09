@@ -36,4 +36,15 @@ internal static class ApiProblemDetails
                 ["code"] = code
             });
     }
+
+    internal static ProblemHttpResult TooManyRequests()
+    {
+        return TypedResults.Problem(
+            statusCode: StatusCodes.Status429TooManyRequests,
+            detail: "Too many requests. Reduce the request rate and retry.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "rate_limit.exceeded"
+            });
+    }
 }

@@ -2,8 +2,10 @@ using Azure.Monitor.OpenTelemetry.AspNetCore;
 using OpenTelemetry.Instrumentation.AspNetCore;
 using OpenTelemetry.Instrumentation.Http;
 using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using TradingEngine.Api.RateLimiting;
 using TradingEngine.Contracts.Diagnostics;
 
 namespace TradingEngine.Api.Diagnostics;
@@ -52,6 +54,9 @@ internal static class TelemetryServiceCollectionExtensions
                 loggerProviderBuilder
                     .AddProcessor(new TelemetryEnrichmentLogProcessor(identity, environmentName))
                     .AddProcessor(new SensitiveDataLogProcessor()));
+
+            services.ConfigureOpenTelemetryMeterProvider((_, meterProviderBuilder) =>
+                meterProviderBuilder.AddMeter(RateLimitingTelemetry.MeterName));
 
             services.Configure<AspNetCoreTraceInstrumentationOptions>(options =>
                 options.RecordException = false);

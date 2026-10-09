@@ -50,7 +50,7 @@ The API exposes three deployment-safe smoke-test endpoints:
 - `GET /health/database` — database readiness check; requires the `X-Database-Probe-Key` header (returns 404 without it) and is independent of `/health` so platform probes never touch SQL
 - `GET /version`
 
-On the deployed App Service these three stay anonymously reachable by policy while every other path requires a Microsoft Entra ID owner token through Easy Auth; see [Entra ID Easy Auth for the deployed API](docs/easy-auth-entra-id.md).
+On the deployed App Service these three stay anonymously reachable by policy while every other path requires a Microsoft Entra ID owner token through Easy Auth; see [Entra ID Easy Auth for the deployed API](docs/easy-auth-entra-id.md). Administration endpoints are additionally protected by per-caller read/write rate budgets and a shared per-instance concurrency ceiling; see [Administration API rate and concurrency limits](docs/administration-rate-limiting.md).
 
 For local requests in Rider, open `src/TradingEngine.Api/TradingEngine.Api.http`; the deployed-API checks live in `src/TradingEngine.Api/TradingEngine.Api.Deployed.http`. Rider connection setup, the repeatable walkthrough and Azure Dev cleanup are covered in [Local API in Rider against Azure Dev](docs/rider-local-azure-dev.md).
 
