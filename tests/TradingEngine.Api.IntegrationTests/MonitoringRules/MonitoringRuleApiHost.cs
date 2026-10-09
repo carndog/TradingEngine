@@ -32,7 +32,8 @@ internal sealed class MonitoringRuleApiHost : IDisposable
     public MonitoringRuleApiHost(
         IDictionary<string, string?>? settings = null,
         IRequestBudgetLimiter? budgetLimiter = null,
-        CountingProbeHealthCheck? probeCheck = null)
+        CountingProbeHealthCheck? probeCheck = null,
+        IConcurrencyLimiterFactory? concurrencyFactory = null)
     {
         Store = new StubMonitoringRuleStore();
         Clock = new FakeClock(Now);
@@ -52,6 +53,11 @@ internal sealed class MonitoringRuleApiHost : IDisposable
                     if (budgetLimiter is not null)
                     {
                         services.AddSingleton<IRequestBudgetLimiter>(budgetLimiter);
+                    }
+
+                    if (concurrencyFactory is not null)
+                    {
+                        services.AddSingleton<IConcurrencyLimiterFactory>(concurrencyFactory);
                     }
 
                     if (probeCheck is not null)
@@ -84,8 +90,6 @@ internal sealed class MonitoringRuleApiHost : IDisposable
     public FakeClock Clock { get; }
 
     public HttpClient Client { get; }
-
-    public IServiceProvider Services => _factory.Services;
 
     public void Dispose()
     {

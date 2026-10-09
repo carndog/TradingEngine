@@ -2,8 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
-using System.Threading.RateLimiting;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TradingEngine.Api.IntegrationTests.MonitoringRules;
 using TradingEngine.Contracts.MonitoringRules;
@@ -265,15 +263,17 @@ public sealed class AdministrationRateLimitingTests
     public async Task RateLimiter_QueuedRequest_WhenPermitFrees_IsAdmittedAndCountedAccepted()
     {
         using RateLimitingMeasurements metrics = new();
-        using MonitoringRuleApiHost host = new(Limits(read: 50, concurrency: 1, queue: 1));
+        CountingConcurrencyLimiterFactory factory = new(permitLimit: 1, queueLimit: 1);
+        using MonitoringRuleApiHost host = new(
+            Limits(read: 50, concurrency: 1, queue: 1),
+            concurrencyFactory: factory);
         host.SeedRule();
         TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Store.ReadGate = gate.Task;
         Task<HttpResponseMessage> blocked = host.Client.GetAsync(Path());
         await WaitForAsync(() => host.Store.ActiveReads == 1);
-        ConcurrencyLimiter concurrency = host.Services.GetRequiredService<ConcurrencyLimiter>();
         Task<HttpResponseMessage> queued = host.Client.GetAsync(Path());
-        await WaitForAsync(() => concurrency.GetStatistics()?.CurrentQueuedCount == 1);
+        await WaitForAsync(() => factory.Active.GetStatistics()?.CurrentQueuedCount == 1);
 
         gate.SetResult(null);
         HttpResponseMessage first = await blocked;
@@ -293,16 +293,18 @@ public sealed class AdministrationRateLimitingTests
     public async Task RateLimiter_QueuedRequest_WhenCancelled_IsCountedAsCancelled()
     {
         using RateLimitingMeasurements metrics = new();
-        using MonitoringRuleApiHost host = new(Limits(read: 50, concurrency: 1, queue: 1));
+        CountingConcurrencyLimiterFactory factory = new(permitLimit: 1, queueLimit: 1);
+        using MonitoringRuleApiHost host = new(
+            Limits(read: 50, concurrency: 1, queue: 1),
+            concurrencyFactory: factory);
         host.SeedRule();
         TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Store.ReadGate = gate.Task;
         Task<HttpResponseMessage> blocked = host.Client.GetAsync(Path());
         await WaitForAsync(() => host.Store.ActiveReads == 1);
-        ConcurrencyLimiter concurrency = host.Services.GetRequiredService<ConcurrencyLimiter>();
         using CancellationTokenSource cancelled = new();
         Task<HttpResponseMessage> queued = host.Client.GetAsync(Path(), cancelled.Token);
-        await WaitForAsync(() => concurrency.GetStatistics()?.CurrentQueuedCount == 1);
+        await WaitForAsync(() => factory.Active.GetStatistics()?.CurrentQueuedCount == 1);
 
         cancelled.Cancel();
         await Assert.CatchAsync<OperationCanceledException>(async () => await queued);
@@ -345,6 +347,43 @@ public sealed class AdministrationRateLimitingTests
                     Assert.That(tag.Value?.ToString(), Does.Not.Contain("/api"));
                 }
             }
+        });
+    }
+
+    [Test]
+    public async Task RateLimiter_AfterIdleConcurrencyPartitionEviction_RequestsStillSucceed()
+    {
+        CountingConcurrencyLimiterFactory factory = new(permitLimit: 4);
+        CountingProbeHealthCheck probeCheck = new();
+        Dictionary<string, string?> settings = Limits(read: 50);
+        settings["Diagnostics:DatabaseProbeKey"] = ProbeKey;
+        using MonitoringRuleApiHost host = new(
+            settings, probeCheck: probeCheck, concurrencyFactory: factory);
+        host.SeedRule();
+        host.Client.DefaultRequestHeaders.Add(ProbeKeyHeader, ProbeKey);
+
+        HttpResponseMessage admin = await host.Client.GetAsync(Path());
+        HttpResponseMessage probe = await host.Client.GetAsync("/health/database");
+
+        HttpResponseMessage recreatedAdmin;
+        int attempts = 0;
+        do
+        {
+            attempts++;
+            await Task.Delay(TimeSpan.FromSeconds(15));
+            recreatedAdmin = await host.Client.GetAsync(Path());
+        } while (factory.CreatedCount == 1 && attempts < 4);
+
+        HttpResponseMessage recreatedProbe = await host.Client.GetAsync("/health/database");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(admin.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(probe.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(factory.CreatedCount, Is.GreaterThan(1));
+            Assert.That(recreatedAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(recreatedProbe.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(probeCheck.InvocationCount, Is.EqualTo(2));
         });
     }
 

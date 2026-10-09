@@ -16,7 +16,7 @@ For a request under `/api`:
 
 `ApiRateLimiterOptionsSetup` builds `RateLimiterOptions.GlobalLimiter` as `PartitionedRateLimiter.CreateChained(...)` of exactly two stages, wrapped by `MeteredRequestLimiter` for telemetry:
 
-1. **Shared instance concurrency ceiling** — a partition that maps every request to the same singleton `ConcurrencyLimiter`, bounding simultaneous handler/database work across administration and probe traffic.
+1. **Shared instance concurrency ceiling** — a constant-key partition (`"all"`) whose `ConcurrencyLimiter` is created per partition by `IConcurrencyLimiterFactory` from the validated options, bounding simultaneous handler/database work across administration and probe traffic. Ownership stays inside the partition: when the runtime evicts an idle partition it disposes that limiter, and the next request recreates a fresh one rather than reusing a disposed singleton.
 2. **One fixed-window budget** (`RequestBudgetLimiter`) — partitioned by `(policy, caller)`:
 
    - `database-probe` — keyed `/health/database` requests share a single instance-wide window; the caller field is empty so all keyed probes draw from `DatabaseProbePermitLimit` together.
@@ -89,7 +89,7 @@ Locally (no connection string) the counter is inert; rejected requests still ret
 
 ## Local verification (bounded, Rider-friendly)
 
-The integration suite `AdministrationRateLimitingTests` (in `tests/TradingEngine.Api.IntegrationTests/RateLimiting`) covers read/write budgets, caller isolation, burst rejection, deterministic recovery via scripted leases, the shared concurrency ceiling, permit release on success/exception/cancellation, single-count telemetry including queued admission/cancellation, probe budget separation and configuration validation. It runs entirely on in-memory test hosts — no database needed:
+The integration suite `AdministrationRateLimitingTests` (in `tests/TradingEngine.Api.IntegrationTests/RateLimiting`) covers read/write budgets, caller isolation, burst rejection, deterministic recovery via scripted leases, the shared concurrency ceiling, idle partition eviction and recreation, permit release on success/exception/cancellation, single-count telemetry including queued admission/cancellation, probe budget separation and configuration validation. It runs entirely on in-memory test hosts — no database needed:
 
 ```
 dotnet test tests/TradingEngine.Api.IntegrationTests --filter FullyQualifiedName~RateLimiting

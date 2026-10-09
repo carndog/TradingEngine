@@ -9,12 +9,12 @@ internal sealed class ApiRateLimiterOptionsSetup : IConfigureOptions<RateLimiter
 {
     private const string SharedConcurrencyPartition = "all";
 
-    private readonly ConcurrencyLimiter _concurrency;
+    private readonly IConcurrencyLimiterFactory _concurrency;
     private readonly IRequestBudgetLimiter _budget;
     private readonly RateLimitingTelemetry _telemetry;
 
     public ApiRateLimiterOptionsSetup(
-        ConcurrencyLimiter concurrency,
+        IConcurrencyLimiterFactory concurrency,
         IRequestBudgetLimiter budget,
         RateLimitingTelemetry telemetry)
     {
@@ -40,7 +40,7 @@ internal sealed class ApiRateLimiterOptionsSetup : IConfigureOptions<RateLimiter
         return PartitionedRateLimiter.Create<HttpContext, string>(
             _ => RateLimitPartition.Get<string>(
                 SharedConcurrencyPartition,
-                _ => _concurrency));
+                _ => _concurrency.Create()));
     }
 
     private async ValueTask OnRejectedAsync(

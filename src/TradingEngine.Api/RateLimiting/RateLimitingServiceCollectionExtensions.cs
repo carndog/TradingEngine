@@ -1,4 +1,3 @@
-using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
@@ -21,20 +20,7 @@ internal static class RateLimitingServiceCollectionExtensions
                 options => options.WritePermitLimit <= options.ReadPermitLimit,
                 "RateLimiting:WritePermitLimit must not exceed RateLimiting:ReadPermitLimit.")
             .ValidateOnStart();
-        services.AddSingleton(provider =>
-        {
-            ApiRateLimitOptions limits = provider
-                .GetRequiredService<IOptions<ApiRateLimitOptions>>()
-                .Value;
-
-            return new ConcurrencyLimiter(
-                new ConcurrencyLimiterOptions
-                {
-                    PermitLimit = limits.ConcurrencyPermitLimit,
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    QueueLimit = limits.QueueLimit
-                });
-        });
+        services.AddSingleton<IConcurrencyLimiterFactory, ConcurrencyLimiterFactory>();
         services.AddSingleton<IRequestBudgetLimiter, RequestBudgetLimiter>();
         services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ApiRateLimiterOptionsSetup>();
         services.AddRateLimiter();
