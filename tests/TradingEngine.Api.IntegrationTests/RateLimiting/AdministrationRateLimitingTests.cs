@@ -64,10 +64,11 @@ public sealed class AdministrationRateLimitingTests
     [Test]
     public async Task GetTimeline_WhenLimiterReplenishesBudget_SecondRequestIsAdmitted()
     {
-        ScriptedAdministrationRequestLimiter limiter = new(
+        ScriptedRequestBudgetLimiter limiter = new(
+            ScriptedRateLimitLease.Rejected(TimeSpan.FromSeconds(30)),
             ScriptedRateLimitLease.Rejected(TimeSpan.FromSeconds(30)),
             ScriptedRateLimitLease.Acquired());
-        using MonitoringRuleApiHost host = new(Limits(read: 5), administrationLimiter: limiter);
+        using MonitoringRuleApiHost host = new(Limits(read: 5), budgetLimiter: limiter);
         host.SeedRule();
 
         HttpResponseMessage rejected = await host.Client.GetAsync(Path());

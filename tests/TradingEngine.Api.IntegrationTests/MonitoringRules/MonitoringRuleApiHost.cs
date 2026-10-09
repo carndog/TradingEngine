@@ -31,7 +31,7 @@ internal sealed class MonitoringRuleApiHost : IDisposable
 
     public MonitoringRuleApiHost(
         IDictionary<string, string?>? settings = null,
-        IAdministrationRequestLimiter? administrationLimiter = null,
+        IRequestBudgetLimiter? budgetLimiter = null,
         CountingProbeHealthCheck? probeCheck = null)
     {
         Store = new StubMonitoringRuleStore();
@@ -49,9 +49,9 @@ internal sealed class MonitoringRuleApiHost : IDisposable
                     services.AddSingleton<IMonitoringRuleStore>(Store);
                     services.AddSingleton<IClock>(Clock);
 
-                    if (administrationLimiter is not null)
+                    if (budgetLimiter is not null)
                     {
-                        services.AddSingleton<IAdministrationRequestLimiter>(administrationLimiter);
+                        services.AddSingleton<IRequestBudgetLimiter>(budgetLimiter);
                     }
 
                     if (probeCheck is not null)

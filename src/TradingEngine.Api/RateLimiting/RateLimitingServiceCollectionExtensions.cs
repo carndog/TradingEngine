@@ -1,4 +1,5 @@
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
 namespace TradingEngine.Api.RateLimiting;
@@ -34,8 +35,9 @@ internal static class RateLimitingServiceCollectionExtensions
                     QueueLimit = limits.QueueLimit
                 });
         });
-        services.AddSingleton<IAdministrationRequestLimiter, AdministrationRequestLimiter>();
-        services.AddSingleton<IDatabaseProbeRequestLimiter, DatabaseProbeRequestLimiter>();
+        services.AddSingleton<IRequestBudgetLimiter, RequestBudgetLimiter>();
+        services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ApiRateLimiterOptionsSetup>();
+        services.AddRateLimiter();
 
         return services;
     }

@@ -1,38 +1,42 @@
 # Administration API rate and concurrency limits
 
-Issue #76 protects the administration API with ASP.NET Core's `System.Threading.RateLimiting` limiters (`FixedWindowRateLimiter`, `ConcurrencyLimiter`, `PartitionedRateLimiter`). All throttling lives in the API composition root (`src/TradingEngine.Api`); Domain rules, Application handlers, revision semantics and EF Core optimistic concurrency are unchanged.
+Issue #76 protects the administration API with ASP.NET Core's built-in rate-limiting middleware (`AddRateLimiter`/`UseRateLimiter`, `System.Threading.RateLimiting`). All throttling lives in the API composition root (`src/TradingEngine.Api`); Domain rules, Application handlers, revision semantics and EF Core optimistic concurrency are unchanged.
 
 ## Request flow and middleware ordering
 
 For a request under `/api`:
 
 1. `EasyAuthPrincipalMiddleware` (inside a `UseWhen` branch for `/api`) runs first. When `Authentication:EasyAuth:TrustPlatformHeaders` is `true` it decodes the platform-injected `X-MS-CLIENT-PRINCIPAL` header into `HttpContext.User`, rejecting a missing, malformed or identifier-less principal with 401 **before** any limiter budget is consumed. When the setting is absent or `false` (local development) it does nothing and `HttpContext.User` stays empty.
-2. `RateLimitingGateMiddleware` (same `/api` branch) acquires the shared instance concurrency permit first, then the caller's read or write budget — exactly one acquisition per stage per HTTP request. That ordering matters: the fixed-window limiter does not refund a permit when its lease is disposed, so the refundable concurrency check always runs before the non-refundable budget check. The built-in `RateLimitingMiddleware` (`UseRateLimiter`) is deliberately not used here because it calls `AttemptAcquire` and then retries through `AcquireAsync`, which would charge the caller's window twice for one rejected request.
-3. The endpoint handler and its store run only when both stages acquired a permit. A rejected request never reaches the handler or the database, and both leases are disposed in a `finally` so the concurrency permit is released on success, handler exception and cancellation.
+2. `RateLimitingMiddleware` (`app.UseRateLimiter()`) runs after both `UseWhen` branches, so the caller partition always reflects the trusted principal — never a client-supplied header.
+3. The endpoint handler and its store run only when the limiter granted the request. A rejected request never reaches the handler or the database, and acquired permits are released when the request completes — on success, handler exception or cancellation.
 
-`/health/database` keeps its own earlier branch: `DatabaseProbeKeyMiddleware` returns 404 for a missing or wrong key **before** the probe limiter runs, so key-guessing traffic consumes neither the probe budget nor a concurrency permit. Keyed probes then acquire the shared concurrency ceiling and a dedicated probe budget.
+`/health/database` keeps its own earlier branch: `DatabaseProbeKeyMiddleware` returns 404 for a missing or wrong key **before** `UseRateLimiter` runs, so key-guessing traffic consumes neither the probe budget nor a concurrency permit.
 
 ## Limiter structure
 
-`RateLimitingServiceCollectionExtensions` registers three singletons consumed by `RateLimitingGateMiddleware`:
+`ApiRateLimiterOptionsSetup` builds `RateLimiterOptions.GlobalLimiter` as `PartitionedRateLimiter.CreateChained(...)` of exactly two stages, wrapped by `MeteredRequestLimiter` for telemetry:
 
-- **Shared concurrency ceiling** — one `ConcurrencyLimiter` instance shared by the administration and probe gates, bounding simultaneous handler/database work regardless of which surface the request arrived on.
-- **Per-caller administration budget** (`AdministrationRequestLimiter`) — a partitioned fixed-window limiter keyed by `(caller, read|write)`. `GET`/`HEAD` requests draw from the read budget; every other method draws from the stricter write budget. The caller key is `EasyAuthClientPrincipal.StableIdentifier` (object identifier / subject claim) when the Easy Auth middleware populated `HttpContext.User`; otherwise a single shared `"unverified"` partition applies. That fallback is the explicit bounded local policy: locally every caller shares one budget, and arbitrary identity headers cannot mint a partition or bypass the limit. Because the fallback is a single bounded partition rather than an exemption, a missing or untrusted identity in a deployed instance can never obtain an unlimited allowance.
-- **Shared probe budget** (`DatabaseProbeRequestLimiter`) — one fixed-window partition for all keyed `/health/database` requests, independent of any caller's administration budget in both directions.
+1. **Shared instance concurrency ceiling** — a partition that maps every request to the same singleton `ConcurrencyLimiter`, bounding simultaneous handler/database work across administration and probe traffic.
+2. **One fixed-window budget** (`RequestBudgetLimiter`) — partitioned by `(policy, caller)`:
 
-Both request limiters are injected behind interfaces (`IAdministrationRequestLimiter`, `IDatabaseProbeRequestLimiter`) so tests can substitute scripted leases while the real limiters continue to exercise `System.Threading.RateLimiting` in every other test.
+   - `database-probe` — keyed `/health/database` requests share a single instance-wide window; the caller field is empty so all keyed probes draw from `DatabaseProbePermitLimit` together.
+   - `admin-read` / `admin-write` — `GET`/`HEAD` requests draw from the read budget; every other method draws from the stricter write budget. The caller key is `EasyAuthClientPrincipal.StableIdentifier` (object identifier / subject claim) when the Easy Auth middleware populated `HttpContext.User`; otherwise a single shared `"unverified"` partition applies. That fallback is the explicit bounded local policy: locally every caller shares one budget, and arbitrary identity headers cannot mint a partition or bypass the limit. Because the fallback is a single bounded partition rather than an exemption, a missing or untrusted identity in a deployed instance can never obtain an unlimited allowance.
 
-The `/api` gate is path-based rather than per-endpoint metadata, so new administration endpoints — and even unmatched `/api` paths — are protected by default. Waiting queues default to disabled (`QueueLimit = 0`) and are bounded to 16 when enabled; queueing is honoured through `AcquireAsync` with `RequestAborted` so a queued request waits for a permit or is cancelled, never double-charged.
+### Why the order matters
+
+The middleware calls `AttemptAcquire` and, when that lease is not acquired, retries through `AcquireAsync` so queued limiters can wait. A `FixedWindowRateLimiter` lease does **not** refund its permit when disposed, so the non-refundable budget check must be the *last* stage: if the budget ran first, a downstream concurrency rejection would leave the charged permit orphaned, and the retry would charge the same HTTP request a second permit. With the concurrency check first, a rejection at either stage consumes zero caller budget — concurrency failures never reach the budget, and an exhausted fixed window consumes nothing on a failed attempt. Only a fully admitted request is charged.
+
+The global limiter is the default for every endpoint that does not opt out, so new administration endpoints — and even unmatched `/api` paths — are protected automatically. Waiting queues default to disabled (`QueueLimit = 0`) and are bounded to 16 when enabled; `AcquireAsync` waits honour `RequestAborted`, so a queued request either gains a permit or is cancelled — it is never double-charged.
 
 ## Endpoint coverage
 
 | Endpoint | Limiting | Notes |
 | --- | --- | --- |
-| `GET /health` | None | Liveness probe; stays reliable under any load. Never touches SQL. |
-| `GET /version` | None | Deployment verification (`/version` is curl'd by the deploy workflow); anonymous, static content. |
-| `GET /auth-check` | None | Easy Auth smoke check; already requires the owner allowlist when deployed. |
-| `GET /health/database` | Shared concurrency ceiling + dedicated fixed window (`DatabaseProbePermitLimit` per instance) | Key check runs first (404 without `X-Database-Probe-Key`); probe traffic never consumes an administration caller's budget. |
-| `POST /api/watched-instruments`, `GET /api/watched-instruments/{id}`, all `/api/watched-instruments/{id}/monitoring-rule*` endpoints | Shared concurrency ceiling + per-caller read/write budget | Path-gated default protection for current and future administration endpoints. |
+| `GET /health` | Opted out (`DisableRateLimiting`) | Liveness probe; stays reliable under any load and never shares an administration caller's budget. Never touches SQL. |
+| `GET /version` | Opted out | Deployment verification (`/version` is curl'd by the deploy workflow); anonymous, static content. |
+| `GET /auth-check` | Opted out | Easy Auth smoke check; already requires the owner allowlist when deployed. |
+| `GET /health/database` | Global limiter — `database-probe` partition (shared fixed window, `DatabaseProbePermitLimit` per instance) + shared concurrency ceiling | Key check runs first (404 without `X-Database-Probe-Key`); probe traffic never consumes an administration caller's budget. |
+| `POST /api/watched-instruments`, `GET /api/watched-instruments/{id}`, all `/api/watched-instruments/{id}/monitoring-rule*` endpoints | Global limiter — per-caller read/write budget + shared concurrency ceiling | Default protection for current and future administration endpoints. |
 
 ## Configuration
 
@@ -51,11 +55,11 @@ The `appsettings.json` values are safe synthetic defaults. Deployed tuning is a 
 
 ## Rejection responses
 
-Excess requests receive HTTP 429 with a Problem Details body (`code = rate_limit.exceeded`) before any handler or store executes. `Retry-After` is included only when the rejecting limiter reports an estimated retry interval — the fixed-window budgets do; the concurrency limiter does not, so concurrency rejections carry no `Retry-After`.
+Excess requests receive HTTP 429 with a Problem Details body (`code = rate_limit.exceeded`) before any handler or store executes — written by `RateLimiterOptions.OnRejected`. `Retry-After` is included only when the rejecting limiter reports an estimated retry interval — the fixed-window budgets do; the concurrency limiter does not, so concurrency rejections carry no `Retry-After`.
 
 ## Telemetry
 
-`RateLimitingTelemetry` increments a `tradingengine.api.rate_limiter.requests` counter on the `TradingEngine.Api.RateLimiting` meter once per request outcome — never per internal acquisition attempt — tagged only with:
+`RateLimitingTelemetry` increments a `tradingengine.api.rate_limiter.requests` counter on the `TradingEngine.Api.RateLimiting` meter once per request outcome — never per internal acquisition attempt. Admissions are counted by `MeteredRequestLimiter` when a request is granted (exactly once, whether the first `AttemptAcquire` or the queued `AcquireAsync` succeeds); rejections are counted once in `OnRejected`; queued acquisitions aborted by the caller are counted as `cancelled`. Tags are low-cardinality:
 
 | Tag | Values |
 | --- | --- |
@@ -63,7 +67,7 @@ Excess requests receive HTTP 429 with a Problem Details body (`code = rate_limit
 | `outcome` | `accepted`, `rejected`, `cancelled` |
 | `limit` | `rate`, `concurrency`, `none` |
 
-`outcome=rejected` carries the `limit` that rejected it; `accepted` and `cancelled` requests report `limit=none`. No caller identity, token, payload, path or query string is recorded. The meter is registered on the OpenTelemetry pipeline whenever `APPLICATIONINSIGHTS_CONNECTION_STRING` is configured, so counts appear in Application Insights `customMetrics`:
+`outcome=rejected` carries the `limit` that rejected it (`rate` when the lease reported a `Retry-After`, otherwise `concurrency`); `accepted` and `cancelled` requests report `limit=none`. No caller identity, token, payload, path or query string is recorded. The meter is registered on the OpenTelemetry pipeline whenever `APPLICATIONINSIGHTS_CONNECTION_STRING` is configured, so counts appear in Application Insights `customMetrics`:
 
 ```kusto
 customMetrics

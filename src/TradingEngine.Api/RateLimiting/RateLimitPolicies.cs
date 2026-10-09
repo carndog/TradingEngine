@@ -13,6 +13,16 @@ internal static class RateLimitPolicies
     internal const string NoLimit = "none";
 
     internal const string UnverifiedCallerPartition = "unverified";
+    internal const string DatabaseProbePath = "/health/database";
+
+    internal static string ForRequest(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        return context.Request.Path.StartsWithSegments(DatabaseProbePath)
+            ? DatabaseProbe
+            : ForAdminRequest(context.Request);
+    }
 
     internal static string ForAdminRequest(HttpRequest request)
     {
