@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Threading.RateLimiting;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TradingEngine.Api.IntegrationTests.MonitoringRules;
 using TradingEngine.Contracts.MonitoringRules;
@@ -13,6 +15,8 @@ namespace TradingEngine.Api.IntegrationTests.RateLimiting;
 public sealed class AdministrationRateLimitingTests
 {
     private const string PrincipalHeader = "X-MS-CLIENT-PRINCIPAL";
+    private const string ProbeKeyHeader = "X-Database-Probe-Key";
+    private const string ProbeKey = "synthetic-probe-key";
     private const string ObjectIdentifierClaim =
         "http://schemas.microsoft.com/identity/claims/objectidentifier";
     private const string OwnerA = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -58,32 +62,25 @@ public sealed class AdministrationRateLimitingTests
     }
 
     [Test]
-    public async Task GetTimeline_AfterWindowElapses_ReadPermitsReplenish()
+    public async Task GetTimeline_WhenLimiterReplenishesBudget_SecondRequestIsAdmitted()
     {
-        using MonitoringRuleApiHost host = new(Limits(read: 1, windowSeconds: 1));
+        ScriptedAdministrationRequestLimiter limiter = new(
+            ScriptedRateLimitLease.Rejected(TimeSpan.FromSeconds(30)),
+            ScriptedRateLimitLease.Acquired());
+        using MonitoringRuleApiHost host = new(Limits(read: 5), administrationLimiter: limiter);
         host.SeedRule();
-        HttpResponseMessage allowed = await host.Client.GetAsync(Path());
+
         HttpResponseMessage rejected = await host.Client.GetAsync(Path());
-
-        HttpStatusCode? recovered = null;
-        Stopwatch elapsed = Stopwatch.StartNew();
-        while (elapsed.Elapsed < TimeSpan.FromSeconds(15))
-        {
-            HttpResponseMessage attempt = await host.Client.GetAsync(Path());
-            if (attempt.StatusCode != (HttpStatusCode)429)
-            {
-                recovered = attempt.StatusCode;
-                break;
-            }
-
-            await Task.Delay(50);
-        }
+        HttpResponseMessage admitted = await host.Client.GetAsync(Path());
+        string? code = await ProblemCodeAsync(rejected);
 
         Assert.Multiple(() =>
         {
-            Assert.That(allowed.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(rejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
-            Assert.That(recovered, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(rejected.Headers.RetryAfter?.ToString(), Is.EqualTo("30"));
+            Assert.That(code, Is.EqualTo("rate_limit.exceeded"));
+            Assert.That(admitted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(host.Store.GetCount, Is.EqualTo(1));
         });
     }
 
@@ -150,9 +147,9 @@ public sealed class AdministrationRateLimitingTests
     }
 
     [Test]
-    public async Task GetTimeline_ConcurrencyPermitExhausted_RejectsWithoutRetryAfterAndReleasesPermit()
+    public async Task GetTimeline_WhenConcurrencyRejects_DoesNotConsumeCallerBudget()
     {
-        using MonitoringRuleApiHost host = new(Limits(read: 50, concurrency: 1));
+        using MonitoringRuleApiHost host = new(Limits(read: 3, concurrency: 1));
         host.SeedRule();
         TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Store.ReadGate = gate.Task;
@@ -162,15 +159,19 @@ public sealed class AdministrationRateLimitingTests
         HttpResponseMessage rejected = await host.Client.GetAsync(Path());
         gate.SetResult(null);
         HttpResponseMessage released = await blocked;
-        HttpResponseMessage next = await host.Client.GetAsync(Path());
+        HttpResponseMessage second = await host.Client.GetAsync(Path());
+        HttpResponseMessage third = await host.Client.GetAsync(Path());
+        HttpResponseMessage exhausted = await host.Client.GetAsync(Path());
 
         Assert.Multiple(() =>
         {
             Assert.That(rejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
             Assert.That(rejected.Headers.Contains("Retry-After"), Is.False);
             Assert.That(released.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(next.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(host.Store.GetCount, Is.EqualTo(2));
+            Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(third.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(exhausted.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(host.Store.GetCount, Is.EqualTo(3));
             Assert.That(host.Store.MaxActiveReads, Is.EqualTo(1));
         });
     }
@@ -215,6 +216,138 @@ public sealed class AdministrationRateLimitingTests
     }
 
     [Test]
+    public async Task RateLimiter_Outcomes_AreRecordedOncePerRequest()
+    {
+        using RateLimitingMeasurements metrics = new();
+        using MonitoringRuleApiHost host = new(Limits(read: 2));
+        host.SeedRule();
+
+        await host.Client.GetAsync(Path());
+        await host.Client.GetAsync(Path());
+        HttpResponseMessage rejected = await host.Client.GetAsync(Path());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(metrics.Count("admin-read", "accepted", "none"), Is.EqualTo(2));
+            Assert.That(metrics.Count("admin-read", "rejected", "rate"), Is.EqualTo(1));
+            Assert.That(metrics.All().Count(), Is.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task RateLimiter_ConcurrencyRejection_IsRecordedOnceWithConcurrencyTag()
+    {
+        using RateLimitingMeasurements metrics = new();
+        using MonitoringRuleApiHost host = new(Limits(read: 50, concurrency: 1));
+        host.SeedRule();
+        TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Store.ReadGate = gate.Task;
+        Task<HttpResponseMessage> blocked = host.Client.GetAsync(Path());
+        await WaitForAsync(() => host.Store.ActiveReads == 1);
+
+        HttpResponseMessage rejected = await host.Client.GetAsync(Path());
+        gate.SetResult(null);
+        HttpResponseMessage released = await blocked;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(released.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(metrics.Count("admin-read", "accepted", "none"), Is.EqualTo(1));
+            Assert.That(metrics.Count("admin-read", "rejected", "concurrency"), Is.EqualTo(1));
+            Assert.That(metrics.All().Count(), Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public async Task RateLimiter_QueuedRequest_WhenPermitFrees_IsAdmittedAndCountedAccepted()
+    {
+        using RateLimitingMeasurements metrics = new();
+        using MonitoringRuleApiHost host = new(Limits(read: 50, concurrency: 1, queue: 1));
+        host.SeedRule();
+        TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Store.ReadGate = gate.Task;
+        Task<HttpResponseMessage> blocked = host.Client.GetAsync(Path());
+        await WaitForAsync(() => host.Store.ActiveReads == 1);
+        ConcurrencyLimiter concurrency = host.Services.GetRequiredService<ConcurrencyLimiter>();
+        Task<HttpResponseMessage> queued = host.Client.GetAsync(Path());
+        await WaitForAsync(() => concurrency.GetStatistics()?.CurrentQueuedCount == 1);
+
+        gate.SetResult(null);
+        HttpResponseMessage first = await blocked;
+        HttpResponseMessage second = await queued;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(metrics.Count("admin-read", "accepted", "none"), Is.EqualTo(2));
+            Assert.That(metrics.Count("admin-read", "rejected", "concurrency"), Is.EqualTo(0));
+            Assert.That(metrics.All().Count(), Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public async Task RateLimiter_QueuedRequest_WhenCancelled_IsCountedAsCancelled()
+    {
+        using RateLimitingMeasurements metrics = new();
+        using MonitoringRuleApiHost host = new(Limits(read: 50, concurrency: 1, queue: 1));
+        host.SeedRule();
+        TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Store.ReadGate = gate.Task;
+        Task<HttpResponseMessage> blocked = host.Client.GetAsync(Path());
+        await WaitForAsync(() => host.Store.ActiveReads == 1);
+        ConcurrencyLimiter concurrency = host.Services.GetRequiredService<ConcurrencyLimiter>();
+        using CancellationTokenSource cancelled = new();
+        Task<HttpResponseMessage> queued = host.Client.GetAsync(Path(), cancelled.Token);
+        await WaitForAsync(() => concurrency.GetStatistics()?.CurrentQueuedCount == 1);
+
+        cancelled.Cancel();
+        await Assert.CatchAsync<OperationCanceledException>(async () => await queued);
+        gate.SetResult(null);
+        HttpResponseMessage released = await blocked;
+        host.Store.ReadGate = null;
+        HttpResponseMessage next = await host.Client.GetAsync(Path());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(released.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(next.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(metrics.Count("admin-read", "cancelled", "none"), Is.EqualTo(1));
+            Assert.That(metrics.Count("admin-read", "accepted", "none"), Is.EqualTo(2));
+            Assert.That(metrics.All().Count(), Is.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task RateLimiter_MetricTags_NeverContainCallerIdentityOrRequestData()
+    {
+        using RateLimitingMeasurements metrics = new();
+        using MonitoringRuleApiHost host = new(TrustEnabled(Limits(read: 1)));
+        host.SeedRule();
+
+        await host.Client.SendAsync(GetWithPrincipal(OwnerA));
+        await host.Client.SendAsync(GetWithPrincipal(OwnerA));
+
+        List<IReadOnlyList<KeyValuePair<string, object?>>> measurements =
+            metrics.All().ToList();
+        Assert.That(measurements, Is.Not.Empty);
+        Assert.Multiple(() =>
+        {
+            foreach (IReadOnlyList<KeyValuePair<string, object?>> tags in measurements)
+            {
+                foreach (KeyValuePair<string, object?> tag in tags)
+                {
+                    Assert.That(tag.Key, Is.AnyOf("policy", "outcome", "limit"));
+                    Assert.That(tag.Value?.ToString(), Does.Not.Contain(OwnerA));
+                    Assert.That(tag.Value?.ToString(), Does.Not.Contain("/api"));
+                }
+            }
+        });
+    }
+
+    [Test]
     public async Task Diagnostics_WhenCallerBudgetExhausted_RemainAvailable()
     {
         using MonitoringRuleApiHost host = new(Limits(read: 1));
@@ -236,27 +369,92 @@ public sealed class AdministrationRateLimitingTests
     }
 
     [Test]
-    public async Task HealthDatabase_ExceedingSharedProbeBudget_Returns429AndKeepsKeyCheckFirst()
+    public async Task HealthDatabase_ProbeBudget_IsSeparateFromAdministrationBudget()
     {
-        Dictionary<string, string?> settings = Limits(read: 50, probe: 2);
-        settings["Diagnostics:DatabaseProbeKey"] = "synthetic-probe-key";
-        using MonitoringRuleApiHost host = new(settings);
-        host.Client.DefaultRequestHeaders.Add("X-Database-Probe-Key", "synthetic-probe-key");
+        using RateLimitingMeasurements metrics = new();
+        CountingProbeHealthCheck probeCheck = new();
+        Dictionary<string, string?> settings = Limits(read: 1, probe: 1);
+        settings["Diagnostics:DatabaseProbeKey"] = ProbeKey;
+        using MonitoringRuleApiHost host = new(settings, probeCheck: probeCheck);
+        host.SeedRule();
+        host.Client.DefaultRequestHeaders.Add(ProbeKeyHeader, ProbeKey);
 
-        HttpResponseMessage first = await host.Client.GetAsync("/health/database");
-        HttpResponseMessage second = await host.Client.GetAsync("/health/database");
-        HttpResponseMessage rejected = await host.Client.GetAsync("/health/database");
-        host.Client.DefaultRequestHeaders.Remove("X-Database-Probe-Key");
-        HttpResponseMessage unkeyed = await host.Client.GetAsync("/health/database");
-        HttpResponseMessage health = await host.Client.GetAsync("/health");
+        HttpResponseMessage probe = await host.Client.GetAsync("/health/database");
+        HttpResponseMessage probeRejected = await host.Client.GetAsync("/health/database");
+        HttpResponseMessage read = await host.Client.GetAsync(Path());
+        HttpResponseMessage readRejected = await host.Client.GetAsync(Path());
 
         Assert.Multiple(() =>
         {
-            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
-            Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
-            Assert.That(rejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(probe.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(probeRejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(read.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(readRejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(probeCheck.InvocationCount, Is.EqualTo(1));
+            Assert.That(host.Store.GetCount, Is.EqualTo(1));
+            Assert.That(metrics.Count("database-probe", "accepted", "none"), Is.EqualTo(1));
+            Assert.That(metrics.Count("database-probe", "rejected", "rate"), Is.EqualTo(1));
+            Assert.That(metrics.Count("admin-read", "accepted", "none"), Is.EqualTo(1));
+            Assert.That(metrics.Count("admin-read", "rejected", "rate"), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task HealthDatabase_InvalidKey_ConsumesNoBudgetAndSkipsHealthCheck()
+    {
+        CountingProbeHealthCheck probeCheck = new();
+        Dictionary<string, string?> settings = Limits(read: 1, probe: 1);
+        settings["Diagnostics:DatabaseProbeKey"] = ProbeKey;
+        using MonitoringRuleApiHost host = new(settings, probeCheck: probeCheck);
+        host.SeedRule();
+
+        HttpResponseMessage unkeyed = await host.Client.GetAsync("/health/database");
+        HttpResponseMessage wrongKey = await host.Client.SendAsync(
+            new HttpRequestMessage(HttpMethod.Get, "/health/database")
+            {
+                Headers = { { ProbeKeyHeader, "wrong-synthetic-key" } }
+            });
+        host.Client.DefaultRequestHeaders.Add(ProbeKeyHeader, ProbeKey);
+        HttpResponseMessage probe = await host.Client.GetAsync("/health/database");
+        HttpResponseMessage read = await host.Client.GetAsync(Path());
+
+        Assert.Multiple(() =>
+        {
             Assert.That(unkeyed.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-            Assert.That(health.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(wrongKey.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(probe.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(read.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(probeCheck.InvocationCount, Is.EqualTo(1));
+            Assert.That(host.Store.GetCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task HealthDatabase_WhenConcurrencyHeld_RejectedBySharedCeilingWithoutConsumingBudget()
+    {
+        CountingProbeHealthCheck probeCheck = new();
+        Dictionary<string, string?> settings = Limits(read: 50, probe: 1, concurrency: 1);
+        settings["Diagnostics:DatabaseProbeKey"] = ProbeKey;
+        using MonitoringRuleApiHost host = new(settings, probeCheck: probeCheck);
+        host.SeedRule();
+        host.Client.DefaultRequestHeaders.Add(ProbeKeyHeader, ProbeKey);
+        TaskCompletionSource<object?> gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Store.ReadGate = gate.Task;
+        Task<HttpResponseMessage> blocked = host.Client.GetAsync(Path());
+        await WaitForAsync(() => host.Store.ActiveReads == 1);
+
+        HttpResponseMessage rejected = await host.Client.GetAsync("/health/database");
+        gate.SetResult(null);
+        HttpResponseMessage released = await blocked;
+        HttpResponseMessage probe = await host.Client.GetAsync("/health/database");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rejected.StatusCode, Is.EqualTo((HttpStatusCode)429));
+            Assert.That(rejected.Headers.Contains("Retry-After"), Is.False);
+            Assert.That(released.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(probe.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(probeCheck.InvocationCount, Is.EqualTo(1));
         });
     }
 
@@ -314,6 +512,7 @@ public sealed class AdministrationRateLimitingTests
         int? write = null,
         int concurrency = 4,
         int probe = 10,
+        int queue = 0,
         int windowSeconds = 3600)
     {
         return new Dictionary<string, string?>
@@ -323,7 +522,7 @@ public sealed class AdministrationRateLimitingTests
             ["RateLimiting:WritePermitLimit"] = (write ?? read).ToString(CultureInfo.InvariantCulture),
             ["RateLimiting:ConcurrencyPermitLimit"] = concurrency.ToString(CultureInfo.InvariantCulture),
             ["RateLimiting:DatabaseProbePermitLimit"] = probe.ToString(CultureInfo.InvariantCulture),
-            ["RateLimiting:QueueLimit"] = "0"
+            ["RateLimiting:QueueLimit"] = queue.ToString(CultureInfo.InvariantCulture)
         };
     }
 }

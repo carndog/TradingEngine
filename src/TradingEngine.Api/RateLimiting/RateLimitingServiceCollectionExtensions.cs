@@ -1,12 +1,10 @@
-using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.Options;
 
 namespace TradingEngine.Api.RateLimiting;
 
 internal static class RateLimitingServiceCollectionExtensions
 {
-    internal const string DatabaseProbePolicy = ApiRateLimiterOptionsSetup.DatabaseProbePolicyName;
-
     public static IServiceCollection AddApiRateLimiting(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -22,8 +20,22 @@ internal static class RateLimitingServiceCollectionExtensions
                 options => options.WritePermitLimit <= options.ReadPermitLimit,
                 "RateLimiting:WritePermitLimit must not exceed RateLimiting:ReadPermitLimit.")
             .ValidateOnStart();
-        services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ApiRateLimiterOptionsSetup>();
-        services.AddRateLimiter();
+        services.AddSingleton(provider =>
+        {
+            ApiRateLimitOptions limits = provider
+                .GetRequiredService<IOptions<ApiRateLimitOptions>>()
+                .Value;
+
+            return new ConcurrencyLimiter(
+                new ConcurrencyLimiterOptions
+                {
+                    PermitLimit = limits.ConcurrencyPermitLimit,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = limits.QueueLimit
+                });
+        });
+        services.AddSingleton<IAdministrationRequestLimiter, AdministrationRequestLimiter>();
+        services.AddSingleton<IDatabaseProbeRequestLimiter, DatabaseProbeRequestLimiter>();
 
         return services;
     }

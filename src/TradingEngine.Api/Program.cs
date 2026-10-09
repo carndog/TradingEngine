@@ -34,13 +34,15 @@ WebApplication app = builder.Build();
 
 app.UseWhen(
     context => context.Request.Path.StartsWithSegments("/health/database"),
-    branch => branch.UseMiddleware<DatabaseProbeKeyMiddleware>());
+    branch => branch
+        .UseMiddleware<DatabaseProbeKeyMiddleware>()
+        .UseMiddleware<RateLimitingGateMiddleware>(RateLimitingGate.DatabaseProbe));
 
 app.UseWhen(
     context => context.Request.Path.StartsWithSegments("/api"),
-    branch => branch.UseMiddleware<EasyAuthPrincipalMiddleware>());
-
-app.UseRateLimiter();
+    branch => branch
+        .UseMiddleware<EasyAuthPrincipalMiddleware>()
+        .UseMiddleware<RateLimitingGateMiddleware>(RateLimitingGate.Administration));
 
 app.MapHealthChecks(
         "/health",
@@ -49,8 +51,7 @@ app.MapHealthChecks(
             Predicate = check => check.Tags.Contains("database") is false,
             ResponseWriter = HealthResponseWriter.WriteAsync
         })
-    .AllowAnonymous()
-    .DisableRateLimiting();
+    .AllowAnonymous();
 
 app.MapHealthChecks(
         "/health/database",
@@ -59,17 +60,14 @@ app.MapHealthChecks(
             Predicate = check => check.Tags.Contains("database"),
             ResponseWriter = HealthResponseWriter.WriteAsync
         })
-    .AllowAnonymous()
-    .RequireRateLimiting(RateLimitingServiceCollectionExtensions.DatabaseProbePolicy);
+    .AllowAnonymous();
 
 app.MapGet(
         "/version",
         (ApplicationVersionProvider versionProvider) => TypedResults.Ok(versionProvider.GetCurrent()))
-    .AllowAnonymous()
-    .DisableRateLimiting();
+    .AllowAnonymous();
 
-app.MapGet("/auth-check", () => TypedResults.NoContent())
-    .DisableRateLimiting();
+app.MapGet("/auth-check", () => TypedResults.NoContent());
 
 app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();
