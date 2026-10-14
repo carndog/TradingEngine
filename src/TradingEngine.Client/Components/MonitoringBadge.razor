@@ -1,0 +1,21 @@
+<span class="te-badge @(State == "monitored" ? "te-enabled" : string.Empty)">
+    <span class="te-dot" aria-hidden="true"></span>@Display
+</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public string State { get; set; } = string.Empty;
+
+    private string Display
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(State))
+            {
+                return string.Empty;
+            }
+
+            return char.ToUpperInvariant(State[0]) + State.Substring(1);
+        }
+    }
+}

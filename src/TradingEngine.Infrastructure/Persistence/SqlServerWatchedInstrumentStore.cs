@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using NodaTime;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Time;
@@ -99,22 +100,7 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
             return WatchedInstrumentErrors.ConfigurationNotFound;
         }
 
-        Result<WatchedInstrument> instrument = WatchedInstrument.Restore(
-            row.Id,
-            row.Symbol,
-            row.Exchange,
-            row.QuoteCurrency,
-            ParseMonitoringState(row),
-            row.SamplingIntervalSeconds,
-            row.CreatedAt,
-            row.LastChangedAt);
-
-        if (instrument.IsFailure)
-        {
-            throw new InvalidDataException(
-                $"The persisted watched instrument '{instrumentId}' is invalid " +
-                $"({instrument.Error.Code}): {instrument.Error.Description}");
-        }
+        Result<WatchedInstrument> instrument = Restore(row);
 
         MonitoringRuleRow? rule = await _context.MonitoringRules
             .AsNoTracking()
@@ -138,6 +124,125 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         }
 
         return new WatchedInstrumentConfiguration(instrument.Value, effective.Definition);
+    }
+
+    public async Task<Result<WatchedInstrumentPage>> SearchAsync(
+        string? query,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<WatchedInstrumentRow> candidates = _context.WatchedInstruments
+            .AsNoTracking();
+
+        if (string.IsNullOrWhiteSpace(query) is false)
+        {
+            string normalized = query.Trim().ToUpperInvariant();
+            candidates = candidates.Where(instrument =>
+                instrument.Symbol.ToUpper().Contains(normalized)
+                || instrument.Exchange.ToUpper().Contains(normalized));
+        }
+
+        int totalCount = await candidates.CountAsync(cancellationToken);
+
+        List<WatchedInstrumentRow> rows = await candidates
+            .OrderBy(instrument => instrument.Symbol.ToUpper())
+            .ThenBy(instrument => instrument.Exchange.ToUpper())
+            .ThenBy(instrument => instrument.QuoteCurrency.ToUpper())
+            .ThenBy(instrument => instrument.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        WatchedInstrumentSummary[] items = rows
+            .Select(row => new WatchedInstrumentSummary(
+                row.Id,
+                row.Symbol,
+                row.Exchange,
+                row.QuoteCurrency,
+                ParseMonitoringState(row),
+                row.SamplingIntervalSeconds))
+            .ToArray();
+
+        return new WatchedInstrumentPage(items, page, pageSize, totalCount);
+    }
+
+    public async Task<Result<WatchedInstrumentSettingsSnapshot>> GetSettingsAsync(
+        Guid instrumentId,
+        CancellationToken cancellationToken)
+    {
+        WatchedInstrumentRow? row = await _context.WatchedInstruments
+            .AsNoTracking()
+            .SingleOrDefaultAsync(instrument => instrument.Id == instrumentId, cancellationToken);
+
+        if (row is null)
+        {
+            return WatchedInstrumentErrors.SettingsNotFound;
+        }
+
+        Result<WatchedInstrument> instrument = Restore(row);
+
+        return new WatchedInstrumentSettingsSnapshot(instrument.Value, row.RowVersion);
+    }
+
+    public async Task<Result<WatchedInstrumentSettingsSnapshot>> SaveSettingsAsync(
+        WatchedInstrument instrument,
+        byte[] expectedConcurrencyToken,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(instrument);
+        ArgumentNullException.ThrowIfNull(expectedConcurrencyToken);
+
+        WatchedInstrumentRow? row = await _context.WatchedInstruments
+            .SingleOrDefaultAsync(candidate => candidate.Id == instrument.Id, cancellationToken);
+
+        if (row is null)
+        {
+            return WatchedInstrumentErrors.SettingsNotFound;
+        }
+
+        EntityEntry<WatchedInstrumentRow> entry = _context.Entry(row);
+        entry.Property(nameof(WatchedInstrumentRow.RowVersion)).OriginalValue =
+            expectedConcurrencyToken;
+
+        row.MonitoringState = instrument.MonitoringState.ToString();
+        row.SamplingIntervalSeconds = instrument.SamplingIntervalSeconds;
+        row.LastChangedAt = PersistedInstant.Require(
+            instrument.LastChangedAt,
+            nameof(instrument));
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return WatchedInstrumentErrors.ConcurrentChange;
+        }
+
+        return new WatchedInstrumentSettingsSnapshot(instrument, row.RowVersion);
+    }
+
+    private Result<WatchedInstrument> Restore(WatchedInstrumentRow row)
+    {
+        Result<WatchedInstrument> instrument = WatchedInstrument.Restore(
+            row.Id,
+            row.Symbol,
+            row.Exchange,
+            row.QuoteCurrency,
+            ParseMonitoringState(row),
+            row.SamplingIntervalSeconds,
+            row.CreatedAt,
+            row.LastChangedAt);
+
+        if (instrument.IsFailure)
+        {
+            throw new InvalidDataException(
+                $"The persisted watched instrument '{row.Id}' is invalid " +
+                $"({instrument.Error.Code}): {instrument.Error.Description}");
+        }
+
+        return instrument;
     }
 
     private static MonitoringState ParseMonitoringState(WatchedInstrumentRow row)

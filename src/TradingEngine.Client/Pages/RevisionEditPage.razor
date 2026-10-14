@@ -1,0 +1,225 @@
+@page "/instruments/{Id:guid}/revisions/{RevisionId:guid}"
+@inject TradingEngineApiClient Api
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="te-back">
+    <a href="instruments/@Id?tab=timeline">← Back to timeline</a>
+</div>
+
+@if (_fatal is not null)
+{
+    <ErrorNotice Error="@_fatal">
+        <button type="button" @onclick="LoadAsync">Retry</button>
+        @if (_fatal.IsUnauthorized)
+        {
+            <a href="signin.html">Sign in</a>
+        }
+    </ErrorNotice>
+}
+else if (_loading)
+{
+    <div class="te-panel" role="status"><p class="te-sub">Loading…</p></div>
+}
+else
+{
+    <h2 tabindex="-1">Edit scheduled revision</h2>
+    <p class="te-sub">@_instrumentLabel</p>
+
+    <div class="te-editor">
+        <div class="te-editor-head">
+            <div class="te-row">
+                <div>
+                    <strong>Revision @(_revision?.RevisionNumber?.ToString() ?? string.Empty)</strong>
+                    <p class="te-note">
+                        Scheduled for @UtcTimes.Format(_revision?.EffectiveFrom)
+                        @if (_revision?.EffectiveTo is not null)
+                        {
+                            <text> until @UtcTimes.Format(_revision.EffectiveTo)</text>
+                        }
+                    </p>
+                </div>
+                @if (_dirty)
+                {
+                    <span class="te-tag te-dirty">Unsaved changes</span>
+                }
+            </div>
+        </div>
+        <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
+    </div>
+
+    <section class="te-detail-card" aria-label="Revision options">
+        <h3>Options</h3>
+        <div class="te-fields te-two">
+            <label>
+                Effective from (UTC)
+                <input type="datetime-local" value="@_effectiveFrom"
+                       @onchange="args => SetField(value => _effectiveFrom = value, args)"
+                       aria-label="Effective from UTC">
+            </label>
+            <label>
+                Change reason
+                <input value="@_reason"
+                       @onchange="args => SetField(value => _reason = value, args)" maxlength="500"
+                       aria-label="Change reason" placeholder="Why is this change being made?">
+            </label>
+        </div>
+        <p class="te-note">Rescheduling requires a start at or after the current UTC time.</p>
+
+        <ErrorNotice Error="@_saveError">
+            @if (_saveError?.IsPreconditionFailed == true)
+            {
+                <button type="button" @onclick="LoadAsync">Reload latest</button>
+            }
+        </ErrorNotice>
+
+        <div class="te-footer">
+            <button type="button" class="te-primary" @onclick="SaveAsync" disabled="@_busy">
+                @(_busy ? "Saving…" : "Save revision")
+            </button>
+            <a href="instruments/@Id?tab=timeline" style="align-self:center">Cancel</a>
+        </div>
+    </section>
+}
+
+<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
+                ConfirmExternalNavigation="@_dirty" />
+
+@code {
+    private DefinitionEditModel _definition = DefinitionEditModel.Empty();
+    private MonitoringRuleRevisionDto? _revision;
+    private ApiError? _fatal;
+    private ApiError? _saveError;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _dirty;
+    private string _instrumentLabel = string.Empty;
+    private string _token = string.Empty;
+    private string _reason = string.Empty;
+    private string _effectiveFrom = string.Empty;
+    private readonly CancellationTokenSource _lifetime = new();
+
+    [Parameter]
+    public Guid Id { get; set; }
+
+    [Parameter]
+    public Guid RevisionId { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _fatal is null)
+        {
+            await JS.InvokeVoidAsync("teFocus", "h2");
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _fatal = null;
+        _saveError = null;
+        _dirty = false;
+
+        ApiResult<WatchedInstrumentSettingsResponse> instrument =
+            await Api.GetSettingsAsync(Id, _lifetime.Token);
+        if (instrument.IsFailure)
+        {
+            _loading = false;
+            _fatal = instrument.Error;
+            return;
+        }
+
+        _instrumentLabel =
+            $"{instrument.Value!.Symbol} · {instrument.Value.Exchange} · {instrument.Value.QuoteCurrency}";
+
+        ApiResult<MonitoringRuleRevisionResponse> revision =
+            await Api.GetRevisionAsync(Id, RevisionId, _lifetime.Token);
+        if (revision.IsFailure)
+        {
+            _loading = false;
+            _fatal = revision.Error;
+            return;
+        }
+
+        _revision = revision.Value!.Revision;
+        _token = revision.Value.ConcurrencyToken;
+
+        if (_revision.EffectiveFrom is null || _revision.EffectiveFrom <= DateTimeOffset.UtcNow)
+        {
+            _fatal = ApiError.Create(409, "revision.period_begun",
+                "This revision has already begun or ended and can no longer be edited.", null);
+            _loading = false;
+            return;
+        }
+
+        _definition = _revision.Definition is null
+            ? DefinitionEditModel.Empty()
+            : DefinitionEditModel.FromDto(_revision.Definition);
+        _reason = _revision.ChangeReason ?? string.Empty;
+        _effectiveFrom = UtcTimes.ToInputValue(_revision.EffectiveFrom);
+        _loading = false;
+    }
+
+    private void MarkDirty()
+    {
+        _dirty = true;
+    }
+
+    private void SetField(Action<string> setter, ChangeEventArgs args)
+    {
+        setter(args.Value?.ToString() ?? string.Empty);
+        MarkDirty();
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _saveError = null;
+
+        EditMonitoringRuleRevisionRequest request = new(
+            string.IsNullOrWhiteSpace(_reason) ? null : _reason.Trim(),
+            _definition.ToDto(),
+            UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveFrom)));
+
+        ApiResult<MonitoringRuleTimelineResponse> result = await Api.UpdateRevisionAsync(
+            Id, RevisionId, request, _token, _lifetime.Token);
+
+        _busy = false;
+
+        if (result.IsSuccess)
+        {
+            _dirty = false;
+            Navigation.NavigateTo($"instruments/{Id}?tab=timeline");
+        }
+        else
+        {
+            _saveError = result.Error;
+        }
+    }
+
+    private async Task GuardNavigation(LocationChangingContext context)
+    {
+        if (_dirty)
+        {
+            bool confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "You have unsaved changes. Leave this page and discard them?");
+            if (confirmed is false)
+            {
+                context.PreventNavigation();
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}

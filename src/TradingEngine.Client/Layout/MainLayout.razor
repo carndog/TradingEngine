@@ -1,0 +1,17 @@
+@inherits LayoutComponentBase
+
+<header class="te-top">
+    <div class="te-brand"><span class="te-logo" aria-hidden="true">T</span>Trading Engine</div>
+    <div class="te-top-actions">
+        <a href="signin.html">Sign in</a>
+    </div>
+</header>
+<div class="te-shell">
+    <nav class="te-nav" aria-label="Application navigation">
+        <p class="te-section-name">Administration</p>
+        <NavLink class="te-nav-item" href="instruments" Match="NavLinkMatch.Prefix">Instruments</NavLink>
+    </nav>
+    <main class="te-main" id="main-content">
+        @Body
+    </main>
+</div>

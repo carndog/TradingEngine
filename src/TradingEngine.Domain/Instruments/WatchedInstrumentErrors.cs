@@ -83,4 +83,32 @@ public static class WatchedInstrumentErrors
     public static readonly Error ConfigurationNotFound = Error.NotFound(
         "watched_instrument.configuration_not_found",
         "No configuration exists for the requested watched instrument.");
+
+    public static readonly Error SettingsNotFound = Error.NotFound(
+        "watched_instrument.settings_not_found",
+        "No watched instrument exists for the requested identifier.");
+
+    public static readonly Error PageInvalid = Error.Validation(
+        "watched_instrument.page_invalid",
+        "The requested page must be at least 1.");
+
+    public static readonly Error PageSizeOutOfRange = Error.Validation(
+        "watched_instrument.page_size_out_of_range",
+        "The requested page size must be between 1 and 100.");
+
+    public static readonly Error SearchQueryTooLong = Error.Validation(
+        "watched_instrument.search_query_too_long",
+        "The search query cannot exceed 128 characters.");
+
+    public static readonly Error ConcurrencyTokenRequired = Error.PreconditionRequired(
+        "watched_instrument.concurrency_token_required",
+        "A settings change requires the current concurrency token via the If-Match header.");
+
+    public static readonly Error ConcurrencyTokenInvalid = Error.Validation(
+        "watched_instrument.concurrency_token_invalid",
+        "The supplied settings concurrency token is malformed.");
+
+    public static readonly Error ConcurrentChange = Error.PreconditionFailed(
+        "watched_instrument.concurrent_change",
+        "The watched instrument changed after it was loaded; reload and retry the change.");
 }

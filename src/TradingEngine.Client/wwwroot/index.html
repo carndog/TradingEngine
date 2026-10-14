@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Trading Engine</title>
+    <base href="/">
+    <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+    <div id="app">
+        <div class="te-boot" role="status">Loading Trading Engine…</div>
+    </div>
+    <script>
+        window.teFocus = function (selector) {
+            const el = document.querySelector(selector);
+            if (el) { el.focus(); }
+        };
+    </script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+</html>

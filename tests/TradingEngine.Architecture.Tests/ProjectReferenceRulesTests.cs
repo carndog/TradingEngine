@@ -19,9 +19,14 @@ public sealed class ProjectReferenceRulesTests
                 "TradingEngine.Domain"
             },
             ["TradingEngine.Contracts"] = new HashSet<string>(StringComparer.Ordinal),
+            ["TradingEngine.Client"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "TradingEngine.Contracts"
+            },
             ["TradingEngine.Api"] = new HashSet<string>(StringComparer.Ordinal)
             {
                 "TradingEngine.Application",
+                "TradingEngine.Client",
                 "TradingEngine.Contracts",
                 "TradingEngine.Infrastructure"
             }
@@ -31,6 +36,7 @@ public sealed class ProjectReferenceRulesTests
     [TestCase("TradingEngine.Application")]
     [TestCase("TradingEngine.Infrastructure")]
     [TestCase("TradingEngine.Contracts")]
+    [TestCase("TradingEngine.Client")]
     [TestCase("TradingEngine.Api")]
     public void ProductionProject_WithApprovedReferences_MatchesAllowList(string projectName)
     {

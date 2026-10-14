@@ -1,0 +1,49 @@
+<section class="te-confirm" aria-label="@Title">
+    <div class="te-body">
+        <h3>@Title</h3>
+        @ChildContent
+        <ErrorNotice Error="@Error" />
+        <div class="te-row">
+            <button class="te-primary" @ref="_confirmButton" @onclick="OnConfirm" disabled="@Busy">
+                @(Busy ? BusyLabel : ConfirmLabel)
+            </button>
+            <button @onclick="OnCancel" disabled="@Busy">Cancel</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    private ElementReference _confirmButton;
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string ConfirmLabel { get; set; } = "Confirm";
+
+    [Parameter]
+    public string BusyLabel { get; set; } = "Working…";
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public ApiError? Error { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public EventCallback OnConfirm { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await _confirmButton.FocusAsync();
+        }
+    }
+}

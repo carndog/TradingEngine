@@ -7,6 +7,8 @@ flowchart TD
     API[TradingEngine.Api] --> Application[TradingEngine.Application]
     API --> Infrastructure[TradingEngine.Infrastructure]
     API --> Contracts[TradingEngine.Contracts]
+    API --> Client[TradingEngine.Client]
+    Client --> Contracts
     Infrastructure --> Application
     Infrastructure --> Domain[TradingEngine.Domain]
     Application --> Domain
@@ -20,7 +22,8 @@ flowchart TD
 | `TradingEngine.Application` | Use-case orchestration and use-case-specific ports | Domain |
 | `TradingEngine.Infrastructure` | Driven adapters implemented by later stories | Application, Domain |
 | `TradingEngine.Contracts` | Stable HTTP and message DTOs | None |
-| `TradingEngine.Api` | HTTP driving adapter and composition root | Application, Infrastructure, Contracts |
+| `TradingEngine.Client` | Blazor WebAssembly browser client; calls the REST API only | Contracts |
+| `TradingEngine.Api` | HTTP driving adapter and composition root; hosts the client static assets | Application, Infrastructure, Contracts, Client |
 
 Contracts are transport-facing types rather than domain types. Domain and Application do not reference Contracts, so transport versioning cannot leak into the core.
 

@@ -1,0 +1,14 @@
+<Router AppAssembly="@typeof(App).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(MainLayout)">
+            <section class="te-panel te-not-found" aria-label="Page not found">
+                <h2 tabindex="-1">Page not found</h2>
+                <p class="te-sub">The requested page does not exist.</p>
+                <a href="instruments">Back to instruments</a>
+            </section>
+        </LayoutView>
+    </NotFound>
+</Router>

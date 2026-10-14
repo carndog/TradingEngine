@@ -1,0 +1,310 @@
+@page "/"
+@page "/instruments"
+@inject TradingEngineApiClient Api
+@inject NavigationManager Navigation
+@inject InstrumentListState ListState
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="te-row">
+    <div>
+        <h2 tabindex="-1">Watched instruments</h2>
+        <p class="te-sub">Search and open a monitored or configured instrument.</p>
+    </div>
+    <div class="te-row" style="gap:8px">
+        <a class="te-primary" href="instruments/new" style="padding:8px 12px;border-radius:6px;text-decoration:none">Add instrument</a>
+        @if (CanSignIn)
+        {
+            <a href="signin.html">Sign in</a>
+        }
+    </div>
+</div>
+
+<div class="te-toolbar">
+    <label class="te-search">
+        <span class="te-sr">Search instruments</span>
+        <input type="search"
+               placeholder="Search symbol or exchange…"
+               value="@_searchText"
+               @oninput="OnSearchInput"
+               @onkeydown="OnSearchKeyDown"
+               aria-label="Search instruments">
+    </label>
+</div>
+
+@if (_error is not null)
+{
+    <ErrorNotice Error="@_error">
+        <button type="button" @onclick="RetryAsync">Retry</button>
+        @if (_error.IsUnauthorized)
+        {
+            <a href="signin.html">Sign in</a>
+        }
+    </ErrorNotice>
+}
+else if (_loading)
+{
+    <div class="te-panel" role="status" aria-label="Loading instruments">
+        <p class="te-sub">Loading instruments…</p>
+    </div>
+}
+else if (_result is not null && _result.TotalCount == 0)
+{
+    <section class="te-panel" aria-label="No instruments">
+        <h3>No instruments found</h3>
+        <p class="te-sub">There are no matches for “@_searchText”.</p>
+        <div class="te-footer">
+            <button type="button" class="te-primary" @onclick="ClearSearch">Clear search</button>
+            <a href="instruments/new" style="align-self:center">Add instrument</a>
+        </div>
+    </section>
+}
+else if (_result is not null)
+{
+    <div class="te-table-wrap">
+        <table aria-label="Watched instruments">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Exchange</th>
+                    <th>Quote currency</th>
+                    <th>Monitoring</th>
+                    <th class="te-right">Interval (s)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (WatchedInstrumentSummaryDto item in _result.Items)
+                {
+                    <tr aria-current="@(ListState.SelectedId == item.Id ? "true" : null)">
+                        <td data-label="Symbol">
+                            <button type="button" class="te-open"
+                                    data-record="@item.Id"
+                                    @onclick="() => OpenInstrument(item.Id)">@item.Symbol</button>
+                        </td>
+                        <td data-label="Exchange">@item.Exchange</td>
+                        <td data-label="Quote currency">@item.QuoteCurrency</td>
+                        <td data-label="Monitoring"><MonitoringBadge State="@item.MonitoringState" /></td>
+                        <td data-label="Interval (s)" class="te-right">@item.SamplingIntervalSeconds</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="te-pagination">
+        <span class="te-small">@RangeText</span>
+        <div class="te-pager">
+            <label class="te-page-size">
+                Rows
+                <select value="@_pageSize" @onchange="OnPageSizeChanged" aria-label="Rows per page">
+                    @foreach (int size in PageSizes)
+                    {
+                        <option value="@size" selected="@(size == _pageSize)">@size</option>
+                    }
+                </select>
+            </label>
+            <button type="button" @onclick="() => GoToPage(1)" disabled="@(CurrentPage <= 1)" aria-label="First page">First</button>
+            <button type="button" @onclick="() => GoToPage(CurrentPage - 1)" disabled="@(CurrentPage <= 1)" aria-label="Previous page">Prev</button>
+            <span class="te-page-label" aria-live="polite">Page @CurrentPage of @TotalPages</span>
+            <button type="button" @onclick="() => GoToPage(CurrentPage + 1)" disabled="@(CurrentPage >= TotalPages)" aria-label="Next page">Next</button>
+            <button type="button" @onclick="() => GoToPage(TotalPages)" disabled="@(CurrentPage >= TotalPages)" aria-label="Last page">Last</button>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly int[] PageSizes = [10, 25, 50];
+
+    private WatchedInstrumentPageResponse? _result;
+    private ApiError? _error;
+    private bool _loading = true;
+    private int _searchVersion;
+    private string _searchText = string.Empty;
+    private int _pageSize = 25;
+    private CancellationTokenSource? _debounce;
+    private readonly CancellationTokenSource _lifetime = new();
+    private Guid? _focusId;
+    private bool _focusPending;
+
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? Query { get; set; }
+
+    [SupplyParameterFromQuery(Name = "page")]
+    public int Page { get; set; }
+
+    [SupplyParameterFromQuery(Name = "pageSize")]
+    public int RequestedPageSize { get; set; }
+
+    private bool CanSignIn => true;
+
+    private int CurrentPage => _result?.Page ?? Math.Max(1, Page);
+
+    private int TotalPages => _result is null || _result.TotalCount == 0
+        ? 1
+        : (int)Math.Ceiling(_result.TotalCount / (double)_result.PageSize);
+
+    private string RangeText
+    {
+        get
+        {
+            if (_result is null || _result.TotalCount == 0)
+            {
+                return string.Empty;
+            }
+
+            int first = (_result.Page - 1) * _result.PageSize + 1;
+            int last = Math.Min(_result.Page * _result.PageSize, _result.TotalCount);
+            return $"Showing {first}–{last} of {_result.TotalCount} instruments";
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _searchVersion++;
+        int version = _searchVersion;
+        _loading = true;
+        _error = null;
+        _result = null;
+        _searchText = Query ?? string.Empty;
+        _pageSize = PageSizes.Contains(RequestedPageSize) ? RequestedPageSize : 25;
+        int page = Page < 1 ? 1 : Page;
+
+        ListState.ListUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
+        _focusId = ListState.SelectedId;
+
+        ApiResult<WatchedInstrumentPageResponse> result = await Api.SearchInstrumentsAsync(
+            _searchText,
+            page,
+            _pageSize,
+            _lifetime.Token);
+
+        if (version != _searchVersion)
+        {
+            return;
+        }
+
+        _loading = false;
+
+        if (result.IsSuccess)
+        {
+            _result = result.Value;
+
+            if (_result!.TotalCount > 0 && page > TotalPages)
+            {
+                Navigation.NavigateTo(BuildUrl(_searchText, TotalPages, _pageSize), replace: true);
+                return;
+            }
+
+            _focusPending = _focusId is not null;
+        }
+        else
+        {
+            _error = result.Error;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusPending && _focusId is not null)
+        {
+            _focusPending = false;
+            await JS.InvokeVoidAsync("teFocus", $"[data-record='{_focusId}']");
+            _focusId = null;
+        }
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs args)
+    {
+        _searchText = args.Value?.ToString() ?? string.Empty;
+        _debounce?.Cancel();
+        _debounce?.Dispose();
+        _debounce = new CancellationTokenSource();
+        CancellationTokenSource debounce = _debounce;
+
+        try
+        {
+            await Task.Delay(300, debounce.Token);
+            if (debounce.IsCancellationRequested is false)
+            {
+                NavigateToQuery(replace: true);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private void OnSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            _debounce?.Cancel();
+            NavigateToQuery(replace: false);
+        }
+    }
+
+    private void ClearSearch()
+    {
+        _searchText = string.Empty;
+        NavigateToQuery(replace: true);
+    }
+
+    private void NavigateToQuery(bool replace)
+    {
+        Navigation.NavigateTo(BuildUrl(_searchText, 1, _pageSize), replace: replace);
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out int size))
+        {
+            _pageSize = size;
+            Navigation.NavigateTo(BuildUrl(_searchText, 1, size), replace: true);
+        }
+    }
+
+    private void GoToPage(int page)
+    {
+        Navigation.NavigateTo(BuildUrl(_searchText, page, _pageSize));
+    }
+
+    private void OpenInstrument(Guid id)
+    {
+        ListState.SelectedId = id;
+        Navigation.NavigateTo($"instruments/{id}");
+    }
+
+    private Task RetryAsync()
+    {
+        return OnParametersSetAsync();
+    }
+
+    private static string BuildUrl(string query, int page, int pageSize)
+    {
+        List<string> parts = [];
+        if (string.IsNullOrWhiteSpace(query) is false)
+        {
+            parts.Add($"q={Uri.EscapeDataString(query.Trim())}");
+        }
+
+        if (page > 1)
+        {
+            parts.Add($"page={page}");
+        }
+
+        if (pageSize != 25)
+        {
+            parts.Add($"pageSize={pageSize}");
+        }
+
+        return parts.Count == 0 ? "instruments" : $"instruments?{string.Join("&", parts)}";
+    }
+
+    public void Dispose()
+    {
+        _debounce?.Cancel();
+        _debounce?.Dispose();
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}

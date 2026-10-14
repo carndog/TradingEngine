@@ -37,6 +37,17 @@ internal static class ApiProblemDetails
             });
     }
 
+    internal static ProblemHttpResult Forbidden(string code, string detail)
+    {
+        return TypedResults.Problem(
+            statusCode: StatusCodes.Status403Forbidden,
+            detail: detail,
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = code
+            });
+    }
+
     internal static ProblemHttpResult TooManyRequests()
     {
         return TypedResults.Problem(

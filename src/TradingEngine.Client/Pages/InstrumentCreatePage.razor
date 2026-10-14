@@ -1,0 +1,157 @@
+@page "/instruments/new"
+@inject TradingEngineApiClient Api
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="te-back">
+    <a href="instruments">← Back to instruments</a>
+</div>
+
+<h2 tabindex="-1">Add instrument</h2>
+<p class="te-sub">Register a new instrument and its first monitoring-rule revision. All times are UTC.</p>
+
+<section class="te-detail-card" aria-label="Instrument details">
+    <h3>Instrument</h3>
+    <div class="te-fields">
+        <label>
+            Symbol
+            <input @bind="_symbol" @bind:event="oninput" @onchange="MarkDirty" maxlength="64"
+                   aria-label="Symbol" placeholder="e.g. BTCUSD">
+        </label>
+        <label>
+            Exchange
+            <input @bind="_exchange" @bind:event="oninput" @onchange="MarkDirty" maxlength="20"
+                   aria-label="Exchange" placeholder="e.g. COINBASE">
+        </label>
+        <label>
+            Quote currency
+            <input @bind="_quoteCurrency" @bind:event="oninput" @onchange="MarkDirty" maxlength="10"
+                   aria-label="Quote currency" placeholder="e.g. USD">
+        </label>
+        <label>
+            Monitoring state
+            <select @bind="_monitoringState" @bind:after="MarkDirty" aria-label="Monitoring state">
+                <option value="configured">Configured</option>
+                <option value="monitored">Monitored</option>
+            </select>
+        </label>
+        <label>
+            Sampling interval (seconds)
+            <input type="number" min="1" max="3600" @bind="_interval" @bind:event="oninput" @onchange="MarkDirty"
+                   aria-label="Sampling interval seconds">
+        </label>
+    </div>
+    <p class="te-note">The first monitoring-rule revision becomes effective at registration time.</p>
+</section>
+
+<div class="te-editor">
+    <div class="te-editor-head">
+        <div class="te-row">
+            <div>
+                <strong>Initial monitoring rule</strong>
+                <p class="te-note">At least one support or resistance zone is required.</p>
+            </div>
+            @if (_dirty)
+            {
+                <span class="te-tag te-dirty">Unsaved changes</span>
+            }
+        </div>
+    </div>
+    <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
+</div>
+
+<ErrorNotice Error="@_error" />
+
+<div class="te-footer">
+    <button type="button" class="te-primary" @onclick="RegisterAsync" disabled="@_busy">
+        @(_busy ? "Registering…" : "Register instrument")
+    </button>
+    <a href="instruments" style="align-self:center">Cancel</a>
+</div>
+
+<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
+                ConfirmExternalNavigation="@_dirty" />
+
+@code {
+    private DefinitionEditModel _definition = DefinitionEditModel.Empty();
+    private ApiError? _error;
+    private bool _busy;
+    private bool _dirty;
+    private string _symbol = string.Empty;
+    private string _exchange = string.Empty;
+    private string _quoteCurrency = string.Empty;
+    private string _monitoringState = "configured";
+    private int _interval = 60;
+    private readonly CancellationTokenSource _lifetime = new();
+
+    protected override void OnInitialized()
+    {
+        _definition.AddSupportZone();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("teFocus", "h2");
+        }
+    }
+
+    private void MarkDirty()
+    {
+        _dirty = true;
+    }
+
+    private async Task RegisterAsync()
+    {
+        _busy = true;
+        _error = null;
+
+        MonitoringRuleDefinitionDto definition = _definition.ToDto();
+        RegisterWatchedInstrumentRequest request = new(
+            _symbol,
+            _exchange,
+            _quoteCurrency,
+            _interval,
+            _monitoringState,
+            definition.PriceScale,
+            definition.SupportZones,
+            definition.ResistanceZones);
+
+        ApiResult<WatchedInstrumentResponse> result =
+            await Api.RegisterInstrumentAsync(request, _lifetime.Token);
+
+        _busy = false;
+
+        if (result.IsSuccess)
+        {
+            _dirty = false;
+            Navigation.NavigateTo($"instruments/{result.Value!.Id}?tab=current");
+        }
+        else
+        {
+            _error = result.Error;
+        }
+    }
+
+    private async Task GuardNavigation(LocationChangingContext context)
+    {
+        if (_dirty)
+        {
+            bool confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "You have unsaved changes. Leave this page and discard them?");
+            if (confirmed is false)
+            {
+                context.PreventNavigation();
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}

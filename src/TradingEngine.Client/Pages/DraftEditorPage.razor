@@ -1,0 +1,460 @@
+@page "/instruments/{Id:guid}/drafts/new"
+@page "/instruments/{Id:guid}/drafts/{DraftId:guid}"
+@inject TradingEngineApiClient Api
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="te-back">
+    <a href="instruments/@Id?tab=drafts">← Back to drafts</a>
+</div>
+
+@if (_fatal is not null)
+{
+    <ErrorNotice Error="@_fatal">
+        <button type="button" @onclick="LoadAsync">Retry</button>
+        @if (_fatal.IsUnauthorized)
+        {
+            <a href="signin.html">Sign in</a>
+        }
+    </ErrorNotice>
+}
+else if (_loading)
+{
+    <div class="te-panel" role="status"><p class="te-sub">Loading…</p></div>
+}
+else
+{
+    <h2 tabindex="-1">@(IsNew ? "New draft" : "Edit draft")</h2>
+    <p class="te-sub">@_instrumentLabel</p>
+
+    <div class="te-editor">
+        <div class="te-editor-head">
+            <div class="te-row">
+                <div>
+                    <strong>Draft definition</strong>
+                    <p class="te-note">Drafts do not become effective until applied or scheduled.</p>
+                </div>
+                @if (_dirty)
+                {
+                    <span class="te-tag te-dirty">Unsaved changes</span>
+                }
+            </div>
+        </div>
+        <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
+    </div>
+
+    <section class="te-detail-card" aria-label="Draft options">
+        <h3>Options</h3>
+        <div class="te-fields">
+            <label>
+                Proposed start (UTC, optional)
+                <input type="datetime-local" value="@_proposedFrom"
+                       @onchange="args => SetField(value => _proposedFrom = value, args)"
+                       aria-label="Proposed effective from UTC">
+            </label>
+            <label>
+                Proposed end (UTC, optional)
+                <input type="datetime-local" value="@_proposedTo"
+                       @onchange="args => SetField(value => _proposedTo = value, args)"
+                       aria-label="Proposed effective to UTC">
+            </label>
+            <label>
+                Change reason
+                <input value="@_reason"
+                       @onchange="args => SetField(value => _reason = value, args)" maxlength="500"
+                       aria-label="Change reason" placeholder="Why is this change being made?">
+            </label>
+        </div>
+        <p class="te-note">Proposed dates are advisory only — they never make a draft effective by themselves.</p>
+
+        <ErrorNotice Error="@_saveError">
+            @if (_saveError?.IsPreconditionFailed == true)
+            {
+                <button type="button" @onclick="ReloadTokenAsync">Reload latest</button>
+            }
+        </ErrorNotice>
+        <div class="te-notice" aria-live="polite">@_notice</div>
+
+        <div class="te-footer">
+            <button type="button" class="te-primary" @onclick="SaveAsync" disabled="@_busy">
+                @(_busy ? "Saving…" : "Save draft")
+            </button>
+            @if (IsNew is false)
+            {
+                <button type="button" @onclick='() => _pending = "apply"' disabled="@_busy">Apply now</button>
+                <button type="button" @onclick='() => _pending = "schedule"' disabled="@_busy">Schedule</button>
+                <button type="button" @onclick='() => _pending = "delete"' disabled="@_busy">Delete draft</button>
+            }
+            <a href="instruments/@Id?tab=drafts" style="align-self:center">Cancel</a>
+        </div>
+    </section>
+
+    @if (_pending == "apply")
+    {
+        <ConfirmPanel Title="Apply draft now"
+                      ConfirmLabel="Apply now"
+                      BusyLabel="Applying…"
+                      Busy="@_busy"
+                      Error="@_saveError"
+                      OnConfirm="ApplyAsync"
+                      OnCancel="() => _pending = null">
+            <p>Saves any unsaved edits, then this draft becomes the current configuration immediately.</p>
+            <label style="max-width:260px">
+                Effective until (UTC, optional)
+                <input type="datetime-local" value="@_effectiveTo"
+                       @onchange="args => _effectiveTo = args.Value?.ToString() ?? string.Empty"
+                       aria-label="Effective until UTC">
+            </label>
+        </ConfirmPanel>
+    }
+
+    @if (_pending == "schedule")
+    {
+        <ConfirmPanel Title="Schedule draft"
+                      ConfirmLabel="Schedule"
+                      BusyLabel="Scheduling…"
+                      Busy="@_busy"
+                      Error="@_saveError"
+                      OnConfirm="ScheduleAsync"
+                      OnCancel="() => _pending = null">
+            <p>Saves any unsaved edits, then schedules the draft. Start must be at or after the current UTC time.</p>
+            <div class="te-fields te-two">
+                <label>
+                    Effective from (UTC)
+                    <input type="datetime-local" value="@_effectiveFrom"
+                           @onchange="args => _effectiveFrom = args.Value?.ToString() ?? string.Empty"
+                           aria-label="Effective from UTC">
+                </label>
+                <label>
+                    Effective until (UTC, optional)
+                    <input type="datetime-local" value="@_effectiveTo"
+                           @onchange="args => _effectiveTo = args.Value?.ToString() ?? string.Empty"
+                           aria-label="Effective until UTC">
+                </label>
+            </div>
+        </ConfirmPanel>
+    }
+
+    @if (_pending == "delete")
+    {
+        <ConfirmPanel Title="Delete draft"
+                      ConfirmLabel="Delete draft"
+                      BusyLabel="Deleting…"
+                      Busy="@_busy"
+                      Error="@_saveError"
+                      OnConfirm="DeleteAsync"
+                      OnCancel="() => _pending = null">
+            <p>Removes this draft permanently. Committed revisions are unchanged.</p>
+        </ConfirmPanel>
+    }
+}
+
+<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
+                ConfirmExternalNavigation="@_dirty" />
+
+@code {
+    private DefinitionEditModel _definition = DefinitionEditModel.Empty();
+    private ApiError? _fatal;
+    private ApiError? _saveError;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _dirty;
+    private string? _pending;
+    private string? _notice;
+    private string _instrumentLabel = string.Empty;
+    private string _token = string.Empty;
+    private string _reason = string.Empty;
+    private string _proposedFrom = string.Empty;
+    private string _proposedTo = string.Empty;
+    private string _effectiveFrom = string.Empty;
+    private string _effectiveTo = string.Empty;
+    private readonly CancellationTokenSource _lifetime = new();
+
+    [Parameter]
+    public Guid Id { get; set; }
+
+    [Parameter]
+    public Guid? DraftId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "from")]
+    public Guid? CopyFrom { get; set; }
+
+    private bool IsNew => DraftId is null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _fatal is null)
+        {
+            await JS.InvokeVoidAsync("teFocus", "h2");
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _fatal = null;
+        _saveError = null;
+        _pending = null;
+        _dirty = false;
+        _notice = null;
+
+        ApiResult<WatchedInstrumentSettingsResponse> instrument =
+            await Api.GetSettingsAsync(Id, _lifetime.Token);
+        if (instrument.IsFailure)
+        {
+            _loading = false;
+            _fatal = instrument.Error;
+            return;
+        }
+
+        _instrumentLabel =
+            $"{instrument.Value!.Symbol} · {instrument.Value.Exchange} · {instrument.Value.QuoteCurrency}";
+
+        if (IsNew)
+        {
+            await LoadNewDraftAsync();
+        }
+        else
+        {
+            await LoadExistingDraftAsync();
+        }
+
+        _loading = false;
+    }
+
+    private async Task LoadNewDraftAsync()
+    {
+        ApiResult<MonitoringRuleTimelineResponse> timeline =
+            await Api.GetTimelineAsync(Id, _lifetime.Token);
+        if (timeline.IsFailure)
+        {
+            _fatal = timeline.Error;
+            return;
+        }
+
+        _token = timeline.Value!.ConcurrencyToken;
+        _definition = DefinitionEditModel.Empty();
+
+        if (CopyFrom is not null)
+        {
+            ApiResult<MonitoringRuleRevisionResponse> revision =
+                await Api.GetRevisionAsync(Id, CopyFrom.Value, _lifetime.Token);
+            if (revision.IsFailure)
+            {
+                _fatal = revision.Error;
+                return;
+            }
+
+            if (revision.Value!.Revision.Definition is not null)
+            {
+                _definition = DefinitionEditModel.FromDto(revision.Value.Revision.Definition);
+            }
+        }
+
+        if (_definition.SupportZones.Count == 0 && _definition.ResistanceZones.Count == 0)
+        {
+            _definition.AddSupportZone();
+        }
+    }
+
+    private async Task LoadExistingDraftAsync()
+    {
+        ApiResult<MonitoringRuleRevisionResponse> revision =
+            await Api.GetRevisionAsync(Id, DraftId!.Value, _lifetime.Token);
+        if (revision.IsFailure)
+        {
+            _fatal = revision.Error;
+            return;
+        }
+
+        MonitoringRuleRevisionDto draft = revision.Value!.Revision;
+        if (draft.EffectiveFrom is not null || draft.Kind == "committed")
+        {
+            _fatal = ApiError.Create(409, "draft.not_draft",
+                "This revision is already committed and can no longer be edited as a draft.", null);
+            return;
+        }
+
+        _token = revision.Value.ConcurrencyToken;
+        _definition = draft.Definition is null
+            ? DefinitionEditModel.Empty()
+            : DefinitionEditModel.FromDto(draft.Definition);
+        _reason = draft.ChangeReason ?? string.Empty;
+        _proposedFrom = UtcTimes.ToInputValue(draft.ProposedEffectiveFrom);
+        _proposedTo = UtcTimes.ToInputValue(draft.ProposedEffectiveTo);
+    }
+
+    private void MarkDirty()
+    {
+        _dirty = true;
+    }
+
+    private void SetField(Action<string> setter, ChangeEventArgs args)
+    {
+        setter(args.Value?.ToString() ?? string.Empty);
+        MarkDirty();
+    }
+
+    private MonitoringRuleDraftRequest BuildDraftRequest()
+    {
+        return new MonitoringRuleDraftRequest(
+            string.IsNullOrWhiteSpace(_reason) ? null : _reason.Trim(),
+            new RevisionPeriodDto(
+                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_proposedFrom)),
+                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_proposedTo))),
+            _definition.ToDto());
+    }
+
+    private async Task<bool> SaveCoreAsync()
+    {
+        MonitoringRuleDraftRequest request = BuildDraftRequest();
+        ApiResult<MonitoringRuleTimelineResponse> result = IsNew
+            ? await Api.CreateDraftAsync(Id, request, _token, _lifetime.Token)
+            : await Api.UpdateDraftAsync(Id, DraftId!.Value, request, _token, _lifetime.Token);
+
+        if (result.IsFailure)
+        {
+            _saveError = result.Error;
+            return false;
+        }
+
+        _token = result.Value!.ConcurrencyToken;
+        _saveError = null;
+        return true;
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _notice = null;
+        bool saved = await SaveCoreAsync();
+        _busy = false;
+
+        if (saved)
+        {
+            _dirty = false;
+            Navigation.NavigateTo($"instruments/{Id}?tab=drafts");
+        }
+    }
+
+    private async Task ReloadTokenAsync()
+    {
+        ApiResult<MonitoringRuleTimelineResponse> timeline =
+            await Api.GetTimelineAsync(Id, _lifetime.Token);
+        if (timeline.IsSuccess)
+        {
+            _token = timeline.Value!.ConcurrencyToken;
+            _saveError = null;
+            _notice = "Latest timeline loaded. Review and retry.";
+        }
+        else
+        {
+            _saveError = timeline.Error;
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _busy = true;
+        _saveError = null;
+
+        if (await SaveCoreAsync())
+        {
+            ApiResult<MonitoringRuleTimelineResponse> result = await Api.ApplyDraftAsync(
+                Id,
+                DraftId!.Value,
+                new ApplyMonitoringRuleRequest(UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
+                _token,
+                _lifetime.Token);
+
+            if (result.IsSuccess)
+            {
+                _dirty = false;
+                Navigation.NavigateTo($"instruments/{Id}?tab=current");
+            }
+            else
+            {
+                _saveError = result.Error;
+            }
+        }
+
+        _busy = false;
+    }
+
+    private async Task ScheduleAsync()
+    {
+        _busy = true;
+        _saveError = null;
+
+        if (await SaveCoreAsync())
+        {
+            ApiResult<MonitoringRuleTimelineResponse> result = await Api.ScheduleDraftAsync(
+                Id,
+                DraftId!.Value,
+                new ScheduleMonitoringRuleRequest(
+                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveFrom)),
+                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
+                _token,
+                _lifetime.Token);
+
+            if (result.IsSuccess)
+            {
+                _dirty = false;
+                Navigation.NavigateTo($"instruments/{Id}?tab=timeline");
+            }
+            else
+            {
+                _saveError = result.Error;
+            }
+        }
+
+        _busy = false;
+    }
+
+    private async Task DeleteAsync()
+    {
+        _busy = true;
+        _saveError = null;
+
+        ApiResult<MonitoringRuleTimelineResponse> result =
+            await Api.DeleteDraftAsync(Id, DraftId!.Value, _token, _lifetime.Token);
+
+        if (result.IsSuccess)
+        {
+            _dirty = false;
+            Navigation.NavigateTo($"instruments/{Id}?tab=drafts");
+        }
+        else
+        {
+            _saveError = result.Error;
+        }
+
+        _busy = false;
+    }
+
+    private async Task GuardNavigation(LocationChangingContext context)
+    {
+        if (_dirty)
+        {
+            bool confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "You have unsaved changes. Leave this page and discard them?");
+            if (confirmed is false)
+            {
+                context.PreventNavigation();
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}
