@@ -38,7 +38,14 @@ app.UseWhen(
 
 app.UseWhen(
     context => context.Request.Path.StartsWithSegments("/api"),
-    branch => branch.UseMiddleware<EasyAuthPrincipalMiddleware>());
+    branch =>
+    {
+        branch.UseMiddleware<EasyAuthPrincipalMiddleware>();
+        branch.UseMiddleware<FetchSiteGuardMiddleware>();
+    });
+
+app.UseBlazorFrameworkFiles();
+app.UseStaticFiles();
 
 app.UseRateLimiter();
 
@@ -72,5 +79,18 @@ app.MapGet("/auth-check", () => TypedResults.NoContent())
 
 app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();
+
+HttpMethodMetadata getAndHeadOnly = new([HttpMethods.Get, HttpMethods.Head]);
+
+app.MapFallback("/api/{*path}", () => TypedResults.NotFound())
+    .WithMetadata(getAndHeadOnly);
+app.MapFallback("/.auth/{*path}", () => TypedResults.NotFound())
+    .WithMetadata(getAndHeadOnly);
+app.MapFallback("/health/{*path}", () => TypedResults.NotFound())
+    .WithMetadata(getAndHeadOnly);
+app.MapFallbackToFile("index.html")
+    .AllowAnonymous()
+    .DisableRateLimiting()
+    .WithMetadata(getAndHeadOnly);
 
 app.Run();

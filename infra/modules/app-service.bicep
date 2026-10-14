@@ -136,6 +136,9 @@ resource webAppAuth 'Microsoft.Web/sites/config@2023-12-01' = if (configureEntra
         '/health'
         '/health/database'
         '/version'
+        '/signin.html'
+        '/css/app.css'
+        '/favicon.ico'
       ]
     }
     httpSettings: {

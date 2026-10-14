@@ -50,7 +50,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(snapshot.Error);
         }
 
-        SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
+        ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
         return TypedResults.Ok(ToTimelineResponse(snapshot.Value));
     }
@@ -77,10 +77,10 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(RevisionErrors.NotFound);
         }
 
-        SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
+        ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
         return TypedResults.Ok(new MonitoringRuleRevisionResponse(
-            FormatToken(snapshot.Value.ConcurrencyToken),
+            ConcurrencyTokens.FormatToken(snapshot.Value.ConcurrencyToken),
             ToDto(revision)));
     }
 
@@ -105,10 +105,10 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(resolved.Error);
         }
 
-        SetConcurrencyHeaders(context, resolved.Value.Snapshot.ConcurrencyToken);
+        ConcurrencyTokens.SetConcurrencyHeaders(context, resolved.Value.Snapshot.ConcurrencyToken);
 
         return TypedResults.Ok(new MonitoringRuleRevisionResponse(
-            FormatToken(resolved.Value.Snapshot.ConcurrencyToken),
+            ConcurrencyTokens.FormatToken(resolved.Value.Snapshot.ConcurrencyToken),
             ToDto(resolved.Value.Revision)));
     }
 
@@ -126,7 +126,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(snapshot.Error);
         }
 
-        SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
+        ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
         return TypedResults.Ok(ToDraftsResponse(snapshot.Value));
     }
@@ -160,7 +160,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(proposalError);
         }
 
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -209,7 +209,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(proposalError);
         }
 
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -235,7 +235,7 @@ internal static class MonitoringRuleEndpoints
         HttpContext context,
         CancellationToken cancellationToken)
     {
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -262,7 +262,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(toError);
         }
 
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -300,7 +300,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(toError);
         }
 
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -349,7 +349,7 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(fromError);
         }
 
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -375,7 +375,7 @@ internal static class MonitoringRuleEndpoints
         HttpContext context,
         CancellationToken cancellationToken)
     {
-        (byte[]? token, Error? tokenError) = ExpectedToken(context.Request);
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(context.Request, MonitoringRuleErrors.ConcurrencyTokenInvalid);
         if (tokenError is not null)
         {
             return ApiProblemDetails.Problem(tokenError);
@@ -397,51 +397,9 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(snapshot.Error);
         }
 
-        SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
+        ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
         return TypedResults.Ok(ToTimelineResponse(snapshot.Value));
-    }
-
-    private static void SetConcurrencyHeaders(HttpContext context, byte[] token)
-    {
-        context.Response.Headers.ETag = $"\"{FormatToken(token)}\"";
-    }
-
-    private static string FormatToken(byte[] token)
-    {
-        return Convert.ToBase64String(token);
-    }
-
-    private static (byte[]? Token, Error? Error) ExpectedToken(HttpRequest request)
-    {
-        string? header = request.Headers.IfMatch.ToString();
-        if (string.IsNullOrWhiteSpace(header))
-        {
-            return (null, null);
-        }
-
-        string value = header.Trim();
-        if (value.StartsWith("W/", StringComparison.Ordinal))
-        {
-            value = value.Substring(2).Trim();
-        }
-
-        if (value.Length >= 2 && value.StartsWith('"') && value.EndsWith('"'))
-        {
-            value = value.Substring(1, value.Length - 2);
-        }
-
-        try
-        {
-            byte[] decoded = Convert.FromBase64String(value);
-            return decoded.Length == 0
-                ? (null, MonitoringRuleErrors.ConcurrencyTokenInvalid)
-                : (decoded, null);
-        }
-        catch (FormatException)
-        {
-            return (null, MonitoringRuleErrors.ConcurrencyTokenInvalid);
-        }
     }
 
     private static Result<ChartAnalysisDefinition> ToDefinition(
@@ -481,7 +439,7 @@ internal static class MonitoringRuleEndpoints
         return new MonitoringRuleTimelineResponse(
             snapshot.Rule.Id,
             snapshot.Rule.WatchedInstrumentId,
-            FormatToken(snapshot.ConcurrencyToken),
+            ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken),
             ToOffset(snapshot.Rule.CoverageOrigin),
             snapshot.Rule.Revisions.Select(ToDto).ToArray());
     }
@@ -492,7 +450,7 @@ internal static class MonitoringRuleEndpoints
         return new MonitoringRuleDraftsResponse(
             snapshot.Rule.Id,
             snapshot.Rule.WatchedInstrumentId,
-            FormatToken(snapshot.ConcurrencyToken),
+            ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken),
             snapshot.Rule.Drafts.Select(ToDto).ToArray());
     }
 

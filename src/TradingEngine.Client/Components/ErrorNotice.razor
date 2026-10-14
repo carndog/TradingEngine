@@ -1,0 +1,111 @@
+@if (Error is not null)
+{
+    <div class="te-alert @CssClass" role="alert">
+        <div class="te-row">
+            <div>
+                <strong>@Title</strong>
+                <div>@Message</div>
+                @if (Error.RetryAfter is not null)
+                {
+                    <div class="te-small">Retry after @Math.Max(1, (int)Math.Ceiling(Error.RetryAfter.Value.TotalSeconds)) seconds.</div>
+                }
+            </div>
+            <div class="te-inline-actions">
+                @ChildContent
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public ApiError? Error { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private string CssClass => Error?.IsRateLimited == true || Error?.IsPreconditionFailed == true
+        ? "te-warn"
+        : "te-error";
+
+    private string Title
+    {
+        get
+        {
+            if (Error is null)
+            {
+                return string.Empty;
+            }
+
+            if (Error.IsUnauthorized)
+            {
+                return "Session expired";
+            }
+
+            if (Error.IsRateLimited)
+            {
+                return "Requests throttled";
+            }
+
+            if (Error.IsPreconditionFailed)
+            {
+                return "Out-of-date data";
+            }
+
+            if (Error.IsConflict)
+            {
+                return "Conflict";
+            }
+
+            if (Error.IsValidation)
+            {
+                return "Validation failed";
+            }
+
+            if (Error.IsNotFound)
+            {
+                return "Not found";
+            }
+
+            if (Error.IsNetworkError)
+            {
+                return "API unavailable";
+            }
+
+            return "Request failed";
+        }
+    }
+
+    private string Message
+    {
+        get
+        {
+            if (Error is null)
+            {
+                return string.Empty;
+            }
+
+            if (Error.IsUnauthorized)
+            {
+                return "Your session has expired. Sign in again to continue.";
+            }
+
+            if (Error.IsRateLimited)
+            {
+                return Error.Detail ?? "Too many requests were sent. Wait a moment and try again.";
+            }
+
+            if (Error.IsNotFound)
+            {
+                return Error.Detail ?? "The requested resource was not found.";
+            }
+
+            if (string.IsNullOrWhiteSpace(Error.Detail) is false)
+            {
+                return Error.Detail!;
+            }
+
+            return $"The request failed (HTTP {Error.Status}).";
+        }
+    }
+}

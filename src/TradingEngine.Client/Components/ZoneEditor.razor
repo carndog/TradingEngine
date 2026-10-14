@@ -1,0 +1,55 @@
+<section class="te-section" aria-label="@(Zone.Kind == "support" ? "Support" : "Resistance") zone">
+    <div class="te-row">
+        <span class="te-zone-head">@(Zone.Kind == "support" ? "Support" : "Resistance") zone</span>
+        <span class="te-tag">Conditions @Zone.Conditions.Count</span>
+    </div>
+    <div class="te-fields">
+        <label>
+            Identifier
+            <input @bind="Zone.Id" @bind:event="oninput" @onchange="NotifyChanged"
+                   placeholder="e.g. support-a" aria-label="Zone identifier" maxlength="64">
+        </label>
+        <label>
+            Lower
+            <input type="number" step="any" @bind="Zone.Lower" @bind:event="oninput" @onchange="NotifyChanged" aria-label="Lower bound">
+        </label>
+        <label>
+            Level
+            <input type="number" step="any" @bind="Zone.Level" @bind:event="oninput" @onchange="NotifyChanged" aria-label="Level">
+        </label>
+        <label>
+            Upper
+            <input type="number" step="any" @bind="Zone.Upper" @bind:event="oninput" @onchange="NotifyChanged" aria-label="Upper bound">
+        </label>
+    </div>
+    @foreach (ConditionEditModel condition in Zone.Conditions)
+    {
+        <div class="te-row" style="justify-content:flex-start;gap:14px">
+            <span class="te-tag">@condition.Type</span>
+            <label style="flex:1;max-width:340px">
+                <span class="te-sr">@condition.Type action identifier</span>
+                <input @bind="condition.ActionId" @bind:event="oninput" @onchange="NotifyChanged"
+                       placeholder="Action identifier" aria-label="@condition.Type action identifier">
+            </label>
+        </div>
+    }
+    <div>
+        <button type="button" @onclick="OnRemove">Remove zone</button>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public ZoneEditModel Zone { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnRemove { get; set; }
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private Task NotifyChanged()
+    {
+        return OnChanged.InvokeAsync();
+    }
+}

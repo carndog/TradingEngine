@@ -7,10 +7,12 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../TradingEngine.Application/TradingEngine.Application.csproj" />
+    <ProjectReference Include="../TradingEngine.Client/TradingEngine.Client.csproj" />
     <ProjectReference Include="../TradingEngine.Contracts/TradingEngine.Contracts.csproj" />
     <ProjectReference Include="../TradingEngine.Infrastructure/TradingEngine.Infrastructure.csproj" />
   </ItemGroup>

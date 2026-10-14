@@ -20,6 +20,7 @@ The model consists of the watched-instrument table, the monitoring-rule aggregat
 | `SamplingIntervalSeconds` | `int` | Required; check constraint enforces 1-3600. |
 | `CreatedAt` | `datetime2(7)` | Required, UTC. |
 | `LastChangedAt` | `datetime2(7)` | Required, UTC; check constraint enforces `LastChangedAt >= CreatedAt`. |
+| `RowVersion` | `rowversion` | Optimistic-concurrency token for the instrument's settings (monitoring state and sampling interval), independent of the monitoring-rule aggregate token. |
 
 A unique index `UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency` on `(Exchange, Symbol, QuoteCurrency)` prevents duplicate instruments.
 

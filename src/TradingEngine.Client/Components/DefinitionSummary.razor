@@ -1,0 +1,86 @@
+@if (Definition is not null)
+{
+    <div class="te-body" style="padding:0">
+        <div class="te-row">
+            <span class="te-tag">Price scale @Definition.PriceScale</span>
+        </div>
+        @foreach (ChartZoneDto zone in Zones("support"))
+        {
+            <section class="te-section" aria-label="Support zone @zone.Id">
+                <div class="te-row">
+                    <span class="te-zone-head">Support · @zone.Id</span>
+                    <span class="te-tag">Conditions @ConditionCount(zone)</span>
+                </div>
+                <div class="te-fields">
+                    <label>Lower<input readonly value="@zone.Lower" aria-label="Lower bound"></label>
+                    <label>Level<input readonly value="@zone.Level" aria-label="Level"></label>
+                    <label>Upper<input readonly value="@zone.Upper" aria-label="Upper bound"></label>
+                </div>
+                @if (zone.Conditions is not null)
+                {
+                    <div class="te-row" style="justify-content:flex-start">
+                        @foreach (ChartConditionDto condition in zone.Conditions)
+                        {
+                            <span class="te-tag">@condition.Type → @condition.ActionId</span>
+                        }
+                    </div>
+                }
+            </section>
+        }
+        @foreach (ChartZoneDto zone in Zones("resistance"))
+        {
+            <section class="te-section" aria-label="Resistance zone @zone.Id">
+                <div class="te-row">
+                    <span class="te-zone-head">Resistance · @zone.Id</span>
+                    <span class="te-tag">Conditions @ConditionCount(zone)</span>
+                </div>
+                <div class="te-fields">
+                    <label>Lower<input readonly value="@zone.Lower" aria-label="Lower bound"></label>
+                    <label>Level<input readonly value="@zone.Level" aria-label="Level"></label>
+                    <label>Upper<input readonly value="@zone.Upper" aria-label="Upper bound"></label>
+                </div>
+                @if (zone.Conditions is not null)
+                {
+                    <div class="te-row" style="justify-content:flex-start">
+                        @foreach (ChartConditionDto condition in zone.Conditions)
+                        {
+                            <span class="te-tag">@condition.Type → @condition.ActionId</span>
+                        }
+                    </div>
+                }
+            </section>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public MonitoringRuleDefinitionDto? Definition { get; set; }
+
+    private IEnumerable<ChartZoneDto> Zones(string kind)
+    {
+        if (Definition is null)
+        {
+            yield break;
+        }
+
+        IReadOnlyList<ChartZoneDto>? zones = kind == "support"
+            ? Definition.SupportZones
+            : Definition.ResistanceZones;
+
+        if (zones is null)
+        {
+            yield break;
+        }
+
+        foreach (ChartZoneDto zone in zones)
+        {
+            yield return zone;
+        }
+    }
+
+    private static int ConditionCount(ChartZoneDto zone)
+    {
+        return zone.Conditions?.Count ?? 0;
+    }
+}

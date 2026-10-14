@@ -44,6 +44,8 @@ dotnet test TradingEngine.sln --configuration Release --no-build
 dotnet run --project src/TradingEngine.Api
 ```
 
+The API serves the Blazor WebAssembly administration client at `/` alongside the REST endpoints under `/api`; browser reads and writes go through the same typed HTTP surface. Unknown `/api` paths return JSON problems rather than the client shell.
+
 The API exposes three deployment-safe smoke-test endpoints:
 
 - `GET /health`

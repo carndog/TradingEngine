@@ -1091,3 +1091,114 @@ Authorization: Bearer {{bearerToken}}
         client.global.set("walkthroughStep", "origin-removal-rejected");
     }
 %}
+
+###
+
+// Instrument settings walkthrough.
+//
+// The settings token is the watched-instrument rowversion, independent of the
+// monitoring-rule timeline token. If-Match is required (428 without it);
+// resubmitting unchanged values is a safe no-op that keeps the same token.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "origin-removal-rejected" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("settings read requires the completed origin-removal check - run the file from the anonymous request.");
+    }
+%}
+GET {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/settings
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("settings", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.concurrencyToken, "concurrencyToken present");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken) {
+        client.global.set("settingsToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "settings-read");
+    }
+%}
+
+###
+
+// Same-value write: succeeds as a no-op; the token is unchanged.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    var settingsToken = client.global.get("settingsToken");
+    if (step !== "settings-read" || !deployedInstrumentId || deployedInstrumentId.trim() === ""
+        || !settingsToken || settingsToken.trim() === "") {
+        throw new Error("settings write requires the completed settings read - run the file from the anonymous request.");
+    }
+%}
+PUT {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/settings
+Content-Type: application/json
+If-Match: "{{settingsToken}}"
+Authorization: Bearer {{bearerToken}}
+
+{
+  "monitoringState": "configured",
+  "samplingIntervalSeconds": 60
+}
+
+> {%
+    client.test("same-value settings", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.concurrencyToken === client.global.get("settingsToken"),
+            "token unchanged on no-op");
+    });
+    if (response.status === 200) {
+        client.global.set("walkthroughStep", "settings-noop");
+    }
+%}
+
+###
+
+// Replaying with a stale token is rejected 412
+// watched_instrument.concurrent_change.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var deployedInstrumentId = client.global.get("deployedInstrumentId");
+    if (step !== "settings-noop" || !deployedInstrumentId || deployedInstrumentId.trim() === "") {
+        throw new Error("stale-token check requires the same-value write - run the file from the anonymous request.");
+    }
+%}
+PUT {{deployedHost}}/api/watched-instruments/{{deployedInstrumentId}}/settings
+Content-Type: application/json
+If-Match: "AAAAAAAAAAA="
+Authorization: Bearer {{bearerToken}}
+
+{
+  "monitoringState": "monitored",
+  "samplingIntervalSeconds": 120
+}
+
+> {%
+    client.test("stale settings rejected", function() {
+        client.assert(response.status === 412, "expected 412");
+        client.assert(
+            response.body.code === "watched_instrument.concurrent_change",
+            "code");
+    });
+%}
+
+###
+
+// Collection search: server-side filtering over symbol and exchange with
+// deterministic ordering, page and pageSize bounds and a filtered totalCount.
+GET {{deployedHost}}/api/watched-instruments?q=run&page=1&pageSize=25
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("search", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(Array.isArray(response.body.items), "items array");
+        client.assert(response.body.totalCount >= 0, "filtered total");
+    });
+%}

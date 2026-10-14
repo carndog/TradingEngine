@@ -951,3 +951,112 @@ If-Match: "{{ruleToken}}"
         client.global.set("walkthroughStep", "origin-removal-rejected");
     }
 %}
+
+###
+
+// Instrument settings walkthrough.
+//
+// The settings token is the watched-instrument rowversion, independent of the
+// monitoring-rule timeline token. If-Match is required (428 without it);
+// resubmitting unchanged values is a safe no-op that still returns the
+// current token.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "origin-removal-rejected" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("settings read requires the completed origin-removal check - run the file from the registration request.");
+    }
+%}
+GET {{host}}/api/watched-instruments/{{createdInstrumentId}}/settings
+Accept: application/json
+
+> {%
+    client.test("settings", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.concurrencyToken, "concurrencyToken present");
+    });
+    if (response.status === 200
+        && response.body
+        && response.body.concurrencyToken) {
+        client.global.set("settingsToken", response.body.concurrencyToken);
+        client.global.set("walkthroughStep", "settings-read");
+    }
+%}
+
+###
+
+// Same-value write: the request matches the stored settings so the response
+// succeeds without rotating the token or writing a new LastChangedAt.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    var settingsToken = client.global.get("settingsToken");
+    if (step !== "settings-read" || !createdInstrumentId || createdInstrumentId.trim() === ""
+        || !settingsToken || settingsToken.trim() === "") {
+        throw new Error("settings write requires the completed settings read - run the file from the registration request.");
+    }
+%}
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/settings
+Content-Type: application/json
+If-Match: "{{settingsToken}}"
+
+{
+  "monitoringState": "configured",
+  "samplingIntervalSeconds": 60
+}
+
+> {%
+    client.test("same-value settings", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(
+            response.body.concurrencyToken === client.global.get("settingsToken"),
+            "token unchanged on no-op");
+    });
+    if (response.status === 200) {
+        client.global.set("walkthroughStep", "settings-noop");
+    }
+%}
+
+###
+
+// Replaying the write with a stale token is rejected 412
+// watched_instrument.concurrent_change and changes nothing.
+< {%
+    var step = client.global.get("walkthroughStep");
+    var createdInstrumentId = client.global.get("createdInstrumentId");
+    if (step !== "settings-noop" || !createdInstrumentId || createdInstrumentId.trim() === "") {
+        throw new Error("stale-token check requires the same-value write - run the file from the registration request.");
+    }
+%}
+PUT {{host}}/api/watched-instruments/{{createdInstrumentId}}/settings
+Content-Type: application/json
+If-Match: "AAAAAAAAAAA="
+
+{
+  "monitoringState": "monitored",
+  "samplingIntervalSeconds": 120
+}
+
+> {%
+    client.test("stale settings rejected", function() {
+        client.assert(response.status === 412, "expected 412");
+        client.assert(
+            response.body.code === "watched_instrument.concurrent_change",
+            "code");
+    });
+%}
+
+###
+
+// Collection search: server-side filtering over symbol and exchange with
+// deterministic ordering, page and pageSize bounds and a filtered totalCount.
+GET {{host}}/api/watched-instruments?q=run&page=1&pageSize=25
+Accept: application/json
+
+> {%
+    client.test("search", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(Array.isArray(response.body.items), "items array");
+        client.assert(response.body.totalCount >= 0, "filtered total");
+    });
+%}

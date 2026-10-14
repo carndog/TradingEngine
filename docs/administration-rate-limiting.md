@@ -36,7 +36,8 @@ The global limiter is the default for every endpoint that does not opt out, so n
 | `GET /version` | Opted out | Deployment verification (`/version` is curl'd by the deploy workflow); anonymous, static content. |
 | `GET /auth-check` | Opted out | Easy Auth smoke check; already requires the owner allowlist when deployed. |
 | `GET /health/database` | Global limiter — `database-probe` partition (shared fixed window, `DatabaseProbePermitLimit` per instance) + shared concurrency ceiling | Key check runs first (404 without `X-Database-Probe-Key`); probe traffic never consumes an administration caller's budget. |
-| `POST /api/watched-instruments`, `GET /api/watched-instruments/{id}`, all `/api/watched-instruments/{id}/monitoring-rule*` endpoints | Global limiter — per-caller read/write budget + shared concurrency ceiling | Default protection for current and future administration endpoints. |
+| `GET /api/watched-instruments` (search/page), `POST /api/watched-instruments`, `GET /api/watched-instruments/{id}`, `GET`/`PUT /api/watched-instruments/{id}/settings`, all `/api/watched-instruments/{id}/monitoring-rule*` endpoints | Global limiter — per-caller read/write budget + shared concurrency ceiling | Default protection for current and future administration endpoints. |
+| Blazor client assets (`/`, `/_framework/**`, `/css/**`, SPA-fallback routes) | No rate limiting | `UseBlazorFrameworkFiles`/`UseStaticFiles` run before `UseRateLimiter`; static content never consumes an administration caller's budget. |
 
 ## Configuration
 

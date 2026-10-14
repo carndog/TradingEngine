@@ -14,9 +14,21 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Result<WatchedInstrumentConfiguration>? GetResult { get; set; }
 
+    public Result<WatchedInstrumentPage>? SearchResult { get; set; }
+
+    public Result<WatchedInstrumentSettingsSnapshot>? GetSettingsResult { get; set; }
+
+    public Result<WatchedInstrumentSettingsSnapshot>? SaveSettingsResult { get; set; }
+
     public WatchedInstrumentRegistration? AddedRegistration { get; private set; }
 
     public Instant? RequestedAt { get; private set; }
+
+    public (string? Query, int Page, int PageSize)? RequestedSearch { get; private set; }
+
+    public WatchedInstrument? SavedInstrument { get; private set; }
+
+    public byte[]? ExpectedToken { get; private set; }
 
     public StubWatchedInstrumentStore()
     {
@@ -41,5 +53,46 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
         RequestedAt = at;
 
         return Task.FromResult(GetResult ?? WatchedInstrumentErrors.ConfigurationNotFound);
+    }
+
+    public Task<Result<WatchedInstrumentPage>> SearchAsync(
+        string? query,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RequestedSearch = (query, page, pageSize);
+
+        return Task.FromResult(
+            SearchResult ?? new WatchedInstrumentPage([], page, pageSize, 0));
+    }
+
+    public Task<Result<WatchedInstrumentSettingsSnapshot>> GetSettingsAsync(
+        Guid instrumentId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return Task.FromResult(
+            GetSettingsResult ?? WatchedInstrumentErrors.SettingsNotFound);
+    }
+
+    public Task<Result<WatchedInstrumentSettingsSnapshot>> SaveSettingsAsync(
+        WatchedInstrument instrument,
+        byte[] expectedConcurrencyToken,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SavedInstrument = instrument;
+        ExpectedToken = expectedConcurrencyToken;
+
+        if (SaveSettingsResult is not null)
+        {
+            return Task.FromResult(SaveSettingsResult);
+        }
+
+        return Task.FromResult<Result<WatchedInstrumentSettingsSnapshot>>(
+            new WatchedInstrumentSettingsSnapshot(instrument, [9, 9, 9, 9, 9, 9, 9, 9]));
     }
 }
