@@ -13,10 +13,6 @@
     </div>
     <div class="te-row" style="gap:8px">
         <a class="te-primary" href="instruments/new" style="padding:8px 12px;border-radius:6px;text-decoration:none">Add instrument</a>
-        @if (CanSignIn)
-        {
-            <a href="signin.html">Sign in</a>
-        }
     </div>
 </div>
 
@@ -32,23 +28,44 @@
     </label>
 </div>
 
-@if (_error is not null)
+@if (_error is not null && _result is null)
 {
     <ErrorNotice Error="@_error">
         <button type="button" @onclick="RetryAsync">Retry</button>
         @if (_error.IsUnauthorized)
         {
-            <a href="signin.html">Sign in</a>
+            <a href="@SignInUrl">Sign in again</a>
         }
     </ErrorNotice>
 }
-else if (_loading)
+else if (_result is null)
 {
     <div class="te-panel" role="status" aria-label="Loading instruments">
         <p class="te-sub">Loading instruments…</p>
+        @if (_slowLoading)
+        {
+            <p class="te-sub">Still working — the service is taking longer than usual.</p>
+        }
     </div>
 }
-else if (_result is not null && _result.TotalCount == 0)
+else
+{
+    @if (_error is not null)
+    {
+        <ErrorNotice Error="@_error">
+            <button type="button" @onclick="RetryAsync">Retry</button>
+            @if (_error.IsUnauthorized)
+            {
+                <a href="@SignInUrl">Sign in again</a>
+            }
+        </ErrorNotice>
+    }
+    @if (_loading)
+    {
+        <p class="te-small" role="status">Refreshing…</p>
+    }
+}
+@if (_result is not null && _result.TotalCount == 0)
 {
     <section class="te-panel" aria-label="No instruments">
         <h3>No instruments found</h3>
@@ -118,9 +135,11 @@ else if (_result is not null)
     private WatchedInstrumentPageResponse? _result;
     private ApiError? _error;
     private bool _loading = true;
+    private bool _slowLoading;
     private int _searchVersion;
     private string _searchText = string.Empty;
     private int _pageSize = 25;
+    private CancellationTokenSource? _slowTimer;
     private CancellationTokenSource? _debounce;
     private readonly CancellationTokenSource _lifetime = new();
     private Guid? _focusId;
@@ -135,7 +154,7 @@ else if (_result is not null)
     [SupplyParameterFromQuery(Name = "pageSize")]
     public int RequestedPageSize { get; set; }
 
-    private bool CanSignIn => true;
+    private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
     private int CurrentPage => _result?.Page ?? Math.Max(1, Page);
 
@@ -152,8 +171,8 @@ else if (_result is not null)
                 return string.Empty;
             }
 
-            int first = (_result.Page - 1) * _result.PageSize + 1;
-            int last = Math.Min(_result.Page * _result.PageSize, _result.TotalCount);
+            long first = ((long)_result.Page - 1) * _result.PageSize + 1;
+            long last = Math.Min((long)_result.Page * _result.PageSize, _result.TotalCount);
             return $"Showing {first}–{last} of {_result.TotalCount} instruments";
         }
     }
@@ -164,13 +183,17 @@ else if (_result is not null)
         int version = _searchVersion;
         _loading = true;
         _error = null;
-        _result = null;
         _searchText = Query ?? string.Empty;
         _pageSize = PageSizes.Contains(RequestedPageSize) ? RequestedPageSize : 25;
         int page = Page < 1 ? 1 : Page;
 
         ListState.ListUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
         _focusId = ListState.SelectedId;
+
+        if (_result is null)
+        {
+            StartSlowIndicator(version);
+        }
 
         ApiResult<WatchedInstrumentPageResponse> result = await Api.SearchInstrumentsAsync(
             _searchText,
@@ -184,6 +207,7 @@ else if (_result is not null)
         }
 
         _loading = false;
+        _slowLoading = false;
 
         if (result.IsSuccess)
         {
@@ -210,6 +234,30 @@ else if (_result is not null)
             _focusPending = false;
             await JS.InvokeVoidAsync("teFocus", $"[data-record='{_focusId}']");
             _focusId = null;
+        }
+    }
+
+    private void StartSlowIndicator(int version)
+    {
+        _slowTimer?.Cancel();
+        _slowTimer?.Dispose();
+        _slowTimer = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _ = ShowSlowNoticeAsync(version, _slowTimer.Token);
+    }
+
+    private async Task ShowSlowNoticeAsync(int version, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            if (version == _searchVersion && _loading)
+            {
+                _slowLoading = true;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
         }
     }
 
@@ -304,6 +352,8 @@ else if (_result is not null)
     {
         _debounce?.Cancel();
         _debounce?.Dispose();
+        _slowTimer?.Cancel();
+        _slowTimer?.Dispose();
         _lifetime.Cancel();
         _lifetime.Dispose();
     }

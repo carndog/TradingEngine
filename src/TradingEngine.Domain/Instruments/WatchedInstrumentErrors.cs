@@ -92,6 +92,10 @@ public static class WatchedInstrumentErrors
         "watched_instrument.page_invalid",
         "The requested page must be at least 1.");
 
+    public static readonly Error PageOutOfRange = Error.Validation(
+        "watched_instrument.page_out_of_range",
+        "The requested page exceeds the range the store can address.");
+
     public static readonly Error PageSizeOutOfRange = Error.Validation(
         "watched_instrument.page_size_out_of_range",
         "The requested page size must be between 1 and 100.");

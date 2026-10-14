@@ -15,7 +15,7 @@
         <button type="button" @onclick="LoadAsync">Retry</button>
         @if (_fatal.IsUnauthorized)
         {
-            <a href="signin.html">Sign in</a>
+            <a href="@SignInUrl">Sign in again</a>
         }
     </ErrorNotice>
 }
@@ -72,6 +72,10 @@ else
             @if (_saveError?.IsPreconditionFailed == true)
             {
                 <button type="button" @onclick="ReloadTokenAsync">Reload latest</button>
+            }
+            @if (_saveError?.IsUnauthorized == true)
+            {
+                <a href="@SignInUrl">Sign in again</a>
             }
         </ErrorNotice>
         <div class="te-notice" aria-live="polite">@_notice</div>
@@ -181,6 +185,8 @@ else
     public Guid? CopyFrom { get; set; }
 
     private bool IsNew => DraftId is null;
+
+    private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -333,8 +339,15 @@ else
     {
         _busy = true;
         _notice = null;
-        bool saved = await SaveCoreAsync();
-        _busy = false;
+        bool saved;
+        try
+        {
+            saved = await SaveCoreAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
 
         if (saved)
         {
@@ -364,27 +377,32 @@ else
         _busy = true;
         _saveError = null;
 
-        if (await SaveCoreAsync())
+        try
         {
-            ApiResult<MonitoringRuleTimelineResponse> result = await Api.ApplyDraftAsync(
-                Id,
-                DraftId!.Value,
-                new ApplyMonitoringRuleRequest(UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
-                _token,
-                _lifetime.Token);
+            if (await SaveCoreAsync())
+            {
+                ApiResult<MonitoringRuleTimelineResponse> result = await Api.ApplyDraftAsync(
+                    Id,
+                    DraftId!.Value,
+                    new ApplyMonitoringRuleRequest(UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
+                    _token,
+                    _lifetime.Token);
 
-            if (result.IsSuccess)
-            {
-                _dirty = false;
-                Navigation.NavigateTo($"instruments/{Id}?tab=current");
-            }
-            else
-            {
-                _saveError = result.Error;
+                if (result.IsSuccess)
+                {
+                    _dirty = false;
+                    Navigation.NavigateTo($"instruments/{Id}?tab=current");
+                }
+                else
+                {
+                    _saveError = result.Error;
+                }
             }
         }
-
-        _busy = false;
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task ScheduleAsync()
@@ -392,29 +410,34 @@ else
         _busy = true;
         _saveError = null;
 
-        if (await SaveCoreAsync())
+        try
         {
-            ApiResult<MonitoringRuleTimelineResponse> result = await Api.ScheduleDraftAsync(
-                Id,
-                DraftId!.Value,
-                new ScheduleMonitoringRuleRequest(
-                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveFrom)),
-                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
-                _token,
-                _lifetime.Token);
+            if (await SaveCoreAsync())
+            {
+                ApiResult<MonitoringRuleTimelineResponse> result = await Api.ScheduleDraftAsync(
+                    Id,
+                    DraftId!.Value,
+                    new ScheduleMonitoringRuleRequest(
+                        UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveFrom)),
+                        UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
+                    _token,
+                    _lifetime.Token);
 
-            if (result.IsSuccess)
-            {
-                _dirty = false;
-                Navigation.NavigateTo($"instruments/{Id}?tab=timeline");
-            }
-            else
-            {
-                _saveError = result.Error;
+                if (result.IsSuccess)
+                {
+                    _dirty = false;
+                    Navigation.NavigateTo($"instruments/{Id}?tab=timeline");
+                }
+                else
+                {
+                    _saveError = result.Error;
+                }
             }
         }
-
-        _busy = false;
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task DeleteAsync()
@@ -422,8 +445,15 @@ else
         _busy = true;
         _saveError = null;
 
-        ApiResult<MonitoringRuleTimelineResponse> result =
-            await Api.DeleteDraftAsync(Id, DraftId!.Value, _token, _lifetime.Token);
+        ApiResult<MonitoringRuleTimelineResponse> result;
+        try
+        {
+            result = await Api.DeleteDraftAsync(Id, DraftId!.Value, _token, _lifetime.Token);
+        }
+        finally
+        {
+            _busy = false;
+        }
 
         if (result.IsSuccess)
         {
@@ -434,8 +464,6 @@ else
         {
             _saveError = result.Error;
         }
-
-        _busy = false;
     }
 
     private async Task GuardNavigation(LocationChangingContext context)

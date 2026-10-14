@@ -116,6 +116,11 @@ internal static class WatchedInstrumentEndpoints
             return ApiProblemDetails.Problem(WatchedInstrumentErrors.PageSizeOutOfRange);
         }
 
+        if ((long)(requestedPage - 1) * requestedPageSize > int.MaxValue)
+        {
+            return ApiProblemDetails.Problem(WatchedInstrumentErrors.PageOutOfRange);
+        }
+
         if (query is not null && query.Length > SearchQueryMaximumLength)
         {
             return ApiProblemDetails.Problem(WatchedInstrumentErrors.SearchQueryTooLong);

@@ -170,6 +170,26 @@ a {
     color: #d5e0f1;
 }
 
+.te-session {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.te-session-label {
+    color: #b8c6dc;
+}
+
+.te-session-retry {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #d5e0f1;
+    text-decoration: underline;
+    cursor: pointer;
+    font: inherit;
+}
+
 .te-shell {
     display: grid;
     grid-template-columns: 180px minmax(0, 1fr);

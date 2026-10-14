@@ -15,7 +15,7 @@
         <button type="button" @onclick="ReloadAllAsync">Retry</button>
         @if (_fatal.IsUnauthorized)
         {
-            <a href="signin.html">Sign in</a>
+            <a href="@SignInUrl">Sign in again</a>
         }
     </ErrorNotice>
 }
@@ -67,6 +67,10 @@ else if (_settings is not null)
         {
             <ErrorNotice Error="@_applicableError">
                 <button type="button" @onclick="ReloadAllAsync">Retry</button>
+                @if (_applicableError.IsUnauthorized)
+                {
+                    <a href="@SignInUrl">Sign in again</a>
+                }
             </ErrorNotice>
         }
         else
@@ -100,6 +104,10 @@ else if (_settings is not null)
             {
                 <ErrorNotice Error="@_draftsError">
                     <button type="button" @onclick="ReloadAllAsync">Retry</button>
+                    @if (_draftsError.IsUnauthorized)
+                    {
+                        <a href="@SignInUrl">Sign in again</a>
+                    }
                 </ErrorNotice>
             }
             else if (_drafts is null || _drafts.Drafts.Count == 0)
@@ -162,6 +170,10 @@ else if (_settings is not null)
             {
                 <ErrorNotice Error="@_timelineError">
                     <button type="button" @onclick="ReloadAllAsync">Retry</button>
+                    @if (_timelineError.IsUnauthorized)
+                    {
+                        <a href="@SignInUrl">Sign in again</a>
+                    }
                 </ErrorNotice>
             }
             else if (_timeline is null || _timeline.Revisions.Count == 0)
@@ -212,7 +224,13 @@ else if (_settings is not null)
     @if (_tab == "settings")
     {
         <section class="te-detail-card" aria-label="Instrument settings">
-            <h3>Settings</h3>
+            <div class="te-row">
+                <h3>Settings</h3>
+                @if (SettingsDirty)
+                {
+                    <span class="te-tag te-dirty">Unsaved changes</span>
+                }
+            </div>
             <p class="te-note">Sampling interval and monitoring state for this instrument.</p>
             @if (_settingsError is not null)
             {
@@ -224,6 +242,10 @@ else if (_settings is not null)
                     else
                     {
                         <button type="button" @onclick="ReloadAllAsync">Retry</button>
+                    }
+                    @if (_settingsError.IsUnauthorized)
+                    {
+                        <a href="@SignInUrl">Sign in again</a>
                     }
                 </ErrorNotice>
             }
@@ -248,6 +270,9 @@ else if (_settings is not null)
         </section>
     }
 }
+
+<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
+                ConfirmExternalNavigation="@SettingsDirty" />
 
 @code {
     private WatchedInstrumentSettingsResponse? _settings;
@@ -278,6 +303,12 @@ else if (_settings is not null)
 
     [SupplyParameterFromQuery(Name = "tab")]
     public string? TabQuery { get; set; }
+
+    private string SignInUrl => AuthLinks.SignInUrl(Navigation);
+
+    private bool SettingsDirty => _settings is not null
+        && (_editState != _settings.MonitoringState
+            || _editInterval != _settings.SamplingIntervalSeconds);
 
     protected override void OnParametersSet()
     {
@@ -391,13 +422,19 @@ else if (_settings is not null)
         _settingsError = null;
         _notice = null;
 
-        ApiResult<WatchedInstrumentSettingsResponse> result = await Api.UpdateSettingsAsync(
-            Id,
-            new UpdateWatchedInstrumentSettingsRequest(_editState, _editInterval),
-            _settings.ConcurrencyToken,
-            _lifetime.Token);
-
-        _settingsBusy = false;
+        ApiResult<WatchedInstrumentSettingsResponse> result;
+        try
+        {
+            result = await Api.UpdateSettingsAsync(
+                Id,
+                new UpdateWatchedInstrumentSettingsRequest(_editState, _editInterval),
+                _settings.ConcurrencyToken,
+                _lifetime.Token);
+        }
+        finally
+        {
+            _settingsBusy = false;
+        }
 
         if (result.IsSuccess)
         {
@@ -459,29 +496,34 @@ else if (_settings is not null)
         string token = _timeline.ConcurrencyToken;
         ApiResult<MonitoringRuleTimelineResponse>? result = null;
 
-        if (_pending.Kind == "apply")
+        try
         {
-            ApplyMonitoringRuleRequest request = new(
-                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_toInput)));
-            result = await Api.ApplyDraftAsync(Id, _pending.Revision.Id, request, token, _lifetime.Token);
+            if (_pending.Kind == "apply")
+            {
+                ApplyMonitoringRuleRequest request = new(
+                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_toInput)));
+                result = await Api.ApplyDraftAsync(Id, _pending.Revision.Id, request, token, _lifetime.Token);
+            }
+            else if (_pending.Kind == "schedule")
+            {
+                ScheduleMonitoringRuleRequest request = new(
+                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_fromInput)),
+                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_toInput)));
+                result = await Api.ScheduleDraftAsync(Id, _pending.Revision.Id, request, token, _lifetime.Token);
+            }
+            else if (_pending.Kind == "delete-draft")
+            {
+                result = await Api.DeleteDraftAsync(Id, _pending.Revision.Id, token, _lifetime.Token);
+            }
+            else if (_pending.Kind == "remove-revision")
+            {
+                result = await Api.RemoveRevisionAsync(Id, _pending.Revision.Id, token, _lifetime.Token);
+            }
         }
-        else if (_pending.Kind == "schedule")
+        finally
         {
-            ScheduleMonitoringRuleRequest request = new(
-                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_fromInput)),
-                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_toInput)));
-            result = await Api.ScheduleDraftAsync(Id, _pending.Revision.Id, request, token, _lifetime.Token);
+            _pendingBusy = false;
         }
-        else if (_pending.Kind == "delete-draft")
-        {
-            result = await Api.DeleteDraftAsync(Id, _pending.Revision.Id, token, _lifetime.Token);
-        }
-        else if (_pending.Kind == "remove-revision")
-        {
-            result = await Api.RemoveRevisionAsync(Id, _pending.Revision.Id, token, _lifetime.Token);
-        }
-
-        _pendingBusy = false;
 
         if (result is null)
         {
@@ -511,6 +553,20 @@ else if (_settings is not null)
     {
         _pending = null;
         _pendingError = null;
+    }
+
+    private async Task GuardNavigation(LocationChangingContext context)
+    {
+        if (SettingsDirty)
+        {
+            bool confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "You have unsaved changes. Leave this page and discard them?");
+            if (confirmed is false)
+            {
+                context.PreventNavigation();
+            }
+        }
     }
 
     private DateTimeOffset? ComputeNextBoundary()

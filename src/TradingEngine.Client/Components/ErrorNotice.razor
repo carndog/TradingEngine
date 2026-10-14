@@ -9,6 +9,10 @@
                 {
                     <div class="te-small">Retry after @Math.Max(1, (int)Math.Ceiling(Error.RetryAfter.Value.TotalSeconds)) seconds.</div>
                 }
+                @if (Error.Reference is not null)
+                {
+                    <div class="te-small">Reference @Error.Reference</div>
+                }
             </div>
             <div class="te-inline-actions">
                 @ChildContent
@@ -40,6 +44,11 @@
             if (Error.IsUnauthorized)
             {
                 return "Session expired";
+            }
+
+            if (Error.IsForbidden)
+            {
+                return "Access denied";
             }
 
             if (Error.IsRateLimited)
@@ -88,6 +97,11 @@
             if (Error.IsUnauthorized)
             {
                 return "Your session has expired. Sign in again to continue.";
+            }
+
+            if (Error.IsForbidden)
+            {
+                return Error.Detail ?? "Your account does not have access to this application.";
             }
 
             if (Error.IsRateLimited)

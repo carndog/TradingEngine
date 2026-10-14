@@ -173,6 +173,64 @@ public sealed class WatchedInstrumentSearchEndpointTests
         });
     }
 
+    [TestCase("page=2147483647")]
+    [TestCase("page=21474838&pageSize=100")]
+    public async Task GetWatchedInstruments_WithUnaddressablePage_ReturnsValidationProblem(
+        string parameters)
+    {
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync(
+            $"/api/watched-instruments?{parameters}");
+        ProblemDetails? problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(
+                ProblemCode(problem),
+                Is.EqualTo("watched_instrument.page_out_of_range"));
+            Assert.That(_store.RequestedSearch, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task GetWatchedInstruments_WithAddressableLargePage_QueriesStore()
+    {
+        _store.SearchResult = new WatchedInstrumentPage([], 21474837, 100, 41);
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync(
+            "/api/watched-instruments?page=21474837&pageSize=100");
+        WatchedInstrumentPageResponse? body = await response.Content
+            .ReadFromJsonAsync<WatchedInstrumentPageResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(body!.Items, Is.Empty);
+            Assert.That(_store.RequestedSearch, Is.EqualTo(((string?)null, 21474837, 100)));
+        });
+    }
+
+    [Test]
+    public async Task GetWatchedInstruments_WhenStoreThrows_ReturnsInternalErrorProblem()
+    {
+        _store.SearchException = new InvalidOperationException("synthetic store failure");
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/api/watched-instruments");
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError));
+            Assert.That(body, Does.Contain("server.internal_error"));
+            Assert.That(body, Does.Contain("traceId"));
+            Assert.That(body, Does.Not.Contain("synthetic store failure"));
+        });
+    }
+
     [Test]
     public async Task GetWatchedInstruments_WithOversizedQuery_ReturnsValidationProblem()
     {

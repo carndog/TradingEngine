@@ -48,6 +48,18 @@ internal static class ApiProblemDetails
             });
     }
 
+    internal static ProblemHttpResult InternalError(string traceId)
+    {
+        return TypedResults.Problem(
+            statusCode: StatusCodes.Status500InternalServerError,
+            detail: "An unexpected error occurred. Quote the trace identifier when reporting this failure.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "server.internal_error",
+                ["traceId"] = traceId
+            });
+    }
+
     internal static ProblemHttpResult TooManyRequests()
     {
         return TypedResults.Problem(

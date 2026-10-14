@@ -144,7 +144,7 @@ Invoke-RestMethod "https://$hostName/health"
 Invoke-RestMethod "https://$hostName/version"
 ```
 
-`/health` should report a healthy status and `/version` should return the deployed application version. Record the version value against the deployment.
+`/health` should report a healthy status and `/version` should return the deployed application version. Record the version value against the deployment. If `/version` keeps reporting the previous commit after a deploy, do not retry indefinitely — the site is still serving the old build (failed startup or a zip deploy that did not restart the app); see [diagnosing a stale `/version`](local-and-deployed-verification.md#diagnosing-a-stale-version).
 
 ## Teardown
 
@@ -161,7 +161,7 @@ Note that an incremental Bicep deployment does not delete a resource merely beca
 ## Notes
 
 - The Web App name is generated with `uniqueString` so it is globally unique without committing subscription IDs or live identifiers.
-- The Web App runs the `DOTNETCORE|10.0` Linux runtime, matching the repository's .NET 10 target.
+- The Web App runs the `DOTNETCORE|10.0` Linux runtime, matching the repository's .NET 10 target, with an explicit `appCommandLine` of `dotnet TradingEngine.Api.dll` so startup does not depend on platform entry-point detection for the published layout.
 - HTTPS only, minimum TLS 1.2, FTPS disabled, `alwaysOn` enabled and `/health` configured as the App Service health-check path.
 - FTP and SCM basic publishing credentials are disabled; deployments must use Microsoft Entra authentication.
 - A system-assigned Managed Identity is enabled for Azure SQL access; its principal ID is exported as the `managedIdentityPrincipalId` deployment output. The contained-user bootstrap that maps it into the database is documented in the [operations runbook](azure-sql-operations-runbook.md) and runs once after the SQL deployment.

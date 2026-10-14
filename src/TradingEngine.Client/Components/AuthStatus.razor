@@ -1,0 +1,50 @@
+@inject TradingEngineApiClient Api
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@{
+    SessionPresentation presentation = _presentation ?? SessionPresentation.Checking;
+}
+<div class="te-session" role="status" aria-live="polite" aria-label="Session">
+    <span class="te-session-label">@presentation.Label</span>
+    @if (presentation.SignInUrl is not null)
+    {
+        <a href="@presentation.SignInUrl">Sign in</a>
+    }
+    @if (presentation.SignOutUrl is not null)
+    {
+        <a href="@presentation.SignOutUrl">Sign out</a>
+    }
+    @if (presentation.CanRetry)
+    {
+        <button type="button" class="te-session-retry" @onclick="ReloadAsync">Retry</button>
+    }
+</div>
+
+@code {
+    private SessionPresentation? _presentation;
+    private readonly CancellationTokenSource _lifetime = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            ApiResult<SessionResponse> result = await Api.GetSessionAsync(_lifetime.Token);
+            _presentation = SessionPresentation.From(result, AuthLinks.SignInUrl(Navigation));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}

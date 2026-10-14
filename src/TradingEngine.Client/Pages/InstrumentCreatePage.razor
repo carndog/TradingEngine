@@ -61,7 +61,12 @@
     <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
 </div>
 
-<ErrorNotice Error="@_error" />
+<ErrorNotice Error="@_error">
+    @if (_error?.IsUnauthorized == true)
+    {
+        <a href="@SignInUrl">Sign in again</a>
+    }
+</ErrorNotice>
 
 <div class="te-footer">
     <button type="button" class="te-primary" @onclick="RegisterAsync" disabled="@_busy">
@@ -84,6 +89,8 @@
     private string _monitoringState = "configured";
     private int _interval = 60;
     private readonly CancellationTokenSource _lifetime = new();
+
+    private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
     protected override void OnInitialized()
     {
@@ -119,10 +126,15 @@
             definition.SupportZones,
             definition.ResistanceZones);
 
-        ApiResult<WatchedInstrumentResponse> result =
-            await Api.RegisterInstrumentAsync(request, _lifetime.Token);
-
-        _busy = false;
+        ApiResult<WatchedInstrumentResponse> result;
+        try
+        {
+            result = await Api.RegisterInstrumentAsync(request, _lifetime.Token);
+        }
+        finally
+        {
+            _busy = false;
+        }
 
         if (result.IsSuccess)
         {

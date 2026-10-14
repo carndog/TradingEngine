@@ -145,12 +145,15 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
         int totalCount = await candidates.CountAsync(cancellationToken);
 
+        long requestedOffset = Math.Max(0L, (long)(page - 1) * pageSize);
+        int offset = requestedOffset > int.MaxValue ? int.MaxValue : (int)requestedOffset;
+
         List<WatchedInstrumentRow> rows = await candidates
             .OrderBy(instrument => instrument.Symbol.ToUpper())
             .ThenBy(instrument => instrument.Exchange.ToUpper())
             .ThenBy(instrument => instrument.QuoteCurrency.ToUpper())
             .ThenBy(instrument => instrument.Id)
-            .Skip((page - 1) * pageSize)
+            .Skip(offset)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 

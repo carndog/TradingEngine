@@ -20,6 +20,8 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Result<WatchedInstrumentSettingsSnapshot>? SaveSettingsResult { get; set; }
 
+    public Exception? SearchException { get; set; }
+
     public WatchedInstrumentRegistration? AddedRegistration { get; private set; }
 
     public Instant? RequestedAt { get; private set; }
@@ -63,6 +65,11 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         RequestedSearch = (query, page, pageSize);
+
+        if (SearchException is not null)
+        {
+            throw SearchException;
+        }
 
         return Task.FromResult(
             SearchResult ?? new WatchedInstrumentPage([], page, pageSize, 0));

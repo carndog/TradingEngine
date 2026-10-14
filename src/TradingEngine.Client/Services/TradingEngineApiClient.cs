@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using TradingEngine.Contracts.MonitoringRules;
+using TradingEngine.Contracts.Session;
 using TradingEngine.Contracts.WatchedInstruments;
 
 namespace TradingEngine.Client.Services;
@@ -8,11 +9,28 @@ namespace TradingEngine.Client.Services;
 public sealed class TradingEngineApiClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan[] DefaultReadRetryDelays =
+        [TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(1200)];
+    private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromSeconds(5);
+
     private readonly HttpClient _http;
+    private readonly TimeSpan _requestTimeout;
+    private readonly TimeSpan[] _readRetryDelays;
 
     public TradingEngineApiClient(HttpClient http)
+        : this(http, DefaultRequestTimeout, DefaultReadRetryDelays)
+    {
+    }
+
+    internal TradingEngineApiClient(
+        HttpClient http,
+        TimeSpan requestTimeout,
+        TimeSpan[] readRetryDelays)
     {
         _http = http;
+        _requestTimeout = requestTimeout;
+        _readRetryDelays = readRetryDelays;
     }
 
     public Task<ApiResult<WatchedInstrumentPageResponse>> SearchInstrumentsAsync(
@@ -222,6 +240,17 @@ public sealed class TradingEngineApiClient
             cancellationToken);
     }
 
+    public Task<ApiResult<SessionResponse>> GetSessionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return SendAsync<SessionResponse>(
+            HttpMethod.Get,
+            "api/session",
+            body: null,
+            ifMatch: null,
+            cancellationToken);
+    }
+
     public Task<ApiResult<MonitoringRuleTimelineResponse>> RemoveRevisionAsync(
         Guid instrumentId,
         Guid revisionId,
@@ -243,6 +272,51 @@ public sealed class TradingEngineApiClient
         string? ifMatch,
         CancellationToken cancellationToken)
     {
+        using CancellationTokenSource bounded =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(_requestTimeout);
+
+        int retries = method == HttpMethod.Get ? _readRetryDelays.Length : 0;
+
+        for (int attempt = 0; ; attempt++)
+        {
+            ApiResult<T> outcome = await SendOnceAsync<T>(
+                method,
+                path,
+                body,
+                ifMatch,
+                cancellationToken,
+                bounded.Token);
+
+            if (attempt >= retries || outcome.IsSuccess || IsTransient(outcome.Error!) is false)
+            {
+                return outcome;
+            }
+
+            TimeSpan delay = BoundedDelay(outcome.Error!, attempt);
+            try
+            {
+                await Task.Delay(delay, bounded.Token);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                return ApiResult<T>.Fail(ApiError.Network("The request timed out. Try again."));
+            }
+        }
+    }
+
+    private async Task<ApiResult<T>> SendOnceAsync<T>(
+        HttpMethod method,
+        string path,
+        object? body,
+        string? ifMatch,
+        CancellationToken cancellationToken,
+        CancellationToken boundedToken)
+    {
         try
         {
             using HttpRequestMessage request = new(method, path);
@@ -256,27 +330,70 @@ public sealed class TradingEngineApiClient
                 request.Headers.TryAddWithoutValidation("If-Match", $"\"{ifMatch}\"");
             }
 
-            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+            using HttpResponseMessage response = await _http.SendAsync(request, boundedToken);
             if (response.IsSuccessStatusCode)
             {
-                T? value = await response.Content.ReadFromJsonAsync<T>(JsonOptions, cancellationToken);
-                return ApiResult<T>.Ok(value!);
+                return await ReadSuccessAsync<T>(response, boundedToken);
             }
 
-            ApiError error = await ReadErrorAsync(response, cancellationToken);
+            ApiError error = await ReadErrorAsync(response, boundedToken);
             return ApiResult<T>.Fail(error);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return ApiResult<T>.Fail(ApiError.Network("The request timed out. Try again."));
         }
         catch (HttpRequestException)
         {
             return ApiResult<T>.Fail(ApiError.Network("The API could not be reached. Check your connection and try again."));
         }
-        catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested is false)
+        catch (Exception)
         {
-            return ApiResult<T>.Fail(ApiError.Network("The request timed out. Try again."));
+            return ApiResult<T>.Fail(ApiError.Unexpected(
+                "The request failed unexpectedly. Try again.",
+                NewReference()));
         }
-        catch (TaskCanceledException)
+    }
+
+    private static async Task<ApiResult<T>> ReadSuccessAsync<T>(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        string? mediaType = response.Content.Headers.ContentType?.MediaType;
+        if (mediaType is null
+            || mediaType.Contains("json", StringComparison.OrdinalIgnoreCase) is false)
         {
-            throw;
+            return ApiResult<T>.Fail(ApiError.Unexpected(
+                "The server returned a response that is not JSON.",
+                NewReference()));
+        }
+
+        string text = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return ApiResult<T>.Fail(ApiError.Unexpected(
+                "The server returned an empty response.",
+                NewReference()));
+        }
+
+        try
+        {
+            T? value = JsonSerializer.Deserialize<T>(text, JsonOptions);
+            return value is null
+                ? ApiResult<T>.Fail(ApiError.Unexpected(
+                    "The server returned an empty result.",
+                    NewReference()))
+                : ApiResult<T>.Ok(value);
+        }
+        catch (JsonException)
+        {
+            return ApiResult<T>.Fail(ApiError.Unexpected(
+                "The server returned a malformed response.",
+                NewReference()));
         }
     }
 
@@ -294,9 +411,13 @@ public sealed class TradingEngineApiClient
             {
                 using JsonDocument document = JsonDocument.Parse(text);
                 JsonElement root = document.RootElement;
-                string? detail = TryGetString(root, "detail") ?? TryGetString(root, "title");
-                string? code = TryGetString(root, "code");
-                return ApiError.Create(status, code, detail, retryAfter);
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    string? detail = TryGetString(root, "detail") ?? TryGetString(root, "title");
+                    string? code = TryGetString(root, "code");
+                    string? traceId = TryGetString(root, "traceId");
+                    return ApiError.Create(status, code, detail, retryAfter, traceId);
+                }
             }
         }
         catch (JsonException)
@@ -304,6 +425,22 @@ public sealed class TradingEngineApiClient
         }
 
         return ApiError.Create(status, null, null, retryAfter);
+    }
+
+    private static bool IsTransient(ApiError error)
+    {
+        return error.IsNetworkError || error.Status is 408 or 429 or 500 or 502 or 503 or 504;
+    }
+
+    private TimeSpan BoundedDelay(ApiError error, int attempt)
+    {
+        TimeSpan delay = error.RetryAfter ?? _readRetryDelays[attempt];
+        return delay > MaximumRetryDelay ? MaximumRetryDelay : delay;
+    }
+
+    private static string NewReference()
+    {
+        return $"ref-{Guid.NewGuid():N}"[..13];
     }
 
     private static string? TryGetString(JsonElement element, string name)

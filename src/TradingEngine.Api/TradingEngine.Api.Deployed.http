@@ -67,6 +67,22 @@ Authorization: Bearer {{bearerToken}}
 
 ###
 
+// Session display state behind Easy Auth: expect 200 with mode "entra".
+// The response carries only the mode and an optional display name - never
+// tokens, the claims list or the object identifier.
+GET {{deployedHost}}/api/session
+Accept: application/json
+Authorization: Bearer {{bearerToken}}
+
+> {%
+    client.test("session is entra", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.mode === "entra", "mode");
+    });
+%}
+
+###
+
 // Database readiness probe: anonymous by policy but gated by the probe key.
 // Without the header expect 404; with it expect 200 and {"status":"Healthy"}.
 GET {{deployedHost}}/health/database
