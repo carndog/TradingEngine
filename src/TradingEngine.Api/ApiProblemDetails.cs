@@ -17,13 +17,22 @@ internal static class ApiProblemDetails
             _ => StatusCodes.Status500InternalServerError
         };
 
+        Dictionary<string, object?> extensions = new()
+        {
+            ["code"] = error.Code
+        };
+        if (error.Extensions is not null)
+        {
+            foreach (KeyValuePair<string, object?> extension in error.Extensions)
+            {
+                extensions[extension.Key] = extension.Value;
+            }
+        }
+
         return TypedResults.Problem(
             statusCode: statusCode,
             detail: error.Description,
-            extensions: new Dictionary<string, object?>
-            {
-                ["code"] = error.Code
-            });
+            extensions: extensions);
     }
 
     internal static ProblemHttpResult Unauthorized(string code, string detail)

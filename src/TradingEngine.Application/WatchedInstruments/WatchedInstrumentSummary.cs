@@ -8,4 +8,5 @@ public sealed record WatchedInstrumentSummary(
     string Exchange,
     string QuoteCurrency,
     MonitoringState MonitoringState,
-    int SamplingIntervalSeconds);
+    int SamplingIntervalSeconds,
+    byte[] ConcurrencyToken);

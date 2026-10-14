@@ -91,6 +91,18 @@ public sealed class TradingEngineApiClient
             cancellationToken);
     }
 
+    public Task<ApiResult<BulkDeleteWatchedInstrumentsResponse>> BulkDeleteInstrumentsAsync(
+        BulkDeleteWatchedInstrumentsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return SendAsync<BulkDeleteWatchedInstrumentsResponse>(
+            HttpMethod.Post,
+            "api/watched-instruments/bulk-delete",
+            request,
+            ifMatch: null,
+            cancellationToken);
+    }
+
     public Task<ApiResult<WatchedInstrumentResponse>> RegisterInstrumentAsync(
         RegisterWatchedInstrumentRequest request,
         CancellationToken cancellationToken = default)

@@ -165,3 +165,48 @@ tests. Transient-failure handling stays at the HTTP boundary: the client
 retries idempotent `GET`s at most twice (≈0.4 s/1.2 s backoff, capped at
 5 s and honouring `Retry-After`) inside a 45 s overall bound, and never
 retries writes or 400/401/403/409/412/428 responses.
+
+## Watched-instrument logical deletion rollout
+
+`20261014224418_WatchedInstrumentLogicalDeletion` adds a nullable
+`DeletedAt` column to `WatchedInstruments` and replaces the unconditional
+unique index `UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency` with a
+filtered unique index (`[DeletedAt] IS NULL`). It is non-destructive:
+existing rows and revision history are untouched.
+
+Sequencing:
+
+1. Apply the migration to the target database **before** deploying the
+   build that reads/writes `DeletedAt`
+   (`dotnet ef database update` or the deployment migration step). The
+   old build is unaffected by the extra nullable column, so schema-first
+   is safe.
+2. Deploy the new build.
+3. Verify: `GET /api/watched-instruments` summaries now include
+   `concurrencyToken`; `POST /api/watched-instruments/bulk-delete`
+   accepts `{"items":[{"instrumentId":"…","concurrencyToken":"…"}]}`.
+
+Rollback limitations: rolling back the migration recreates the
+unconditional unique index, which **fails** if any deleted instrument
+still shares a business key with an active re-registration. Reversing
+the migration therefore requires either purging those deleted rows or
+accepting the filtered index staying in place; deploy rollback of the
+code alone always works because `DeletedAt` is nullable and ignored by
+the old build.
+
+Manual acceptance (synthetic records only, disposable/local database):
+
+1. Register two synthetic instruments (e.g. `XTEST`/`AAA`, `XTEST`/`BBB`).
+2. Open the catalogue: each row shows a leading checkbox; the header
+   checkbox shows the indeterminate state when only some rows are ticked
+   and reports `N selected on this page`.
+3. Tick both rows → `Delete selected` → confirm. Both disappear from
+   the list and `GET /api/watched-instruments/{id}` for each returns
+   404 while their detail history rows remain in the database.
+4. Re-register `XTEST`/`AAA` → succeeds with a new id.
+5. POST `bulk-delete` with the **old** id and its stale token → returns
+   `alreadyDeletedIds` (safe no-op); the new active row is unaffected.
+6. POST `bulk-delete` with one valid item plus one unknown id → 404 with
+   `instrumentIds`, and the valid item is **not** deleted (all-or-none).
+7. Change the search text or page while items are ticked → selection
+   clears and no hidden ids are submitted.

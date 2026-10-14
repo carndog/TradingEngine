@@ -47,4 +47,24 @@ internal static class ConcurrencyTokens
             return (null, malformedTokenError);
         }
     }
+
+    internal static bool TryParseToken(string? value, out byte[] token)
+    {
+        token = [];
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        try
+        {
+            token = Convert.FromBase64String(value.Trim());
+            return token.Length > 0;
+        }
+        catch (FormatException)
+        {
+            token = [];
+            return false;
+        }
+    }
 }

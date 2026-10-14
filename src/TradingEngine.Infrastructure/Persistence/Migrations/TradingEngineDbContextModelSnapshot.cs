@@ -131,6 +131,9 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2(7)");
 
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2(7)");
+
                     b.Property<string>("Exchange")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -167,7 +170,8 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Exchange", "Symbol", "QuoteCurrency")
                         .IsUnique()
-                        .HasDatabaseName("UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency");
+                        .HasDatabaseName("UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency")
+                        .HasFilter("[DeletedAt] IS NULL");
 
                     b.ToTable("WatchedInstruments", null, t =>
                         {

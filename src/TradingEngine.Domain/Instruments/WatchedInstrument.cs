@@ -46,6 +46,10 @@ public sealed class WatchedInstrument
 
     public Instant LastChangedAt { get; private set; }
 
+    public Instant? DeletedAt { get; private set; }
+
+    public bool IsDeleted => DeletedAt is not null;
+
     public static Result<WatchedInstrument> Create(
         Guid id,
         string? symbol,
@@ -123,7 +127,8 @@ public sealed class WatchedInstrument
         MonitoringState monitoringState,
         int samplingIntervalSeconds,
         Instant createdAt,
-        Instant lastChangedAt)
+        Instant lastChangedAt,
+        Instant? deletedAt = null)
     {
         Result<WatchedInstrument> created = Create(
             id,
@@ -147,15 +152,26 @@ public sealed class WatchedInstrument
             return WatchedInstrumentErrors.LastChangedPrecedesCreated;
         }
 
+        if (deletedAt is not null && deletedAt.Value < createdAt)
+        {
+            return WatchedInstrumentErrors.DeletedPrecedesCreated;
+        }
+
         WatchedInstrument instrument = created.Value;
         instrument.MonitoringState = monitoringState;
         instrument.LastChangedAt = lastChangedAt;
+        instrument.DeletedAt = deletedAt;
 
         return instrument;
     }
 
     public Result StartMonitoring(int samplingIntervalSeconds, Instant changedAt)
     {
+        if (IsDeleted)
+        {
+            return WatchedInstrumentErrors.AlreadyDeleted;
+        }
+
         Error? failure = ValidateChangeTimestamp(changedAt);
         if (failure is not null)
         {
@@ -181,6 +197,11 @@ public sealed class WatchedInstrument
 
     public Result StopMonitoring(Instant changedAt)
     {
+        if (IsDeleted)
+        {
+            return WatchedInstrumentErrors.AlreadyDeleted;
+        }
+
         Error? failure = ValidateChangeTimestamp(changedAt);
         if (failure is not null)
         {
@@ -200,6 +221,11 @@ public sealed class WatchedInstrument
 
     public Result ChangeSamplingInterval(int samplingIntervalSeconds, Instant changedAt)
     {
+        if (IsDeleted)
+        {
+            return WatchedInstrumentErrors.AlreadyDeleted;
+        }
+
         Error? failure = ValidateChangeTimestamp(changedAt);
         if (failure is not null)
         {
@@ -218,6 +244,26 @@ public sealed class WatchedInstrument
 
         SamplingIntervalSeconds = samplingIntervalSeconds;
         LastChangedAt = changedAt;
+
+        return Result.Success();
+    }
+
+    public Result MarkDeleted(Instant deletedAt)
+    {
+        if (IsDeleted)
+        {
+            return WatchedInstrumentErrors.AlreadyDeleted;
+        }
+
+        Error? failure = ValidateChangeTimestamp(deletedAt);
+        if (failure is not null)
+        {
+            return failure;
+        }
+
+        MonitoringState = MonitoringState.Configured;
+        LastChangedAt = deletedAt;
+        DeletedAt = deletedAt;
 
         return Result.Success();
     }

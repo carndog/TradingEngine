@@ -109,6 +109,9 @@ public sealed class WatchedInstrumentSearchEndpointTests
             Assert.That(body.Items[0].QuoteCurrency, Is.EqualTo("GBP"));
             Assert.That(body.Items[0].MonitoringState, Is.EqualTo("configured"));
             Assert.That(body.Items[0].SamplingIntervalSeconds, Is.EqualTo(60));
+            Assert.That(
+                body.Items[0].ConcurrencyToken,
+                Is.EqualTo(Convert.ToBase64String(new byte[] { 4, 3, 2, 1, 0, 0, 0, 0 })));
             Assert.That(body.Items[1].MonitoringState, Is.EqualTo("monitored"));
         });
     }
@@ -262,7 +265,8 @@ public sealed class WatchedInstrumentSearchEndpointTests
             exchange,
             "GBP",
             state,
-            60);
+            60,
+            [4, 3, 2, 1, 0, 0, 0, 0]);
     }
 
     private static string? ProblemCode(ProblemDetails? problem)

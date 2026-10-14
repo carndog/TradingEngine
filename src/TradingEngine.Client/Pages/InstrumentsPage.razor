@@ -16,6 +16,11 @@
     </div>
 </div>
 
+@if (_notice is not null)
+{
+    <p class="te-small" role="status">@_notice</p>
+}
+
 <div class="te-toolbar">
     <label class="te-search">
         <span class="te-sr">Search instruments</span>
@@ -26,6 +31,13 @@
                @onkeydown="OnSearchKeyDown"
                aria-label="Search instruments">
     </label>
+    <div class="te-row" style="gap:8px;align-items:center">
+        <span class="te-small">@SelectionStatusText</span>
+        <button type="button"
+                @ref="_deleteSelectedButton"
+                disabled="@(_selected.Count == 0 || _deleteBusy)"
+                @onclick="OpenConfirmation">Delete selected</button>
+    </div>
 </div>
 
 @if (_error is not null && _result is null)
@@ -82,6 +94,13 @@ else if (_result is not null)
         <table aria-label="Watched instruments">
             <thead>
                 <tr>
+                    <th class="te-select">
+                        <input type="checkbox"
+                               @ref="_headerCheckbox"
+                               checked="@AllPageRowsSelected"
+                               @onchange="OnHeaderToggled"
+                               aria-label="Select all instruments on this page">
+                    </th>
                     <th>Symbol</th>
                     <th>Exchange</th>
                     <th>Quote currency</th>
@@ -90,9 +109,15 @@ else if (_result is not null)
                 </tr>
             </thead>
             <tbody>
-                @foreach (WatchedInstrumentSummaryDto item in _result.Items)
+                @foreach (WatchedInstrumentSummaryDto item in PageItems)
                 {
                     <tr aria-current="@(ListState.SelectedId == item.Id ? "true" : null)">
+                        <td data-label="Select" class="te-select">
+                            <input type="checkbox"
+                                   checked="@_selected.ContainsKey(item.Id)"
+                                   @onchange="args => ToggleSelection(item, (bool)args.Value!)"
+                                   aria-label="Select @item.Symbol on @item.Exchange in @item.QuoteCurrency">
+                        </td>
                         <td data-label="Symbol">
                             <button type="button" class="te-open"
                                     data-record="@item.Id"
@@ -129,6 +154,29 @@ else if (_result is not null)
     </div>
 }
 
+@if (_confirmItems is not null)
+{
+    <ConfirmPanel Title="@ConfirmationTitle"
+                  ConfirmLabel="@($"Delete {_confirmItems.Count} {ItemNoun(_confirmItems.Count)}")"
+                  BusyLabel="Deleting…"
+                  Busy="@_deleteBusy"
+                  Error="@_deleteError"
+                  OnConfirm="ConfirmDeleteAsync"
+                  OnCancel="CancelConfirmation">
+        <p class="te-sub">
+            Deleting stops monitoring of @_confirmItems.Count selected
+            @ItemNoun(_confirmItems.Count) immediately. Revision and audit history
+            is retained. Drafts and revisions are not deleted.
+        </p>
+        <ul class="te-confirm-list">
+            @foreach (WatchedInstrumentSummaryDto item in _confirmItems)
+            {
+                <li>@item.Symbol · @item.Exchange · @item.QuoteCurrency</li>
+            }
+        </ul>
+    </ConfirmPanel>
+}
+
 @code {
     private static readonly int[] PageSizes = [10, 25, 50];
 
@@ -144,6 +192,14 @@ else if (_result is not null)
     private readonly CancellationTokenSource _lifetime = new();
     private Guid? _focusId;
     private bool _focusPending;
+    private readonly Dictionary<Guid, WatchedInstrumentSummaryDto> _selected = new();
+    private IReadOnlyList<WatchedInstrumentSummaryDto>? _confirmItems;
+    private ApiError? _deleteError;
+    private bool _deleteBusy;
+    private string? _notice;
+    private ElementReference _headerCheckbox;
+    private ElementReference _deleteSelectedButton;
+    private bool _deleteFocusPending;
 
     [SupplyParameterFromQuery(Name = "q")]
     public string? Query { get; set; }
@@ -161,6 +217,20 @@ else if (_result is not null)
     private int TotalPages => _result is null || _result.TotalCount == 0
         ? 1
         : (int)Math.Ceiling(_result.TotalCount / (double)_result.PageSize);
+
+    private IReadOnlyList<WatchedInstrumentSummaryDto> PageItems => _result?.Items ?? [];
+
+    private bool AllPageRowsSelected => PageItems.Count > 0
+        && PageItems.All(item => _selected.ContainsKey(item.Id));
+
+    private bool SomePageRowsSelected => PageItems.Any(item => _selected.ContainsKey(item.Id));
+
+    private string SelectionStatusText => _selected.Count == 0
+        ? "0 selected on this page"
+        : $"{_selected.Count} selected on this page";
+
+    private string ConfirmationTitle =>
+        $"Delete {_confirmItems?.Count ?? 0} {ItemNoun(_confirmItems?.Count ?? 0)}?";
 
     private string RangeText
     {
@@ -186,6 +256,8 @@ else if (_result is not null)
         _searchText = Query ?? string.Empty;
         _pageSize = PageSizes.Contains(RequestedPageSize) ? RequestedPageSize : 25;
         int page = Page < 1 ? 1 : Page;
+
+        ClearSelection();
 
         ListState.ListUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
         _focusId = ListState.SelectedId;
@@ -219,6 +291,12 @@ else if (_result is not null)
                 return;
             }
 
+            if (_result.TotalCount == 0 && page > 1)
+            {
+                Navigation.NavigateTo(BuildUrl(_searchText, 1, _pageSize), replace: true);
+                return;
+            }
+
             _focusPending = _focusId is not null;
         }
         else
@@ -229,11 +307,25 @@ else if (_result is not null)
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (PageItems.Count > 0)
+        {
+            await JS.InvokeVoidAsync(
+                "teSetIndeterminate",
+                _headerCheckbox,
+                SomePageRowsSelected && AllPageRowsSelected is false);
+        }
+
         if (_focusPending && _focusId is not null)
         {
             _focusPending = false;
             await JS.InvokeVoidAsync("teFocus", $"[data-record='{_focusId}']");
             _focusId = null;
+        }
+
+        if (_deleteFocusPending)
+        {
+            _deleteFocusPending = false;
+            await _deleteSelectedButton.FocusAsync();
         }
     }
 
@@ -322,9 +414,128 @@ else if (_result is not null)
         Navigation.NavigateTo($"instruments/{id}");
     }
 
+    private void ToggleSelection(WatchedInstrumentSummaryDto item, bool selected)
+    {
+        if (selected)
+        {
+            _selected[item.Id] = item;
+        }
+        else
+        {
+            _selected.Remove(item.Id);
+        }
+
+        _notice = null;
+    }
+
+    private void OnHeaderToggled(ChangeEventArgs args)
+    {
+        if (_result is null)
+        {
+            return;
+        }
+
+        bool selectAll = args.Value is bool flag ? flag : AllPageRowsSelected is false;
+        foreach (WatchedInstrumentSummaryDto item in PageItems)
+        {
+            ToggleSelection(item, selectAll);
+        }
+    }
+
+    private void ClearSelection()
+    {
+        _selected.Clear();
+        _confirmItems = null;
+        _deleteError = null;
+        _deleteBusy = false;
+    }
+
+    private void OpenConfirmation()
+    {
+        if (_selected.Count == 0 || _deleteBusy)
+        {
+            return;
+        }
+
+        _confirmItems = _selected.Values.ToArray();
+        _deleteError = null;
+        _notice = null;
+    }
+
+    private void CancelConfirmation()
+    {
+        _confirmItems = null;
+        _deleteError = null;
+        _deleteFocusPending = true;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_confirmItems is null || _deleteBusy)
+        {
+            return;
+        }
+
+        _deleteBusy = true;
+        _deleteError = null;
+        _notice = null;
+
+        BulkDeleteWatchedInstrumentItemDto[] items = _confirmItems
+            .Select(item => new BulkDeleteWatchedInstrumentItemDto(
+                item.Id,
+                item.ConcurrencyToken))
+            .ToArray();
+
+        ApiResult<BulkDeleteWatchedInstrumentsResponse> outcome =
+            await Api.BulkDeleteInstrumentsAsync(
+                new BulkDeleteWatchedInstrumentsRequest(items),
+                _lifetime.Token);
+
+        _deleteBusy = false;
+
+        if (outcome.IsSuccess)
+        {
+            BulkDeleteWatchedInstrumentsResponse body = outcome.Value!;
+            int deleted = body.DeletedIds.Count;
+            int alreadyRemoved = body.AlreadyDeletedIds.Count;
+            _notice = $"Deleted {deleted} {ItemNoun(deleted)}."
+                + (alreadyRemoved > 0
+                    ? $" {alreadyRemoved} {ItemNoun(alreadyRemoved)} had already been removed."
+                    : string.Empty);
+            _confirmItems = null;
+            _selected.Clear();
+            _deleteFocusPending = true;
+            await OnParametersSetAsync();
+            return;
+        }
+
+        ApiError failure = outcome.Error!;
+        if (RequiresReselection(failure))
+        {
+            _notice = "The selection changed on the server. The page was refreshed — reselect and try again.";
+            await OnParametersSetAsync();
+            return;
+        }
+
+        _deleteError = failure;
+    }
+
+    private static bool RequiresReselection(ApiError error)
+    {
+        return error.IsPreconditionFailed
+            || error.IsConflict
+            || error.IsNotFound
+            || error.IsPreconditionRequired;
+    }
+
     private Task RetryAsync()
     {
         return OnParametersSetAsync();
+    }
+
+    private static string ItemNoun(int count)
+    {
+        return count == 1 ? "instrument" : "instruments";
     }
 
     private static string BuildUrl(string query, int page, int pageSize)

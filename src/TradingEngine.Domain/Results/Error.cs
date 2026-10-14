@@ -15,6 +15,20 @@ public sealed record Error
 
     public ErrorType Type { get; }
 
+    public IReadOnlyDictionary<string, object?>? Extensions { get; private init; }
+
+    public Error WithExtension(string key, object? value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
+        Dictionary<string, object?> extensions = Extensions is null
+            ? new Dictionary<string, object?>()
+            : new Dictionary<string, object?>(Extensions);
+        extensions[key] = value;
+
+        return this with { Extensions = extensions };
+    }
+
     public static Error Validation(string code, string description)
     {
         return Create(code, description, ErrorType.Validation);

@@ -28,6 +28,15 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
         Guid instrumentId,
         CancellationToken cancellationToken)
     {
+        bool instrumentDeleted = await _context.WatchedInstruments
+            .Where(instrument => instrument.Id == instrumentId)
+            .Select(instrument => instrument.DeletedAt != null)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (instrumentDeleted)
+        {
+            return MonitoringRuleErrors.NotFound;
+        }
+
         MonitoringRuleRow? row = await _context.MonitoringRules
             .AsNoTracking()
             .Include(rule => rule.Revisions)
@@ -120,6 +129,14 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
             await using IDbContextTransaction transaction = await _context.Database
                 .BeginTransactionAsync(cancellationToken);
 
+            bool instrumentActive = await InstrumentIsActiveAsync(
+                snapshot.Rule.WatchedInstrumentId,
+                cancellationToken);
+            if (instrumentActive is false)
+            {
+                return MonitoringRuleErrors.NotFound;
+            }
+
             rootEntry.State = EntityState.Modified;
             await _context.SaveChangesAsync(cancellationToken);
 
@@ -143,6 +160,18 @@ public sealed class SqlServerMonitoringRuleStore : IMonitoringRuleStore
         }
 
         return Result.Success();
+    }
+
+    private async Task<bool> InstrumentIsActiveAsync(
+        Guid instrumentId,
+        CancellationToken cancellationToken)
+    {
+        int active = await _context.Database
+            .SqlQuery<int>(
+                $"SELECT COUNT(1) AS Value FROM WatchedInstruments WITH (UPDLOCK) WHERE Id = {instrumentId} AND DeletedAt IS NULL")
+            .SingleAsync(cancellationToken);
+
+        return active == 1;
     }
 
     private void WithdrawRemovedAndChangedRevisions(

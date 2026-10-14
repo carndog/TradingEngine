@@ -115,4 +115,44 @@ public static class WatchedInstrumentErrors
     public static readonly Error ConcurrentChange = Error.PreconditionFailed(
         "watched_instrument.concurrent_change",
         "The watched instrument changed after it was loaded; reload and retry the change.");
+
+    public static readonly Error AlreadyDeleted = Error.Conflict(
+        "watched_instrument.already_deleted",
+        "The watched instrument has already been deleted.");
+
+    public static readonly Error DeletedPrecedesCreated = Error.Validation(
+        "watched_instrument.deleted_precedes_created",
+        "The deletion timestamp cannot precede the creation timestamp.");
+
+    public static readonly Error DeleteItemsRequired = Error.Validation(
+        "watched_instrument.delete_items_required",
+        "A bulk deletion requires at least one selected instrument.");
+
+    public static readonly Error DeleteItemsTooLarge = Error.Validation(
+        "watched_instrument.delete_items_too_large",
+        "A bulk deletion cannot contain more than 100 selected instruments.");
+
+    public static readonly Error DeleteItemsDuplicate = Error.Validation(
+        "watched_instrument.delete_items_duplicate",
+        "A bulk deletion cannot contain the same instrument more than once.");
+
+    public static readonly Error DeleteItemsInvalid = Error.Validation(
+        "watched_instrument.delete_items_invalid",
+        "A bulk deletion contains an invalid instrument identifier.");
+
+    public static readonly Error DeleteTokenRequired = Error.PreconditionRequired(
+        "watched_instrument.delete_token_required",
+        "Every selected instrument requires its current concurrency token.");
+
+    public static readonly Error DeleteTokenInvalid = Error.Validation(
+        "watched_instrument.delete_token_invalid",
+        "A selected instrument's concurrency token is malformed.");
+
+    public static readonly Error DeleteItemsNotFound = Error.NotFound(
+        "watched_instrument.delete_items_not_found",
+        "One or more selected instruments do not exist.");
+
+    public static readonly Error DeleteItemsStale = Error.PreconditionFailed(
+        "watched_instrument.delete_items_stale",
+        "One or more selected instruments changed after they were loaded; reload and reselect.");
 }

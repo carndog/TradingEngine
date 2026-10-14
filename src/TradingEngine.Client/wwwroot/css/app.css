@@ -370,6 +370,20 @@ a {
     background: var(--te-tint);
 }
 
+.te-table-wrap .te-select {
+    width: 36px;
+    text-align: center;
+}
+
+.te-confirm-list {
+    margin: 8px 0 0;
+    padding-left: 20px;
+    max-height: 160px;
+    overflow: auto;
+    font-size: 13px;
+    color: var(--te-muted);
+}
+
 .te-open {
     color: var(--te-blue);
     padding: 2px 0;

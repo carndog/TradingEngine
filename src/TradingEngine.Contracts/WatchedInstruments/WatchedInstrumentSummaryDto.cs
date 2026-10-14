@@ -6,4 +6,5 @@ public sealed record WatchedInstrumentSummaryDto(
     string Exchange,
     string QuoteCurrency,
     string MonitoringState,
-    int SamplingIntervalSeconds);
+    int SamplingIntervalSeconds,
+    string ConcurrencyToken);
