@@ -137,6 +137,39 @@ public sealed class MonitoringRuleTimestampEndpointTests
     }
 
     [Test]
+    public async Task PutRevision_WithReasonOnly_PreservesTickPrecisionStart()
+    {
+        (Guid draftId, string token) = await _host.CreateDraftAsync(110m);
+        HttpResponseMessage scheduled = await _host.SendRawAsync(
+            HttpMethod.Post,
+            Path($"/drafts/{draftId}/schedule"),
+            $$"""{"effectiveFrom":"{{TickInstant}}","effectiveTo":null}""",
+            token);
+        string currentToken = (await scheduled.Content
+            .ReadFromJsonAsync<MonitoringRuleTimelineResponse>())!.ConcurrencyToken;
+
+        HttpResponseMessage response = await _host.SendAsync(
+            HttpMethod.Put,
+            Path($"/revisions/{draftId}"),
+            new EditMonitoringRuleRevisionRequest(
+                "reason-only edit", DefinitionDto(110m), null),
+            currentToken);
+        MonitoringRuleTimelineResponse? body = await response.Content
+            .ReadFromJsonAsync<MonitoringRuleTimelineResponse>();
+        MonitoringRuleRevisionDto revision = body!.Revisions.Single(
+            candidate => candidate.Id == draftId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(
+                revision.EffectiveFrom,
+                Is.EqualTo(DateTimeOffset.Parse(TickInstant)));
+            Assert.That(revision.ChangeReason, Is.EqualTo("reason-only edit"));
+        });
+    }
+
+    [Test]
     public async Task PostSchedule_WithTickPrecisionBoundaries_RoundTripsExactly()
     {
         (Guid draftId, string token) = await _host.CreateDraftAsync(110m);

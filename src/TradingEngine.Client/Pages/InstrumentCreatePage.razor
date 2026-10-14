@@ -16,29 +16,29 @@
     <div class="te-fields">
         <label>
             Symbol
-            <input @bind="_symbol" @bind:event="oninput" @onchange="MarkDirty" maxlength="64"
+            <input @bind="_symbol" @bind:event="oninput" maxlength="64"
                    aria-label="Symbol" placeholder="e.g. BTCUSD">
         </label>
         <label>
             Exchange
-            <input @bind="_exchange" @bind:event="oninput" @onchange="MarkDirty" maxlength="20"
+            <input @bind="_exchange" @bind:event="oninput" maxlength="20"
                    aria-label="Exchange" placeholder="e.g. COINBASE">
         </label>
         <label>
             Quote currency
-            <input @bind="_quoteCurrency" @bind:event="oninput" @onchange="MarkDirty" maxlength="10"
+            <input @bind="_quoteCurrency" @bind:event="oninput" maxlength="10"
                    aria-label="Quote currency" placeholder="e.g. USD">
         </label>
         <label>
             Monitoring state
-            <select @bind="_monitoringState" @bind:after="MarkDirty" aria-label="Monitoring state">
+            <select @bind="_monitoringState" @bind:event="oninput" aria-label="Monitoring state">
                 <option value="configured">Configured</option>
                 <option value="monitored">Monitored</option>
             </select>
         </label>
         <label>
             Sampling interval (seconds)
-            <input type="number" min="1" max="3600" @bind="_interval" @bind:event="oninput" @onchange="MarkDirty"
+            <input type="number" min="1" max="3600" @bind="_interval" @bind:event="oninput"
                    aria-label="Sampling interval seconds">
         </label>
     </div>
@@ -52,13 +52,13 @@
                 <strong>Initial monitoring rule</strong>
                 <p class="te-note">At least one support or resistance zone is required.</p>
             </div>
-            @if (_dirty)
+            @if (Dirty)
             {
                 <span class="te-tag te-dirty">Unsaved changes</span>
             }
         </div>
     </div>
-    <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
+    <DefinitionEditor Model="@_definition" OnChanged="OnDefinitionChanged" />
 </div>
 
 <ErrorNotice Error="@_error">
@@ -75,14 +75,14 @@
     <a href="instruments" style="align-self:center">Cancel</a>
 </div>
 
-<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
-                ConfirmExternalNavigation="@_dirty" />
+<DirtyGuard IsDirty="@Dirty" />
 
 @code {
     private DefinitionEditModel _definition = DefinitionEditModel.Empty();
+    private DefinitionEditModel _definitionBaseline = DefinitionEditModel.Empty();
     private ApiError? _error;
     private bool _busy;
-    private bool _dirty;
+    private bool _completed;
     private string _symbol = string.Empty;
     private string _exchange = string.Empty;
     private string _quoteCurrency = string.Empty;
@@ -92,9 +92,19 @@
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
+    private bool Dirty =>
+        _completed is false
+        && (_symbol.Length > 0
+            || _exchange.Length > 0
+            || _quoteCurrency.Length > 0
+            || _monitoringState != "configured"
+            || _interval != 60
+            || _definition.SameContent(_definitionBaseline) is false);
+
     protected override void OnInitialized()
     {
         _definition.AddSupportZone();
+        _definitionBaseline = _definition.Clone();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -105,9 +115,8 @@
         }
     }
 
-    private void MarkDirty()
+    private void OnDefinitionChanged()
     {
-        _dirty = true;
     }
 
     private async Task RegisterAsync()
@@ -138,26 +147,12 @@
 
         if (result.IsSuccess)
         {
-            _dirty = false;
+            _completed = true;
             Navigation.NavigateTo($"instruments/{result.Value!.Id}?tab=current");
         }
         else
         {
             _error = result.Error;
-        }
-    }
-
-    private async Task GuardNavigation(LocationChangingContext context)
-    {
-        if (_dirty)
-        {
-            bool confirmed = await JS.InvokeAsync<bool>(
-                "confirm",
-                "You have unsaved changes. Leave this page and discard them?");
-            if (confirmed is false)
-            {
-                context.PreventNavigation();
-            }
         }
     }
 

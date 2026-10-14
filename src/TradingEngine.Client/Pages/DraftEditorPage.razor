@@ -35,13 +35,13 @@ else
                     <strong>Draft definition</strong>
                     <p class="te-note">Drafts do not become effective until applied or scheduled.</p>
                 </div>
-                @if (_dirty)
+                @if (Dirty)
                 {
                     <span class="te-tag te-dirty">Unsaved changes</span>
                 }
             </div>
         </div>
-        <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
+        <DefinitionEditor Model="@_definition" OnChanged="OnDefinitionChanged" />
     </div>
 
     <section class="te-detail-card" aria-label="Draft options">
@@ -49,35 +49,55 @@ else
         <div class="te-fields">
             <label>
                 Proposed start (UTC, optional)
-                <input type="datetime-local" value="@_proposedFrom"
-                       @onchange="args => SetField(value => _proposedFrom = value, args)"
+                <input type="datetime-local" step="1" value="@_proposedFrom.Text"
+                       @onchange="args => _proposedFrom.Set(args.Value?.ToString())"
                        aria-label="Proposed effective from UTC">
             </label>
             <label>
                 Proposed end (UTC, optional)
-                <input type="datetime-local" value="@_proposedTo"
-                       @onchange="args => SetField(value => _proposedTo = value, args)"
+                <input type="datetime-local" step="1" value="@_proposedTo.Text"
+                       @onchange="args => _proposedTo.Set(args.Value?.ToString())"
                        aria-label="Proposed effective to UTC">
             </label>
             <label>
                 Change reason
-                <input value="@_reason"
-                       @onchange="args => SetField(value => _reason = value, args)" maxlength="500"
+                <input @bind="_reason" @bind:event="oninput" maxlength="500"
                        aria-label="Change reason" placeholder="Why is this change being made?">
             </label>
         </div>
-        <p class="te-note">Proposed dates are advisory only — they never make a draft effective by themselves.</p>
+        <p class="te-note">
+            Proposed dates are advisory only — they never make a draft effective by themselves.
+            Unchanged fields keep their stored values exactly; clearing a field clears the proposal.
+        </p>
 
         <ErrorNotice Error="@_saveError">
-            @if (_saveError?.IsPreconditionFailed == true)
-            {
-                <button type="button" @onclick="ReloadTokenAsync">Reload latest</button>
-            }
             @if (_saveError?.IsUnauthorized == true)
             {
                 <a href="@SignInUrl">Sign in again</a>
             }
         </ErrorNotice>
+
+        @if (_draftConflict.IsOpen)
+        {
+            <ConflictNotice Busy="@_busy"
+                            OnDiscard="DiscardDraftConflict"
+                            OnReapply="ReapplyDraftConflictAsync">
+                <LatestSummary>
+                    Latest draft: @_draftConflictSummary
+                    Your input is kept — choose whether to adopt the latest version or reapply yours.
+                </LatestSummary>
+            </ConflictNotice>
+        }
+        @if (_timelineConflict.IsOpen)
+        {
+            <ConflictNotice Busy="@_busy"
+                            OnDiscard="DiscardTimelineConflict"
+                            OnReapply="ReapplyTimelineConflictAsync">
+                <LatestSummary>
+                    Timeline now has @_timelineConflict.Latest?.Revisions.Count revisions.
+                </LatestSummary>
+            </ConflictNotice>
+        }
         <div class="te-notice" aria-live="polite">@_notice</div>
 
         <div class="te-footer">
@@ -86,93 +106,43 @@ else
             </button>
             @if (IsNew is false)
             {
-                <button type="button" @onclick='() => _pending = "apply"' disabled="@_busy">Apply now</button>
-                <button type="button" @onclick='() => _pending = "schedule"' disabled="@_busy">Schedule</button>
-                <button type="button" @onclick='() => _pending = "delete"' disabled="@_busy">Delete draft</button>
+                <button type="button" @onclick="BeginApply" disabled="@_busy">Apply now</button>
+                <button type="button" @onclick="BeginSchedule" disabled="@_busy">Schedule</button>
+                <button type="button" @onclick="BeginDelete" disabled="@_busy">Delete draft</button>
             }
             <a href="instruments/@Id?tab=drafts" style="align-self:center">Cancel</a>
         </div>
     </section>
 
-    @if (_pending == "apply")
-    {
-        <ConfirmPanel Title="Apply draft now"
-                      ConfirmLabel="Apply now"
-                      BusyLabel="Applying…"
-                      Busy="@_busy"
-                      Error="@_saveError"
-                      OnConfirm="ApplyAsync"
-                      OnCancel="() => _pending = null">
-            <p>Saves any unsaved edits, then this draft becomes the current configuration immediately.</p>
-            <label style="max-width:260px">
-                Effective until (UTC, optional)
-                <input type="datetime-local" value="@_effectiveTo"
-                       @onchange="args => _effectiveTo = args.Value?.ToString() ?? string.Empty"
-                       aria-label="Effective until UTC">
-            </label>
-        </ConfirmPanel>
-    }
-
-    @if (_pending == "schedule")
-    {
-        <ConfirmPanel Title="Schedule draft"
-                      ConfirmLabel="Schedule"
-                      BusyLabel="Scheduling…"
-                      Busy="@_busy"
-                      Error="@_saveError"
-                      OnConfirm="ScheduleAsync"
-                      OnCancel="() => _pending = null">
-            <p>Saves any unsaved edits, then schedules the draft. Start must be at or after the current UTC time.</p>
-            <div class="te-fields te-two">
-                <label>
-                    Effective from (UTC)
-                    <input type="datetime-local" value="@_effectiveFrom"
-                           @onchange="args => _effectiveFrom = args.Value?.ToString() ?? string.Empty"
-                           aria-label="Effective from UTC">
-                </label>
-                <label>
-                    Effective until (UTC, optional)
-                    <input type="datetime-local" value="@_effectiveTo"
-                           @onchange="args => _effectiveTo = args.Value?.ToString() ?? string.Empty"
-                           aria-label="Effective until UTC">
-                </label>
-            </div>
-        </ConfirmPanel>
-    }
-
-    @if (_pending == "delete")
-    {
-        <ConfirmPanel Title="Delete draft"
-                      ConfirmLabel="Delete draft"
-                      BusyLabel="Deleting…"
-                      Busy="@_busy"
-                      Error="@_saveError"
-                      OnConfirm="DeleteAsync"
-                      OnCancel="() => _pending = null">
-            <p>Removes this draft permanently. Committed revisions are unchanged.</p>
-        </ConfirmPanel>
-    }
+    <PendingActionPanel Action="@_pending"
+                        Busy="@_busy"
+                        Error="@_pendingError"
+                        OnConfirm="ConfirmPendingAsync"
+                        OnCancel="CancelPendingAsync" />
 }
 
-<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
-                ConfirmExternalNavigation="@_dirty" />
+<DirtyGuard IsDirty="@AnyDirty" />
 
 @code {
     private DefinitionEditModel _definition = DefinitionEditModel.Empty();
+    private DefinitionEditModel _definitionBaseline = DefinitionEditModel.Empty();
+    private MonitoringRuleRevisionDto? _draft;
     private ApiError? _fatal;
     private ApiError? _saveError;
+    private ApiError? _pendingError;
     private bool _loading = true;
     private bool _busy;
-    private bool _dirty;
-    private string? _pending;
+    private PendingAction? _pending;
     private string? _notice;
     private string _instrumentLabel = string.Empty;
     private string _token = string.Empty;
     private string _reason = string.Empty;
-    private string _proposedFrom = string.Empty;
-    private string _proposedTo = string.Empty;
-    private string _effectiveFrom = string.Empty;
-    private string _effectiveTo = string.Empty;
+    private string _reasonBaseline = string.Empty;
+    private UtcTimeField _proposedFrom = new(null);
+    private UtcTimeField _proposedTo = new(null);
+    private readonly ConflictResolution<MonitoringRuleRevisionResponse> _draftConflict = new();
+    private readonly ConflictResolution<MonitoringRuleTimelineResponse> _timelineConflict = new();
+    private bool _headingFocusPending = true;
     private readonly CancellationTokenSource _lifetime = new();
 
     [Parameter]
@@ -188,6 +158,28 @@ else
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
+    private bool Dirty =>
+        _definition.SameContent(_definitionBaseline) is false
+        || _reason != _reasonBaseline
+        || _proposedFrom.Modified
+        || _proposedTo.Modified;
+
+    private bool AnyDirty => Dirty || _pending?.HasInput == true;
+
+    private string _draftConflictSummary
+    {
+        get
+        {
+            MonitoringRuleRevisionDto? latest = _draftConflict.Latest?.Revision;
+            if (latest is null)
+            {
+                return string.Empty;
+            }
+
+            return $"reason '{latest.ChangeReason ?? "—"}', proposed {UtcTimes.FormatRange(latest.ProposedEffectiveFrom, latest.ProposedEffectiveTo)}";
+        }
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         await LoadAsync();
@@ -195,8 +187,9 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && _fatal is null)
+        if (_headingFocusPending && _loading is false && _fatal is null)
         {
+            _headingFocusPending = false;
             await JS.InvokeVoidAsync("teFocus", "h2");
         }
     }
@@ -206,8 +199,10 @@ else
         _loading = true;
         _fatal = null;
         _saveError = null;
+        _pendingError = null;
         _pending = null;
-        _dirty = false;
+        _draftConflict.Take();
+        _timelineConflict.Take();
         _notice = null;
 
         ApiResult<WatchedInstrumentSettingsResponse> instrument =
@@ -234,8 +229,17 @@ else
         _loading = false;
     }
 
+    private void ReseedBaseline()
+    {
+        _definitionBaseline = _definition.Clone();
+        _reasonBaseline = _reason;
+        _proposedFrom.AcceptResolved();
+        _proposedTo.AcceptResolved();
+    }
+
     private async Task LoadNewDraftAsync()
     {
+        _draft = null;
         ApiResult<MonitoringRuleTimelineResponse> timeline =
             await Api.GetTimelineAsync(Id, _lifetime.Token);
         if (timeline.IsFailure)
@@ -246,6 +250,9 @@ else
 
         _token = timeline.Value!.ConcurrencyToken;
         _definition = DefinitionEditModel.Empty();
+        _reason = string.Empty;
+        _proposedFrom.Reseed(null);
+        _proposedTo.Reseed(null);
 
         if (CopyFrom is not null)
         {
@@ -267,6 +274,8 @@ else
         {
             _definition.AddSupportZone();
         }
+
+        ReseedBaseline();
     }
 
     private async Task LoadExistingDraftAsync()
@@ -287,196 +296,336 @@ else
             return;
         }
 
+        _draft = draft;
         _token = revision.Value.ConcurrencyToken;
         _definition = draft.Definition is null
             ? DefinitionEditModel.Empty()
             : DefinitionEditModel.FromDto(draft.Definition);
         _reason = draft.ChangeReason ?? string.Empty;
-        _proposedFrom = UtcTimes.ToInputValue(draft.ProposedEffectiveFrom);
-        _proposedTo = UtcTimes.ToInputValue(draft.ProposedEffectiveTo);
+        _proposedFrom.Reseed(draft.ProposedEffectiveFrom);
+        _proposedTo.Reseed(draft.ProposedEffectiveTo);
+        ReseedBaseline();
     }
 
-    private void MarkDirty()
+    private void OnDefinitionChanged()
     {
-        _dirty = true;
     }
 
-    private void SetField(Action<string> setter, ChangeEventArgs args)
+    private void BeginApply()
     {
-        setter(args.Value?.ToString() ?? string.Empty);
-        MarkDirty();
-    }
-
-    private MonitoringRuleDraftRequest BuildDraftRequest()
-    {
-        return new MonitoringRuleDraftRequest(
-            string.IsNullOrWhiteSpace(_reason) ? null : _reason.Trim(),
-            new RevisionPeriodDto(
-                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_proposedFrom)),
-                UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_proposedTo))),
-            _definition.ToDto());
-    }
-
-    private async Task<bool> SaveCoreAsync()
-    {
-        MonitoringRuleDraftRequest request = BuildDraftRequest();
-        ApiResult<MonitoringRuleTimelineResponse> result = IsNew
-            ? await Api.CreateDraftAsync(Id, request, _token, _lifetime.Token)
-            : await Api.UpdateDraftAsync(Id, DraftId!.Value, request, _token, _lifetime.Token);
-
-        if (result.IsFailure)
+        _pending = new PendingAction(PendingActionKind.Apply, _draft!, _token)
         {
-            _saveError = result.Error;
-            return false;
+            To = new UtcTimeField(_draft!.ProposedEffectiveTo)
+        };
+        _pendingError = null;
+        _notice = null;
+    }
+
+    private void BeginSchedule()
+    {
+        _pending = new PendingAction(PendingActionKind.Schedule, _draft!, _token)
+        {
+            From = new UtcTimeField(_draft!.ProposedEffectiveFrom),
+            To = new UtcTimeField(_draft!.ProposedEffectiveTo)
+        };
+        _pendingError = null;
+        _notice = null;
+    }
+
+    private void BeginDelete()
+    {
+        _pending = new PendingAction(PendingActionKind.DeleteDraft, _draft!, _token);
+        _pendingError = null;
+        _notice = null;
+    }
+
+    private async Task CancelPendingAsync()
+    {
+        if (_pending?.HasInput == true)
+        {
+            bool confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "Discard the times you entered for this action?");
+            if (confirmed is false)
+            {
+                return;
+            }
         }
 
-        _token = result.Value!.ConcurrencyToken;
-        _saveError = null;
-        return true;
+        _pending = null;
+        _pendingError = null;
+    }
+
+    private ApiError? BuildDraftRequest(out MonitoringRuleDraftRequest? request)
+    {
+        request = null;
+        ApiError? fromError = _proposedFrom.RequestOptional(out string? fromIso);
+        if (fromError is not null)
+        {
+            return fromError;
+        }
+
+        ApiError? toError = _proposedTo.RequestOptional(out string? toIso);
+        if (toError is not null)
+        {
+            return toError;
+        }
+
+        request = new MonitoringRuleDraftRequest(
+            string.IsNullOrWhiteSpace(_reason) ? null : _reason.Trim(),
+            new RevisionPeriodDto(fromIso, toIso),
+            _definition.ToDto());
+        return null;
+    }
+
+    private async Task<ApiResult<MonitoringRuleTimelineResponse>> SaveCoreAsync()
+    {
+        ApiError? validationError = BuildDraftRequest(out MonitoringRuleDraftRequest? request);
+        if (validationError is not null)
+        {
+            return ApiResult<MonitoringRuleTimelineResponse>.Fail(validationError);
+        }
+
+        ApiResult<MonitoringRuleTimelineResponse> result = IsNew
+            ? await Api.CreateDraftAsync(Id, request!, _token, _lifetime.Token)
+            : await Api.UpdateDraftAsync(Id, DraftId!.Value, request!, _token, _lifetime.Token);
+
+        if (result.IsSuccess)
+        {
+            _token = result.Value!.ConcurrencyToken;
+            ReseedBaseline();
+        }
+
+        return result;
+    }
+
+    private async Task<bool> HandleMutationAsync(ApiResult<MonitoringRuleTimelineResponse> result)
+    {
+        if (result.IsSuccess)
+        {
+            return true;
+        }
+
+        if (result.Error!.IsPreconditionFailed)
+        {
+            await OpenConflictAsync();
+        }
+        else
+        {
+            _saveError = result.Error;
+        }
+
+        return false;
     }
 
     private async Task SaveAsync()
     {
         _busy = true;
         _notice = null;
-        bool saved;
-        try
-        {
-            saved = await SaveCoreAsync();
-        }
-        finally
-        {
-            _busy = false;
-        }
-
-        if (saved)
-        {
-            _dirty = false;
-            Navigation.NavigateTo($"instruments/{Id}?tab=drafts");
-        }
-    }
-
-    private async Task ReloadTokenAsync()
-    {
-        ApiResult<MonitoringRuleTimelineResponse> timeline =
-            await Api.GetTimelineAsync(Id, _lifetime.Token);
-        if (timeline.IsSuccess)
-        {
-            _token = timeline.Value!.ConcurrencyToken;
-            _saveError = null;
-            _notice = "Latest timeline loaded. Review and retry.";
-        }
-        else
-        {
-            _saveError = timeline.Error;
-        }
-    }
-
-    private async Task ApplyAsync()
-    {
-        _busy = true;
-        _saveError = null;
-
-        try
-        {
-            if (await SaveCoreAsync())
-            {
-                ApiResult<MonitoringRuleTimelineResponse> result = await Api.ApplyDraftAsync(
-                    Id,
-                    DraftId!.Value,
-                    new ApplyMonitoringRuleRequest(UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
-                    _token,
-                    _lifetime.Token);
-
-                if (result.IsSuccess)
-                {
-                    _dirty = false;
-                    Navigation.NavigateTo($"instruments/{Id}?tab=current");
-                }
-                else
-                {
-                    _saveError = result.Error;
-                }
-            }
-        }
-        finally
-        {
-            _busy = false;
-        }
-    }
-
-    private async Task ScheduleAsync()
-    {
-        _busy = true;
-        _saveError = null;
-
-        try
-        {
-            if (await SaveCoreAsync())
-            {
-                ApiResult<MonitoringRuleTimelineResponse> result = await Api.ScheduleDraftAsync(
-                    Id,
-                    DraftId!.Value,
-                    new ScheduleMonitoringRuleRequest(
-                        UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveFrom)),
-                        UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveTo))),
-                    _token,
-                    _lifetime.Token);
-
-                if (result.IsSuccess)
-                {
-                    _dirty = false;
-                    Navigation.NavigateTo($"instruments/{Id}?tab=timeline");
-                }
-                else
-                {
-                    _saveError = result.Error;
-                }
-            }
-        }
-        finally
-        {
-            _busy = false;
-        }
-    }
-
-    private async Task DeleteAsync()
-    {
-        _busy = true;
-        _saveError = null;
-
         ApiResult<MonitoringRuleTimelineResponse> result;
         try
         {
-            result = await Api.DeleteDraftAsync(Id, DraftId!.Value, _token, _lifetime.Token);
+            result = await SaveCoreAsync();
         }
         finally
         {
             _busy = false;
         }
 
-        if (result.IsSuccess)
+        if (await HandleMutationAsync(result))
         {
-            _dirty = false;
             Navigation.NavigateTo($"instruments/{Id}?tab=drafts");
-        }
-        else
-        {
-            _saveError = result.Error;
         }
     }
 
-    private async Task GuardNavigation(LocationChangingContext context)
+    private async Task ConfirmPendingAsync()
     {
-        if (_dirty)
+        if (_pending is null)
         {
-            bool confirmed = await JS.InvokeAsync<bool>(
-                "confirm",
-                "You have unsaved changes. Leave this page and discard them?");
-            if (confirmed is false)
+            return;
+        }
+
+        _busy = true;
+        _saveError = null;
+        _pendingError = null;
+
+        try
+        {
+            ApiError? validationError = ResolvePendingInputs(out string? fromIso, out string? toIso);
+            if (validationError is not null)
             {
-                context.PreventNavigation();
+                _pendingError = validationError;
+                return;
             }
+
+            if (Dirty)
+            {
+                ApiResult<MonitoringRuleTimelineResponse> saved = await SaveCoreAsync();
+                if (await HandleMutationAsync(saved) is false)
+                {
+                    return;
+                }
+            }
+
+            ApiResult<MonitoringRuleTimelineResponse> result;
+            if (_pending.Kind == PendingActionKind.Apply)
+            {
+                result = await Api.ApplyDraftAsync(
+                    Id,
+                    DraftId!.Value,
+                    new ApplyMonitoringRuleRequest(toIso),
+                    _token,
+                    _lifetime.Token);
+            }
+            else if (_pending.Kind == PendingActionKind.Schedule)
+            {
+                result = await Api.ScheduleDraftAsync(
+                    Id,
+                    DraftId!.Value,
+                    new ScheduleMonitoringRuleRequest(fromIso, toIso),
+                    _token,
+                    _lifetime.Token);
+            }
+            else
+            {
+                result = await Api.DeleteDraftAsync(Id, DraftId!.Value, _token, _lifetime.Token);
+            }
+
+            if (await HandleMutationAsync(result))
+            {
+                string tab = _pending.Kind == PendingActionKind.Apply
+                    ? "current"
+                    : _pending.Kind == PendingActionKind.Schedule
+                        ? "timeline"
+                        : "drafts";
+                _pending = null;
+                _pendingError = null;
+                Navigation.NavigateTo($"instruments/{Id}?tab={tab}");
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private ApiError? ResolvePendingInputs(out string? effectiveFromIso, out string? effectiveToIso)
+    {
+        effectiveFromIso = null;
+        effectiveToIso = null;
+
+        if (_pending!.Kind == PendingActionKind.Schedule)
+        {
+            ApiError? fromError = _pending.From!.RequestRequired(out effectiveFromIso);
+            if (fromError is not null)
+            {
+                return fromError;
+            }
+        }
+
+        if (_pending.Kind is PendingActionKind.Apply or PendingActionKind.Schedule)
+        {
+            ApiError? toError = _pending.To!.RequestOptional(out effectiveToIso);
+            if (toError is not null)
+            {
+                return toError;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task OpenConflictAsync()
+    {
+        if (IsNew)
+        {
+            ApiResult<MonitoringRuleTimelineResponse> timeline =
+                await Api.GetTimelineAsync(Id, _lifetime.Token);
+            if (timeline.IsSuccess)
+            {
+                _timelineConflict.Open(timeline.Value!);
+            }
+            else
+            {
+                _saveError = timeline.Error;
+            }
+
+            return;
+        }
+
+        ApiResult<MonitoringRuleRevisionResponse> latest =
+            await Api.GetRevisionAsync(Id, DraftId!.Value, _lifetime.Token);
+        if (latest.IsSuccess)
+        {
+            _draftConflict.Open(latest.Value!);
+        }
+        else
+        {
+            _saveError = latest.Error;
+        }
+    }
+
+    private void DiscardTimelineConflict()
+    {
+        MonitoringRuleTimelineResponse latest = _timelineConflict.Take();
+        _token = latest.ConcurrencyToken;
+        _definition = DefinitionEditModel.Empty();
+        _definition.AddSupportZone();
+        _reason = string.Empty;
+        _proposedFrom.Reseed(null);
+        _proposedTo.Reseed(null);
+        ReseedBaseline();
+        _notice = "Latest timeline loaded — your unsaved draft input was discarded.";
+    }
+
+    private async Task ReapplyTimelineConflictAsync()
+    {
+        MonitoringRuleTimelineResponse latest = _timelineConflict.Take();
+        _token = latest.ConcurrencyToken;
+        if (_pending is not null)
+        {
+            await ConfirmPendingAsync();
+        }
+        else
+        {
+            await SaveAsync();
+        }
+    }
+
+    private void DiscardDraftConflict()
+    {
+        MonitoringRuleRevisionResponse latest = _draftConflict.Take();
+        MonitoringRuleRevisionDto draft = latest.Revision;
+        if (draft.EffectiveFrom is not null || draft.Kind == "committed")
+        {
+            _fatal = ApiError.Create(409, "draft.not_draft",
+                "This revision is already committed and can no longer be edited as a draft.", null);
+            return;
+        }
+
+        _draft = draft;
+        _token = latest.ConcurrencyToken;
+        _definition = draft.Definition is null
+            ? DefinitionEditModel.Empty()
+            : DefinitionEditModel.FromDto(draft.Definition);
+        _reason = draft.ChangeReason ?? string.Empty;
+        _proposedFrom.Reseed(draft.ProposedEffectiveFrom);
+        _proposedTo.Reseed(draft.ProposedEffectiveTo);
+        ReseedBaseline();
+        _notice = "Latest draft loaded — your input was discarded.";
+    }
+
+    private async Task ReapplyDraftConflictAsync()
+    {
+        MonitoringRuleRevisionResponse latest = _draftConflict.Take();
+        _token = latest.ConcurrencyToken;
+        if (_pending is not null)
+        {
+            await ConfirmPendingAsync();
+        }
+        else
+        {
+            await SaveAsync();
         }
     }
 

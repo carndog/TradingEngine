@@ -15,8 +15,6 @@ public sealed class DefinitionEditModel
 
     public List<ZoneEditModel> ResistanceZones { get; } = [];
 
-    public bool IsModified => SupportZones.Count > 0 || ResistanceZones.Count > 0;
-
     public MonitoringRuleDefinitionDto ToDto()
     {
         return new MonitoringRuleDefinitionDto(
@@ -33,6 +31,30 @@ public sealed class DefinitionEditModel
     public void AddResistanceZone()
     {
         ResistanceZones.Add(ZoneEditModel.CreateResistance());
+    }
+
+    public DefinitionEditModel Clone()
+    {
+        DefinitionEditModel clone = new()
+        {
+            PriceScale = PriceScale
+        };
+        clone.SupportZones.AddRange(SupportZones.Select(zone => zone.Clone()));
+        clone.ResistanceZones.AddRange(ResistanceZones.Select(zone => zone.Clone()));
+        return clone;
+    }
+
+    public bool SameContent(DefinitionEditModel other)
+    {
+        return PriceScale == other.PriceScale
+            && ZonesEqual(SupportZones, other.SupportZones)
+            && ZonesEqual(ResistanceZones, other.ResistanceZones);
+    }
+
+    private static bool ZonesEqual(IReadOnlyList<ZoneEditModel> first, IReadOnlyList<ZoneEditModel> second)
+    {
+        return first.Count == second.Count
+            && first.Zip(second, (left, right) => left.SameContent(right)).All(equal => equal);
     }
 
     public static DefinitionEditModel Empty()

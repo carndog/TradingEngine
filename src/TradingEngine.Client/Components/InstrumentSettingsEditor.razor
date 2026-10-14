@@ -1,0 +1,186 @@
+@inject TradingEngineApiClient Api
+
+<section class="te-detail-card" aria-label="Instrument settings">
+    <div class="te-row">
+        <h3>Settings</h3>
+        @if (_dirty)
+        {
+            <span class="te-tag te-dirty">Unsaved changes</span>
+        }
+    </div>
+    <p class="te-note">Sampling interval and monitoring state for this instrument.</p>
+    <ErrorNotice Error="@_saveError">
+        <button type="button" @onclick="SaveAsync">Retry</button>
+        @if (_saveError?.IsUnauthorized == true)
+        {
+            <a href="@SignInUrl">Sign in again</a>
+        }
+    </ErrorNotice>
+    @if (_conflict.IsOpen)
+    {
+        <ConflictNotice Busy="@_busy"
+                        OnDiscard="DiscardConflictAsync"
+                        OnReapply="ReapplyConflictAsync">
+            <LatestSummary>
+                Server now shows @LatestStateLabel — last changed @UtcTimes.Format(_conflict.Latest?.LastChangedAt).
+                Your input: @_editState · @_editInterval s.
+            </LatestSummary>
+        </ConflictNotice>
+    }
+    <div class="te-fields te-two">
+        <label>
+            Monitoring state
+            <select @bind="_editState" @bind:event="oninput" aria-label="Monitoring state">
+                <option value="configured">Configured</option>
+                <option value="monitored">Monitored</option>
+            </select>
+        </label>
+        <label>
+            Sampling interval (seconds)
+            <input type="number" min="1" max="3600" @bind="_editInterval" @bind:event="oninput"
+                   aria-label="Sampling interval seconds">
+        </label>
+    </div>
+    <div class="te-footer">
+        <button type="button" class="te-primary" @onclick="SaveAsync" disabled="@_busy">
+            @(_busy ? "Saving…" : "Save settings")
+        </button>
+        @if (_dirty)
+        {
+            <button type="button" @onclick="DiscardLocalChanges" disabled="@_busy">Discard changes</button>
+        }
+    </div>
+</section>
+
+<DirtyGuard IsDirty="@_dirty" />
+
+@code {
+    private WatchedInstrumentSettingsResponse? _seeded;
+    private readonly ConflictResolution<WatchedInstrumentSettingsResponse> _conflict = new();
+    private string _editState = "configured";
+    private int _editInterval = 60;
+    private string _token = string.Empty;
+    private bool _busy;
+    private ApiError? _saveError;
+
+    [Parameter, EditorRequired]
+    public WatchedInstrumentSettingsResponse? Settings { get; set; }
+
+    [Parameter]
+    public string SignInUrl { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<WatchedInstrumentSettingsResponse> OnSaved { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnNotice { get; set; }
+
+    [Parameter]
+    public CancellationToken Cancellation { get; set; }
+
+    private bool _dirty => _seeded is not null
+        && (_editState != _seeded.MonitoringState
+            || _editInterval != _seeded.SamplingIntervalSeconds);
+
+    private string LatestStateLabel =>
+        _conflict.Latest is null
+            ? string.Empty
+            : $"{_conflict.Latest.MonitoringState} · {_conflict.Latest.SamplingIntervalSeconds} s";
+
+    protected override void OnParametersSet()
+    {
+        if (Settings is not null
+            && ReferenceEquals(Settings, _seeded) is false
+            && _dirty is false
+            && _conflict.IsOpen is false)
+        {
+            Seed(Settings);
+        }
+    }
+
+    private void Seed(WatchedInstrumentSettingsResponse latest)
+    {
+        _seeded = latest;
+        _token = latest.ConcurrencyToken;
+        _editState = latest.MonitoringState;
+        _editInterval = latest.SamplingIntervalSeconds;
+        _saveError = null;
+    }
+
+    private void DiscardLocalChanges()
+    {
+        if (_seeded is not null)
+        {
+            _editState = _seeded.MonitoringState;
+            _editInterval = _seeded.SamplingIntervalSeconds;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_seeded is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        _saveError = null;
+        _conflict.Take();
+
+        ApiResult<WatchedInstrumentSettingsResponse> result;
+        try
+        {
+            result = await Api.UpdateSettingsAsync(
+                _seeded.Id,
+                new UpdateWatchedInstrumentSettingsRequest(_editState, _editInterval),
+                _token,
+                Cancellation);
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        if (result.IsSuccess)
+        {
+            Seed(result.Value!);
+            await OnSaved.InvokeAsync(result.Value);
+        }
+        else if (result.Error!.IsPreconditionFailed)
+        {
+            await OpenConflictAsync();
+        }
+        else
+        {
+            _saveError = result.Error;
+        }
+    }
+
+    private async Task OpenConflictAsync()
+    {
+        ApiResult<WatchedInstrumentSettingsResponse> latest =
+            await Api.GetSettingsAsync(_seeded!.Id, Cancellation);
+        if (latest.IsSuccess)
+        {
+            _conflict.Open(latest.Value!);
+        }
+        else
+        {
+            _saveError = latest.Error;
+        }
+    }
+
+    private async Task DiscardConflictAsync()
+    {
+        WatchedInstrumentSettingsResponse latest = _conflict.Take();
+        Seed(latest);
+        await OnNotice.InvokeAsync("Latest settings loaded.");
+    }
+
+    private async Task ReapplyConflictAsync()
+    {
+        WatchedInstrumentSettingsResponse latest = _conflict.Take();
+        _token = latest.ConcurrencyToken;
+        await SaveAsync();
+    }
+}

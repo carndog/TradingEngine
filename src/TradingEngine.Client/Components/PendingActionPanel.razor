@@ -1,0 +1,88 @@
+@if (Action is not null)
+{
+    @if (Action.Kind == PendingActionKind.Apply)
+    {
+        <ConfirmPanel Title="Apply draft now"
+                      ConfirmLabel="Apply now"
+                      BusyLabel="Applying…"
+                      Busy="@Busy"
+                      Error="@Error"
+                      OnConfirm="OnConfirm"
+                      OnCancel="OnCancel">
+            <p>This draft becomes the current configuration immediately.</p>
+            <label style="max-width:260px">
+                Effective until (UTC, optional)
+                <input type="datetime-local" step="1" value="@Action.To?.Text"
+                       @onchange="args => Action.To?.Set(args.Value?.ToString())"
+                       aria-label="Effective until UTC">
+            </label>
+        </ConfirmPanel>
+    }
+    else if (Action.Kind == PendingActionKind.Schedule)
+    {
+        <ConfirmPanel Title="Schedule draft"
+                      ConfirmLabel="Schedule"
+                      BusyLabel="Scheduling…"
+                      Busy="@Busy"
+                      Error="@Error"
+                      OnConfirm="OnConfirm"
+                      OnCancel="OnCancel">
+            <p>The draft becomes effective at the start time. Start must be at or after the current UTC time. Leave the start unchanged to use the draft's proposed start.</p>
+            <div class="te-fields te-two">
+                <label>
+                    Effective from (UTC)
+                    <input type="datetime-local" step="1" value="@Action.From?.Text"
+                           @onchange="args => Action.From?.Set(args.Value?.ToString())"
+                           aria-label="Effective from UTC">
+                </label>
+                <label>
+                    Effective until (UTC, optional)
+                    <input type="datetime-local" step="1" value="@Action.To?.Text"
+                           @onchange="args => Action.To?.Set(args.Value?.ToString())"
+                           aria-label="Effective until UTC">
+                </label>
+            </div>
+        </ConfirmPanel>
+    }
+    else if (Action.Kind == PendingActionKind.DeleteDraft)
+    {
+        <ConfirmPanel Title="Delete draft"
+                      ConfirmLabel="Delete draft"
+                      BusyLabel="Deleting…"
+                      Busy="@Busy"
+                      Error="@Error"
+                      OnConfirm="OnConfirm"
+                      OnCancel="OnCancel">
+            <p>Removes this draft permanently. Committed revisions are unchanged.</p>
+        </ConfirmPanel>
+    }
+    else
+    {
+        <ConfirmPanel Title="Remove scheduled revision"
+                      ConfirmLabel="Remove revision"
+                      BusyLabel="Removing…"
+                      Busy="@Busy"
+                      Error="@Error"
+                      OnConfirm="OnConfirm"
+                      OnCancel="OnCancel">
+            <p>Removes this scheduled revision. Neighbouring coverage boundaries are adjusted automatically.</p>
+        </ConfirmPanel>
+    }
+}
+
+@code {
+    [Parameter]
+    public PendingAction? Action { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public ApiError? Error { get; set; }
+
+    [Parameter]
+    public EventCallback OnConfirm { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+}

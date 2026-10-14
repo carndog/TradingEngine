@@ -1,6 +1,7 @@
 @page "/instruments/{Id:guid}/revisions/{RevisionId:guid}"
 @inject TradingEngineApiClient Api
 @inject NavigationManager Navigation
+@inject IUiClock Clock
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -40,13 +41,13 @@ else
                         }
                     </p>
                 </div>
-                @if (_dirty)
+                @if (Dirty)
                 {
                     <span class="te-tag te-dirty">Unsaved changes</span>
                 }
             </div>
         </div>
-        <DefinitionEditor Model="@_definition" OnChanged="MarkDirty" />
+        <DefinitionEditor Model="@_definition" OnChanged="OnDefinitionChanged" />
     </div>
 
     <section class="te-detail-card" aria-label="Revision options">
@@ -54,29 +55,40 @@ else
         <div class="te-fields te-two">
             <label>
                 Effective from (UTC)
-                <input type="datetime-local" value="@_effectiveFrom"
-                       @onchange="args => SetField(value => _effectiveFrom = value, args)"
+                <input type="datetime-local" step="1" value="@_effectiveFrom.Text"
+                       @onchange="args => _effectiveFrom.Set(args.Value?.ToString())"
                        aria-label="Effective from UTC">
             </label>
             <label>
                 Change reason
-                <input value="@_reason"
-                       @onchange="args => SetField(value => _reason = value, args)" maxlength="500"
+                <input @bind="_reason" @bind:event="oninput" maxlength="500"
                        aria-label="Change reason" placeholder="Why is this change being made?">
             </label>
         </div>
-        <p class="te-note">Rescheduling requires a start at or after the current UTC time.</p>
+        <p class="te-note">
+            Rescheduling requires a start at or after the current UTC time.
+            Leave the start unchanged to keep the stored value exactly.
+        </p>
 
         <ErrorNotice Error="@_saveError">
-            @if (_saveError?.IsPreconditionFailed == true)
-            {
-                <button type="button" @onclick="LoadAsync">Reload latest</button>
-            }
             @if (_saveError?.IsUnauthorized == true)
             {
                 <a href="@SignInUrl">Sign in again</a>
             }
         </ErrorNotice>
+
+        @if (_conflict.IsOpen)
+        {
+            <ConflictNotice Busy="@_busy"
+                            OnDiscard="DiscardConflict"
+                            OnReapply="ReapplyConflictAsync">
+                <LatestSummary>
+                    Latest revision: starts @UtcTimes.Format(_conflict.Latest?.Revision.EffectiveFrom),
+                    reason '@(_conflict.Latest?.Revision.ChangeReason ?? "—")'.
+                    Your input is kept — choose whether to adopt the latest version or reapply yours.
+                </LatestSummary>
+            </ConflictNotice>
+        }
 
         <div class="te-footer">
             <button type="button" class="te-primary" @onclick="SaveAsync" disabled="@_busy">
@@ -87,21 +99,23 @@ else
     </section>
 }
 
-<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
-                ConfirmExternalNavigation="@_dirty" />
+<DirtyGuard IsDirty="@Dirty" />
 
 @code {
     private DefinitionEditModel _definition = DefinitionEditModel.Empty();
+    private DefinitionEditModel _definitionBaseline = DefinitionEditModel.Empty();
     private MonitoringRuleRevisionDto? _revision;
     private ApiError? _fatal;
     private ApiError? _saveError;
     private bool _loading = true;
     private bool _busy;
-    private bool _dirty;
     private string _instrumentLabel = string.Empty;
     private string _token = string.Empty;
     private string _reason = string.Empty;
-    private string _effectiveFrom = string.Empty;
+    private string _reasonBaseline = string.Empty;
+    private UtcTimeField _effectiveFrom = new(null);
+    private readonly ConflictResolution<MonitoringRuleRevisionResponse> _conflict = new();
+    private bool _headingFocusPending = true;
     private readonly CancellationTokenSource _lifetime = new();
 
     [Parameter]
@@ -112,6 +126,11 @@ else
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
+    private bool Dirty =>
+        _definition.SameContent(_definitionBaseline) is false
+        || _reason != _reasonBaseline
+        || _effectiveFrom.Modified;
+
     protected override async Task OnParametersSetAsync()
     {
         await LoadAsync();
@@ -119,8 +138,9 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && _fatal is null)
+        if (_headingFocusPending && _loading is false && _fatal is null)
         {
+            _headingFocusPending = false;
             await JS.InvokeVoidAsync("teFocus", "h2");
         }
     }
@@ -130,7 +150,7 @@ else
         _loading = true;
         _fatal = null;
         _saveError = null;
-        _dirty = false;
+        _conflict.Take();
 
         ApiResult<WatchedInstrumentSettingsResponse> instrument =
             await Api.GetSettingsAsync(Id, _lifetime.Token);
@@ -153,49 +173,69 @@ else
             return;
         }
 
-        _revision = revision.Value!.Revision;
-        _token = revision.Value.ConcurrencyToken;
+        if (Seed(revision.Value!) is false)
+        {
+            return;
+        }
 
-        if (_revision.EffectiveFrom is null || _revision.EffectiveFrom <= DateTimeOffset.UtcNow)
+        _loading = false;
+    }
+
+    private bool Seed(MonitoringRuleRevisionResponse latest)
+    {
+        MonitoringRuleRevisionDto revision = latest.Revision;
+        if (revision.EffectiveFrom is null || revision.EffectiveFrom <= Clock.UtcNow)
         {
             _fatal = ApiError.Create(409, "revision.period_begun",
                 "This revision has already begun or ended and can no longer be edited.", null);
             _loading = false;
-            return;
+            return false;
         }
 
-        _definition = _revision.Definition is null
+        _revision = revision;
+        _token = latest.ConcurrencyToken;
+        _definition = revision.Definition is null
             ? DefinitionEditModel.Empty()
-            : DefinitionEditModel.FromDto(_revision.Definition);
-        _reason = _revision.ChangeReason ?? string.Empty;
-        _effectiveFrom = UtcTimes.ToInputValue(_revision.EffectiveFrom);
-        _loading = false;
+            : DefinitionEditModel.FromDto(revision.Definition);
+        _definitionBaseline = _definition.Clone();
+        _reason = revision.ChangeReason ?? string.Empty;
+        _reasonBaseline = _reason;
+        _effectiveFrom.Reseed(revision.EffectiveFrom);
+        return true;
     }
 
-    private void MarkDirty()
+    private void OnDefinitionChanged()
     {
-        _dirty = true;
     }
 
-    private void SetField(Action<string> setter, ChangeEventArgs args)
+    private void MarkSaved()
     {
-        setter(args.Value?.ToString() ?? string.Empty);
-        MarkDirty();
+        _definitionBaseline = _definition.Clone();
+        _reasonBaseline = _reason;
+        _effectiveFrom.AcceptResolved();
     }
 
     private async Task SaveAsync()
     {
         _busy = true;
         _saveError = null;
+        _conflict.Take();
 
-        EditMonitoringRuleRevisionRequest request = new(
-            string.IsNullOrWhiteSpace(_reason) ? null : _reason.Trim(),
-            _definition.ToDto(),
-            UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_effectiveFrom)));
-
-        ApiResult<MonitoringRuleTimelineResponse> result;
+        ApiResult<MonitoringRuleTimelineResponse>? result = null;
         try
         {
+            ApiError? validationError = _effectiveFrom.RequestKeepUnchanged(out string? effectiveFromIso);
+            if (validationError is not null)
+            {
+                _saveError = validationError;
+                return;
+            }
+
+            EditMonitoringRuleRevisionRequest request = new(
+                string.IsNullOrWhiteSpace(_reason) ? null : _reason.Trim(),
+                _definition.ToDto(),
+                effectiveFromIso);
+
             result = await Api.UpdateRevisionAsync(
                 Id, RevisionId, request, _token, _lifetime.Token);
         }
@@ -204,10 +244,14 @@ else
             _busy = false;
         }
 
-        if (result.IsSuccess)
+        if (result!.IsSuccess)
         {
-            _dirty = false;
+            MarkSaved();
             Navigation.NavigateTo($"instruments/{Id}?tab=timeline");
+        }
+        else if (result.Error!.IsPreconditionFailed)
+        {
+            await OpenConflictAsync();
         }
         else
         {
@@ -215,18 +259,31 @@ else
         }
     }
 
-    private async Task GuardNavigation(LocationChangingContext context)
+    private async Task OpenConflictAsync()
     {
-        if (_dirty)
+        ApiResult<MonitoringRuleRevisionResponse> latest =
+            await Api.GetRevisionAsync(Id, RevisionId, _lifetime.Token);
+        if (latest.IsSuccess)
         {
-            bool confirmed = await JS.InvokeAsync<bool>(
-                "confirm",
-                "You have unsaved changes. Leave this page and discard them?");
-            if (confirmed is false)
-            {
-                context.PreventNavigation();
-            }
+            _conflict.Open(latest.Value!);
         }
+        else
+        {
+            _saveError = latest.Error;
+        }
+    }
+
+    private void DiscardConflict()
+    {
+        MonitoringRuleRevisionResponse latest = _conflict.Take();
+        Seed(latest);
+    }
+
+    private async Task ReapplyConflictAsync()
+    {
+        MonitoringRuleRevisionResponse latest = _conflict.Take();
+        _token = latest.ConcurrencyToken;
+        await SaveAsync();
     }
 
     public void Dispose()

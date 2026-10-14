@@ -2,6 +2,7 @@
 @inject TradingEngineApiClient Api
 @inject NavigationManager Navigation
 @inject InstrumentListState ListState
+@inject IUiClock Clock
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -19,11 +20,11 @@
         }
     </ErrorNotice>
 }
-else if (_loading)
+else if (_settings is null)
 {
     <div class="te-panel" role="status"><p class="te-sub">Loading instrument…</p></div>
 }
-else if (_settings is not null)
+else
 {
     <h2 tabindex="-1">@_settings.Symbol</h2>
     <p class="te-sub">@_settings.Exchange · @_settings.QuoteCurrency · @_settings.SamplingIntervalSeconds s interval</p>
@@ -41,238 +42,79 @@ else if (_settings is not null)
 
     <div class="te-notice" aria-live="polite">@_notice</div>
 
+    @if (_pendingConflict.IsOpen)
+    {
+        <ConflictNotice Busy="@_pendingBusy"
+                        OnDiscard="DiscardPendingConflict"
+                        OnReapply="ReapplyPendingConflictAsync">
+            <LatestSummary>
+                Timeline now has @_pendingConflict.Latest?.Revisions.Count revisions.
+                Your pending @_pendingConflictLabel input is kept — review the timeline and choose how to proceed.
+            </LatestSummary>
+        </ConflictNotice>
+    }
+
+    @if (_refreshFaulted)
+    {
+        <div class="te-alert te-warn" role="status">Background refresh paused after an unexpected error. <button type="button" @onclick="ReloadAllAsync">Refresh now</button></div>
+    }
+
     @if (_tab == "current")
     {
-        @if (_applicable is not null)
-        {
-            <section class="te-detail-card" aria-label="Current configuration">
-                <div class="te-row">
-                    <h3>Revision @RevisionLabel(_applicable)</h3>
-                    <span class="te-badge te-current">Current · read-only</span>
-                </div>
-                <p class="te-note">
-                    Effective from @UtcTimes.Format(_applicable.EffectiveFrom)
-                    @(_applicable.EffectiveTo is null ? " · No end set" : $" · Ends {UtcTimes.Format(_applicable.EffectiveTo)}")
-                </p>
-                <div style="margin-top:14px">
-                    <DefinitionSummary Definition="@_applicable.Definition" />
-                </div>
-                <div class="te-footer">
-                    <a class="te-primary" style="padding:8px 12px;border-radius:6px;text-decoration:none"
-                       href="instruments/@Id/drafts/new?from=@_applicable.Id">Copy to new draft</a>
-                </div>
-            </section>
-        }
-        else if (_applicableError is not null)
-        {
-            <ErrorNotice Error="@_applicableError">
-                <button type="button" @onclick="ReloadAllAsync">Retry</button>
-                @if (_applicableError.IsUnauthorized)
-                {
-                    <a href="@SignInUrl">Sign in again</a>
-                }
-            </ErrorNotice>
-        }
-        else
-        {
-            <section class="te-detail-card" aria-label="No current configuration">
-                <h3>No current configuration</h3>
-                <p class="te-note">
-                    No monitoring-rule revision applies at the current time.
-                    @if (_timeline?.CoverageOrigin is not null)
-                    {
-                        <text>Coverage starts @UtcTimes.Format(_timeline.CoverageOrigin).</text>
-                    }
-                    Apply a draft to begin monitoring sooner.
-                </p>
-                <div class="te-footer">
-                    <button type="button" class="te-primary" @onclick='() => SelectTab("drafts")'>Open drafts</button>
-                </div>
-            </section>
-        }
+        <CurrentRevisionPanel Applicable="@_applicable"
+                              Error="@_applicableError"
+                              CoverageOrigin="@_timeline?.CoverageOrigin"
+                              InstrumentId="@Id"
+                              SignInUrl="@SignInUrl"
+                              OnRetry="ReloadAllAsync"
+                              OnOpenDrafts='() => SelectTab("drafts")' />
     }
 
     @if (_tab == "drafts")
     {
-        <section class="te-detail-card" aria-label="Draft revisions">
-            <div class="te-row">
-                <h3>Draft revisions</h3>
-                <a class="te-primary" style="padding:8px 12px;border-radius:6px;text-decoration:none"
-                   href="instruments/@Id/drafts/new">+ New draft</a>
-            </div>
-            @if (_draftsError is not null)
-            {
-                <ErrorNotice Error="@_draftsError">
-                    <button type="button" @onclick="ReloadAllAsync">Retry</button>
-                    @if (_draftsError.IsUnauthorized)
-                    {
-                        <a href="@SignInUrl">Sign in again</a>
-                    }
-                </ErrorNotice>
-            }
-            else if (_drafts is null || _drafts.Drafts.Count == 0)
-            {
-                <p class="te-note" style="margin-top:12px">No drafts. Create one to prepare a configuration change.</p>
-            }
-            else
-            {
-                <ul class="te-history" style="margin-top:14px">
-                    @foreach (MonitoringRuleRevisionDto draft in _drafts.Drafts)
-                    {
-                        <li>
-                            <div class="te-row">
-                                <div>
-                                    <strong>Draft</strong>
-                                    <div class="te-small">
-                                        Created @UtcTimes.Format(draft.CreatedAt) by @draft.CreatedBy
-                                        @if (string.IsNullOrWhiteSpace(draft.ChangeReason) is false)
-                                        {
-                                            <text> · @draft.ChangeReason</text>
-                                        }
-                                    </div>
-                                    @if (draft.ProposedEffectiveFrom is not null || draft.ProposedEffectiveTo is not null)
-                                    {
-                                        <div class="te-small">
-                                            Proposal @UtcTimes.FormatRange(draft.ProposedEffectiveFrom, draft.ProposedEffectiveTo) (nonbinding)
-                                        </div>
-                                    }
-                                </div>
-                                <div class="te-inline-actions">
-                                    <a href="instruments/@Id/drafts/@draft.Id">Edit</a>
-                                    <button type="button" @onclick="() => BeginApply(draft)">Apply now</button>
-                                    <button type="button" @onclick="() => BeginSchedule(draft)">Schedule</button>
-                                    <button type="button" @onclick="() => BeginDeleteDraft(draft)">Delete</button>
-                                </div>
-                            </div>
-                        </li>
-                    }
-                </ul>
-            }
-            @if (_pending is not null)
-            {
-                @PendingPanel
-            }
-        </section>
+        <DraftListPanel Drafts="@_drafts"
+                        Error="@_draftsError"
+                        InstrumentId="@Id"
+                        SignInUrl="@SignInUrl"
+                        OnRetry="ReloadAllAsync"
+                        OnApply="BeginApply"
+                        OnSchedule="BeginSchedule"
+                        OnDelete="BeginDeleteDraft">
+            <PendingActionPanel Action="@_pending"
+                                Busy="@_pendingBusy"
+                                Error="@_pendingError"
+                                OnConfirm="ConfirmPendingAsync"
+                                OnCancel="CancelPendingAsync" />
+        </DraftListPanel>
     }
 
     @if (_tab == "timeline")
     {
-        <section class="te-detail-card" aria-label="Revision timeline">
-            <h3>Timeline</h3>
-            <p class="te-note">
-                All times are UTC.
-                @if (_timeline?.CoverageOrigin is not null)
-                {
-                    <text> Coverage starts @UtcTimes.Format(_timeline.CoverageOrigin).</text>
-                }
-            </p>
-            @if (_timelineError is not null)
-            {
-                <ErrorNotice Error="@_timelineError">
-                    <button type="button" @onclick="ReloadAllAsync">Retry</button>
-                    @if (_timelineError.IsUnauthorized)
-                    {
-                        <a href="@SignInUrl">Sign in again</a>
-                    }
-                </ErrorNotice>
-            }
-            else if (_timeline is null || _timeline.Revisions.Count == 0)
-            {
-                <p class="te-note" style="margin-top:12px">No committed revisions yet. Apply or schedule a draft to create one.</p>
-            }
-            else
-            {
-                <ul class="te-history" style="margin-top:14px">
-                    @foreach (MonitoringRuleRevisionDto revision in _timeline.Revisions)
-                    {
-                        string status = StatusOf(revision);
-                        <li>
-                            <div class="te-row">
-                                <div>
-                                    <strong>Revision @RevisionLabel(revision)</strong>
-                                    <span class="te-badge @StatusClass(status)" style="margin-left:8px">@status</span>
-                                    <div class="te-small">
-                                        @UtcTimes.FormatRange(revision.EffectiveFrom, revision.EffectiveTo)
-                                    </div>
-                                    <div class="te-small">
-                                        Created @UtcTimes.Format(revision.CreatedAt) by @revision.CreatedBy
-                                        @if (string.IsNullOrWhiteSpace(revision.ChangeReason) is false)
-                                        {
-                                            <text> · @revision.ChangeReason</text>
-                                        }
-                                    </div>
-                                </div>
-                                @if (status == "Scheduled")
-                                {
-                                    <div class="te-inline-actions">
-                                        <a href="instruments/@Id/revisions/@revision.Id">Edit</a>
-                                        <button type="button" @onclick="() => BeginRemoveRevision(revision)">Remove</button>
-                                    </div>
-                                }
-                            </div>
-                        </li>
-                    }
-                </ul>
-            }
-            @if (_pending is not null)
-            {
-                @PendingPanel
-            }
-        </section>
+        <TimelinePanel Timeline="@_timeline"
+                       Error="@_timelineError"
+                       InstrumentId="@Id"
+                       SignInUrl="@SignInUrl"
+                       OnRetry="ReloadAllAsync"
+                       OnRemove="BeginRemoveRevision">
+            <PendingActionPanel Action="@_pending"
+                                Busy="@_pendingBusy"
+                                Error="@_pendingError"
+                                OnConfirm="ConfirmPendingAsync"
+                                OnCancel="CancelPendingAsync" />
+        </TimelinePanel>
     }
 
     @if (_tab == "settings")
     {
-        <section class="te-detail-card" aria-label="Instrument settings">
-            <div class="te-row">
-                <h3>Settings</h3>
-                @if (SettingsDirty)
-                {
-                    <span class="te-tag te-dirty">Unsaved changes</span>
-                }
-            </div>
-            <p class="te-note">Sampling interval and monitoring state for this instrument.</p>
-            @if (_settingsError is not null)
-            {
-                <ErrorNotice Error="@_settingsError">
-                    @if (_settingsError.IsPreconditionFailed)
-                    {
-                        <button type="button" @onclick="ReloadSettingsAsync">Reload latest</button>
-                    }
-                    else
-                    {
-                        <button type="button" @onclick="ReloadAllAsync">Retry</button>
-                    }
-                    @if (_settingsError.IsUnauthorized)
-                    {
-                        <a href="@SignInUrl">Sign in again</a>
-                    }
-                </ErrorNotice>
-            }
-            <div class="te-fields te-two">
-                <label>
-                    Monitoring state
-                    <select @bind="_editState" aria-label="Monitoring state">
-                        <option value="configured">Configured</option>
-                        <option value="monitored">Monitored</option>
-                    </select>
-                </label>
-                <label>
-                    Sampling interval (seconds)
-                    <input type="number" min="1" max="3600" @bind="_editInterval" aria-label="Sampling interval seconds">
-                </label>
-            </div>
-            <div class="te-footer">
-                <button type="button" class="te-primary" @onclick="SaveSettingsAsync" disabled="@_settingsBusy">
-                    @(_settingsBusy ? "Saving…" : "Save settings")
-                </button>
-            </div>
-        </section>
+        <InstrumentSettingsEditor Settings="@_settings"
+                                  SignInUrl="@SignInUrl"
+                                  Cancellation="@_lifetime.Token"
+                                  OnSaved="OnSettingsSaved"
+                                  OnNotice="SetNotice" />
     }
 }
 
-<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
-                ConfirmExternalNavigation="@SettingsDirty" />
+<DirtyGuard IsDirty="@(_pending?.HasInput == true)" />
 
 @code {
     private WatchedInstrumentSettingsResponse? _settings;
@@ -283,20 +125,30 @@ else if (_settings is not null)
     private ApiError? _applicableError;
     private ApiError? _draftsError;
     private ApiError? _timelineError;
-    private ApiError? _settingsError;
-    private bool _loading = true;
-    private bool _settingsBusy;
     private string _tab = "current";
     private string? _notice;
-    private string _editState = "configured";
-    private int _editInterval = 60;
     private PendingAction? _pending;
     private bool _pendingBusy;
     private ApiError? _pendingError;
-    private string _fromInput = string.Empty;
-    private string _toInput = string.Empty;
+    private readonly ConflictResolution<MonitoringRuleTimelineResponse> _pendingConflict = new();
     private DateTimeOffset? _nextBoundary;
+    private Guid _loadedId;
+    private int _loadGeneration;
+    private CancellationTokenSource? _loadCts;
+    private bool _refreshLoopStarted;
+    private bool _refreshFaulted;
+    private bool _headingFocusPending;
     private readonly CancellationTokenSource _lifetime = new();
+
+    internal TimeSpan RefreshInterval { get; set; } = TimeSpan.FromSeconds(20);
+
+    internal PendingAction? ActivePending => _pending;
+
+    internal bool RefreshFaulted => _refreshFaulted;
+
+    internal DateTimeOffset? NextBoundary => _nextBoundary;
+
+    internal string? Notice => _notice;
 
     [Parameter]
     public Guid Id { get; set; }
@@ -306,76 +158,108 @@ else if (_settings is not null)
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
-    private bool SettingsDirty => _settings is not null
-        && (_editState != _settings.MonitoringState
-            || _editInterval != _settings.SamplingIntervalSeconds);
+    private string _pendingConflictLabel => _pending?.Kind switch
+    {
+        PendingActionKind.Apply => "apply",
+        PendingActionKind.Schedule => "schedule",
+        PendingActionKind.DeleteDraft => "delete",
+        _ => "remove"
+    };
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         _tab = TabQuery is "drafts" or "timeline" or "settings" ? TabQuery : "current";
-    }
 
-    protected override async Task OnInitializedAsync()
-    {
-        await ReloadAllAsync();
-        if (_fatal is null)
+        if (Id != _loadedId)
         {
-            _ = RefreshLoopAsync();
+            _loadedId = Id;
+            _settings = null;
+            _timeline = null;
+            _drafts = null;
+            _applicable = null;
+            _fatal = null;
+            _applicableError = null;
+            _draftsError = null;
+            _timelineError = null;
+            _pending = null;
+            _pendingError = null;
+            _pendingConflict.Take();
+            _notice = null;
+            _nextBoundary = null;
+            await ReloadAllAsync();
         }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && _fatal is null)
+        if (_headingFocusPending && _settings is not null && _fatal is null)
         {
+            _headingFocusPending = false;
             await JS.InvokeVoidAsync("teFocus", "h2");
         }
     }
 
     private async Task ReloadAllAsync()
     {
-        _loading = true;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        int generation = ++_loadGeneration;
+        CancellationToken cancellation = _loadCts.Token;
+
+
         _fatal = null;
-        _pending = null;
-        _pendingError = null;
-        _notice = null;
+        _headingFocusPending = _settings is null;
 
-        ApiResult<WatchedInstrumentSettingsResponse> settings =
-            await Api.GetSettingsAsync(Id, _lifetime.Token);
-
-        if (settings.IsFailure)
+        try
         {
-            _loading = false;
-            if (settings.Error!.IsNotFound)
+            ApiResult<WatchedInstrumentSettingsResponse> settings =
+                await Api.GetSettingsAsync(Id, cancellation);
+            if (generation != _loadGeneration)
             {
-                _fatal = ApiError.Create(404, "instrument.not_found",
-                    "This instrument does not exist or was removed.", null);
-            }
-            else
-            {
-                _fatal = settings.Error;
+                return;
             }
 
-            return;
+            if (settings.IsFailure)
+            {
+
+                _fatal = settings.Error!.IsNotFound
+                    ? ApiError.Create(404, "instrument.not_found",
+                        "This instrument does not exist or was removed.", null)
+                    : settings.Error;
+                return;
+            }
+
+            _settings = settings.Value;
+
+            Task<ApiResult<MonitoringRuleTimelineResponse>> timelineTask =
+                Api.GetTimelineAsync(Id, cancellation);
+            Task<ApiResult<MonitoringRuleDraftsResponse>> draftsTask =
+                Api.GetDraftsAsync(Id, cancellation);
+            Task<ApiResult<MonitoringRuleRevisionResponse>> applicableTask =
+                Api.GetApplicableRevisionAsync(Id, cancellation);
+
+            await Task.WhenAll(timelineTask, draftsTask, applicableTask);
+            if (generation != _loadGeneration)
+            {
+                return;
+            }
+
+            ApplyReadModel(timelineTask.Result, draftsTask.Result, applicableTask.Result);
+            _nextBoundary = ComputeNextBoundary();
+
+            EnsureRefreshLoop();
         }
+        catch (OperationCanceledException)
+        {
+        }
+    }
 
-        _settings = settings.Value;
-        _editState = _settings!.MonitoringState;
-        _editInterval = _settings.SamplingIntervalSeconds;
-
-        Task<ApiResult<MonitoringRuleTimelineResponse>> timelineTask =
-            Api.GetTimelineAsync(Id, _lifetime.Token);
-        Task<ApiResult<MonitoringRuleDraftsResponse>> draftsTask =
-            Api.GetDraftsAsync(Id, _lifetime.Token);
-        Task<ApiResult<MonitoringRuleRevisionResponse>> applicableTask =
-            Api.GetApplicableRevisionAsync(Id, _lifetime.Token);
-
-        await Task.WhenAll(timelineTask, draftsTask, applicableTask);
-
-        ApiResult<MonitoringRuleTimelineResponse> timeline = timelineTask.Result;
-        ApiResult<MonitoringRuleDraftsResponse> drafts = draftsTask.Result;
-        ApiResult<MonitoringRuleRevisionResponse> applicable = applicableTask.Result;
-
+    private void ApplyReadModel(
+        ApiResult<MonitoringRuleTimelineResponse> timeline,
+        ApiResult<MonitoringRuleDraftsResponse> drafts,
+        ApiResult<MonitoringRuleRevisionResponse> applicable)
+    {
         _timeline = timeline.Value;
         _timelineError = timeline.Error;
         _drafts = drafts.Value;
@@ -391,133 +275,165 @@ else if (_settings is not null)
         {
             _applicableError = applicable.Error;
         }
-
-        _nextBoundary = ComputeNextBoundary();
-        _loading = false;
-    }
-
-    private async Task ReloadSettingsAsync()
-    {
-        ApiResult<WatchedInstrumentSettingsResponse> result =
-            await Api.GetSettingsAsync(Id, _lifetime.Token);
-        if (result.IsSuccess)
-        {
-            _settings = result.Value;
-            _settingsError = null;
-        }
-        else
-        {
-            _settingsError = result.Error;
-        }
-    }
-
-    private async Task SaveSettingsAsync()
-    {
-        if (_settings is null)
-        {
-            return;
-        }
-
-        _settingsBusy = true;
-        _settingsError = null;
-        _notice = null;
-
-        ApiResult<WatchedInstrumentSettingsResponse> result;
-        try
-        {
-            result = await Api.UpdateSettingsAsync(
-                Id,
-                new UpdateWatchedInstrumentSettingsRequest(_editState, _editInterval),
-                _settings.ConcurrencyToken,
-                _lifetime.Token);
-        }
-        finally
-        {
-            _settingsBusy = false;
-        }
-
-        if (result.IsSuccess)
-        {
-            _settings = result.Value;
-            _editState = _settings!.MonitoringState;
-            _editInterval = _settings.SamplingIntervalSeconds;
-            _notice = "Settings saved.";
-        }
-        else
-        {
-            _settingsError = result.Error;
-        }
     }
 
     private void SelectTab(string tab)
     {
-        _tab = tab;
-        _pending = null;
-        _pendingError = null;
-        Navigation.NavigateTo($"instruments/{Id}?tab={tab}", replace: true);
+        if (tab != _tab)
+        {
+            Navigation.NavigateTo($"instruments/{Id}?tab={tab}", replace: true);
+        }
     }
 
-    private void BeginApply(MonitoringRuleRevisionDto draft)
+    private void SetNotice(string message)
     {
-        _pending = new PendingAction("apply", draft);
-        _pendingError = null;
-        _toInput = UtcTimes.ToInputValue(draft.ProposedEffectiveTo);
+        _notice = message;
     }
 
-    private void BeginSchedule(MonitoringRuleRevisionDto draft)
+    private void OnSettingsSaved(WatchedInstrumentSettingsResponse saved)
     {
-        _pending = new PendingAction("schedule", draft);
-        _pendingError = null;
-        _fromInput = UtcTimes.ToInputValue(draft.ProposedEffectiveFrom);
-        _toInput = UtcTimes.ToInputValue(draft.ProposedEffectiveTo);
+        _settings = saved;
+        _notice = "Settings saved.";
     }
 
-    private void BeginDeleteDraft(MonitoringRuleRevisionDto draft)
+    internal void BeginApply(MonitoringRuleRevisionDto draft)
     {
-        _pending = new PendingAction("delete-draft", draft);
+        if (_timeline is null)
+        {
+            _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        _pending = new PendingAction(PendingActionKind.Apply, draft, _timeline.ConcurrencyToken)
+        {
+            To = new UtcTimeField(draft.ProposedEffectiveTo)
+        };
         _pendingError = null;
+        _notice = null;
     }
 
-    private void BeginRemoveRevision(MonitoringRuleRevisionDto revision)
+    internal void BeginSchedule(MonitoringRuleRevisionDto draft)
     {
-        _pending = new PendingAction("remove-revision", revision);
+        if (_timeline is null)
+        {
+            _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        _pending = new PendingAction(PendingActionKind.Schedule, draft, _timeline.ConcurrencyToken)
+        {
+            From = new UtcTimeField(draft.ProposedEffectiveFrom),
+            To = new UtcTimeField(draft.ProposedEffectiveTo)
+        };
         _pendingError = null;
+        _notice = null;
+    }
+
+    internal void BeginDeleteDraft(MonitoringRuleRevisionDto draft)
+    {
+        if (_timeline is null)
+        {
+            _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        _pending = new PendingAction(PendingActionKind.DeleteDraft, draft, _timeline.ConcurrencyToken);
+        _pendingError = null;
+        _notice = null;
+    }
+
+    internal void BeginRemoveRevision(MonitoringRuleRevisionDto revision)
+    {
+        if (_timeline is null)
+        {
+            _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        _pending = new PendingAction(PendingActionKind.RemoveRevision, revision, _timeline.ConcurrencyToken);
+        _pendingError = null;
+        _notice = null;
+    }
+
+    private ApiError? ResolvePendingInputs(
+        PendingAction action,
+        out string? effectiveFromIso,
+        out string? effectiveToIso)
+    {
+        effectiveFromIso = null;
+        effectiveToIso = null;
+
+        if (action.Kind == PendingActionKind.Schedule)
+        {
+            ApiError? fromError = action.From!.RequestRequired(out effectiveFromIso);
+            if (fromError is not null)
+            {
+                return fromError;
+            }
+        }
+
+        if (action.Kind is PendingActionKind.Apply or PendingActionKind.Schedule)
+        {
+            ApiError? toError = action.To!.RequestOptional(out effectiveToIso);
+            if (toError is not null)
+            {
+                return toError;
+            }
+        }
+
+        return null;
     }
 
     private async Task ConfirmPendingAsync()
     {
-        if (_pending is null || _timeline is null)
+        if (_pending is null)
         {
+            return;
+        }
+
+        ApiError? validationError = ResolvePendingInputs(
+            _pending, out string? effectiveFromIso, out string? effectiveToIso);
+        if (validationError is not null)
+        {
+            _pendingError = validationError;
             return;
         }
 
         _pendingBusy = true;
         _pendingError = null;
-        string token = _timeline.ConcurrencyToken;
+        _pendingConflict.Take();
+        PendingAction action = _pending;
         ApiResult<MonitoringRuleTimelineResponse>? result = null;
 
         try
         {
-            if (_pending.Kind == "apply")
+            if (action.Kind == PendingActionKind.Apply)
             {
-                ApplyMonitoringRuleRequest request = new(
-                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_toInput)));
-                result = await Api.ApplyDraftAsync(Id, _pending.Revision.Id, request, token, _lifetime.Token);
+                result = await Api.ApplyDraftAsync(
+                    Id,
+                    action.Revision.Id,
+                    new ApplyMonitoringRuleRequest(effectiveToIso),
+                    action.CapturedToken,
+                    _lifetime.Token);
             }
-            else if (_pending.Kind == "schedule")
+            else if (action.Kind == PendingActionKind.Schedule)
             {
-                ScheduleMonitoringRuleRequest request = new(
-                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_fromInput)),
-                    UtcTimes.ToIsoUtc(UtcTimes.FromInputValue(_toInput)));
-                result = await Api.ScheduleDraftAsync(Id, _pending.Revision.Id, request, token, _lifetime.Token);
+                result = await Api.ScheduleDraftAsync(
+                    Id,
+                    action.Revision.Id,
+                    new ScheduleMonitoringRuleRequest(effectiveFromIso, effectiveToIso),
+                    action.CapturedToken,
+                    _lifetime.Token);
             }
-            else if (_pending.Kind == "delete-draft")
+            else if (action.Kind == PendingActionKind.DeleteDraft)
             {
-                result = await Api.DeleteDraftAsync(Id, _pending.Revision.Id, token, _lifetime.Token);
+                result = await Api.DeleteDraftAsync(
+                    Id, action.Revision.Id, action.CapturedToken, _lifetime.Token);
             }
-            else if (_pending.Kind == "remove-revision")
+            else
             {
-                result = await Api.RemoveRevisionAsync(Id, _pending.Revision.Id, token, _lifetime.Token);
+                result = await Api.RemoveRevisionAsync(
+                    Id, action.Revision.Id, action.CapturedToken, _lifetime.Token);
             }
         }
         finally
@@ -533,15 +449,12 @@ else if (_settings is not null)
         if (result.IsSuccess)
         {
             _pending = null;
-            _notice = "Timeline updated.";
             await ReloadAllAsync();
+            _notice = "Timeline updated.";
         }
         else if (result.Error!.IsPreconditionFailed)
         {
-            _pending = null;
-            _notice = null;
-            await ReloadAllAsync();
-            _notice = "Another change was applied first. The timeline has been reloaded — review and retry.";
+            await OpenPendingConflictAsync();
         }
         else
         {
@@ -549,24 +462,56 @@ else if (_settings is not null)
         }
     }
 
-    private void CancelPending()
+    private async Task OpenPendingConflictAsync()
     {
-        _pending = null;
-        _pendingError = null;
+        ApiResult<MonitoringRuleTimelineResponse> latest =
+            await Api.GetTimelineAsync(Id, _lifetime.Token);
+        if (latest.IsSuccess)
+        {
+            _timeline = latest.Value;
+            _nextBoundary = ComputeNextBoundary();
+            _pendingConflict.Open(latest.Value!);
+        }
+        else
+        {
+            _pendingError = latest.Error;
+        }
     }
 
-    private async Task GuardNavigation(LocationChangingContext context)
+    private void DiscardPendingConflict()
     {
-        if (SettingsDirty)
+        _pendingConflict.Take();
+        _pending = null;
+        _pendingError = null;
+        _notice = "Latest timeline loaded — the pending action was discarded.";
+    }
+
+    private async Task ReapplyPendingConflictAsync()
+    {
+        MonitoringRuleTimelineResponse latest = _pendingConflict.Take();
+        if (_pending is not null)
+        {
+            _pending.CapturedToken = latest.ConcurrencyToken;
+            await ConfirmPendingAsync();
+        }
+    }
+
+    private async Task CancelPendingAsync()
+    {
+        if (_pending?.HasInput == true)
         {
             bool confirmed = await JS.InvokeAsync<bool>(
                 "confirm",
-                "You have unsaved changes. Leave this page and discard them?");
+                "Discard the times you entered for this action?");
             if (confirmed is false)
             {
-                context.PreventNavigation();
+                return;
             }
         }
+
+        _pending = null;
+        _pendingError = null;
+        _pendingConflict.Take();
     }
 
     private DateTimeOffset? ComputeNextBoundary()
@@ -586,9 +531,9 @@ else if (_settings is not null)
         return next;
     }
 
-    private static DateTimeOffset? Earliest(DateTimeOffset? current, DateTimeOffset? candidate)
+    private DateTimeOffset? Earliest(DateTimeOffset? current, DateTimeOffset? candidate)
     {
-        if (candidate is null || candidate.Value <= DateTimeOffset.UtcNow)
+        if (candidate is null || candidate.Value <= Clock.UtcNow)
         {
             return current;
         }
@@ -596,19 +541,43 @@ else if (_settings is not null)
         return current is null || candidate < current ? candidate : current;
     }
 
+    private void EnsureRefreshLoop()
+    {
+        if (_refreshLoopStarted)
+        {
+            return;
+        }
+
+        _refreshLoopStarted = true;
+        _ = RefreshLoopAsync();
+    }
+
     private async Task RefreshLoopAsync()
     {
-        using PeriodicTimer timer = new(TimeSpan.FromSeconds(20));
         try
         {
-            while (await timer.WaitForNextTickAsync(_lifetime.Token))
+            while (true)
             {
-                if (_nextBoundary is not null && _nextBoundary.Value <= DateTimeOffset.UtcNow)
+                await Task.Delay(RefreshInterval, _lifetime.Token);
+                try
                 {
-                    await ReloadAllAsync();
-                }
+                    if (_nextBoundary is not null && _nextBoundary.Value <= Clock.UtcNow)
+                    {
+                        _refreshFaulted = false;
+                        await InvokeAsync(ReloadAllAsync);
+                    }
 
-                await InvokeAsync(StateHasChanged);
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    _refreshFaulted = true;
+                    await InvokeAsync(StateHasChanged);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -616,127 +585,10 @@ else if (_settings is not null)
         }
     }
 
-    private static string StatusOf(MonitoringRuleRevisionDto revision)
-    {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (revision.EffectiveTo is not null && revision.EffectiveTo <= now)
-        {
-            return "Historical";
-        }
-
-        if (revision.EffectiveFrom is null || revision.EffectiveFrom > now)
-        {
-            return "Scheduled";
-        }
-
-        return "Current";
-    }
-
-    private static string StatusClass(string status)
-    {
-        return status == "Current" ? "te-current" : status == "Scheduled" ? "te-scheduled" : string.Empty;
-    }
-
-    private static string RevisionLabel(MonitoringRuleRevisionDto revision)
-    {
-        return revision.RevisionNumber?.ToString() ?? "(unnumbered)";
-    }
-
-    private RenderFragment PendingPanel
-    {
-        get
-        {
-            if (_pending is null)
-            {
-                return builder => { };
-            }
-
-            if (_pending.Kind == "apply")
-            {
-                return @<ConfirmPanel Title="Apply draft now"
-                                     ConfirmLabel="Apply now"
-                                     BusyLabel="Applying…"
-                                     Busy="@_pendingBusy"
-                                     Error="@_pendingError"
-                                     OnConfirm="ConfirmPendingAsync"
-                                     OnCancel="CancelPending">
-                    <p>This draft becomes the current configuration immediately.</p>
-                    <label style="max-width:260px">
-                        Effective until (UTC, optional)
-                        <input type="datetime-local" value="@_toInput"
-                               @onchange="args => _toInput = args.Value?.ToString() ?? string.Empty"
-                               aria-label="Effective until UTC">
-                    </label>
-                </ConfirmPanel>;
-            }
-
-            if (_pending.Kind == "schedule")
-            {
-                return @<ConfirmPanel Title="Schedule draft"
-                                     ConfirmLabel="Schedule"
-                                     BusyLabel="Scheduling…"
-                                     Busy="@_pendingBusy"
-                                     Error="@_pendingError"
-                                     OnConfirm="ConfirmPendingAsync"
-                                     OnCancel="CancelPending">
-                    <p>The draft becomes effective at the start time. Start must be at or after the current UTC time.</p>
-                    <div class="te-fields te-two">
-                        <label>
-                            Effective from (UTC)
-                            <input type="datetime-local" value="@_fromInput"
-                                   @onchange="args => _fromInput = args.Value?.ToString() ?? string.Empty"
-                                   aria-label="Effective from UTC">
-                        </label>
-                        <label>
-                            Effective until (UTC, optional)
-                            <input type="datetime-local" value="@_toInput"
-                                   @onchange="args => _toInput = args.Value?.ToString() ?? string.Empty"
-                                   aria-label="Effective until UTC">
-                        </label>
-                    </div>
-                </ConfirmPanel>;
-            }
-
-            if (_pending.Kind == "delete-draft")
-            {
-                return @<ConfirmPanel Title="Delete draft"
-                                     ConfirmLabel="Delete draft"
-                                     BusyLabel="Deleting…"
-                                     Busy="@_pendingBusy"
-                                     Error="@_pendingError"
-                                     OnConfirm="ConfirmPendingAsync"
-                                     OnCancel="CancelPending">
-                    <p>Removes this draft permanently. Committed revisions are unchanged.</p>
-                </ConfirmPanel>;
-            }
-
-            return @<ConfirmPanel Title="Remove scheduled revision"
-                                 ConfirmLabel="Remove revision"
-                                 BusyLabel="Removing…"
-                                 Busy="@_pendingBusy"
-                                 Error="@_pendingError"
-                                 OnConfirm="ConfirmPendingAsync"
-                                 OnCancel="CancelPending">
-                <p>Removes this scheduled revision. Neighbouring coverage boundaries are adjusted automatically.</p>
-            </ConfirmPanel>;
-        }
-    }
-
-    private sealed class PendingAction
-    {
-        public PendingAction(string kind, MonitoringRuleRevisionDto revision)
-        {
-            Kind = kind;
-            Revision = revision;
-        }
-
-        public string Kind { get; }
-
-        public MonitoringRuleRevisionDto Revision { get; }
-    }
-
     public void Dispose()
     {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
         _lifetime.Cancel();
         _lifetime.Dispose();
     }

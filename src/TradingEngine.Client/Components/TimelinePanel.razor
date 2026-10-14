@@ -1,0 +1,110 @@
+@inject IUiClock Clock
+
+<section class="te-detail-card" aria-label="Revision timeline">
+    <h3>Timeline</h3>
+    <p class="te-note">
+        All times are UTC.
+        @if (Timeline?.CoverageOrigin is not null)
+        {
+            <text> Coverage starts @UtcTimes.Format(Timeline.CoverageOrigin).</text>
+        }
+    </p>
+    @if (Error is not null)
+    {
+        <ErrorNotice Error="@Error">
+            <button type="button" @onclick="OnRetry">Retry</button>
+            @if (Error.IsUnauthorized)
+            {
+                <a href="@SignInUrl">Sign in again</a>
+            }
+        </ErrorNotice>
+    }
+    else if (Timeline is null || Timeline.Revisions.Count == 0)
+    {
+        <p class="te-note" style="margin-top:12px">No committed revisions yet. Apply or schedule a draft to create one.</p>
+    }
+    else
+    {
+        <ul class="te-history" style="margin-top:14px">
+            @foreach (MonitoringRuleRevisionDto revision in Timeline.Revisions)
+            {
+                string status = StatusOf(revision);
+                <li>
+                    <div class="te-row">
+                        <div>
+                            <strong>Revision @RevisionLabel(revision)</strong>
+                            <span class="te-badge @StatusClass(status)" style="margin-left:8px">@status</span>
+                            <div class="te-small">
+                                @UtcTimes.FormatRange(revision.EffectiveFrom, revision.EffectiveTo)
+                            </div>
+                            <div class="te-small">
+                                Created @UtcTimes.Format(revision.CreatedAt) by @revision.CreatedBy
+                                @if (string.IsNullOrWhiteSpace(revision.ChangeReason) is false)
+                                {
+                                    <text> · @revision.ChangeReason</text>
+                                }
+                            </div>
+                        </div>
+                        @if (status == "Scheduled")
+                        {
+                            <div class="te-inline-actions">
+                                <a href="instruments/@InstrumentId/revisions/@revision.Id">Edit</a>
+                                <button type="button" @onclick="() => OnRemove.InvokeAsync(revision)">Remove</button>
+                            </div>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+    @ChildContent
+</section>
+
+@code {
+    [Parameter]
+    public MonitoringRuleTimelineResponse? Timeline { get; set; }
+
+    [Parameter]
+    public ApiError? Error { get; set; }
+
+    [Parameter]
+    public Guid InstrumentId { get; set; }
+
+    [Parameter]
+    public string SignInUrl { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback OnRetry { get; set; }
+
+    [Parameter]
+    public EventCallback<MonitoringRuleRevisionDto> OnRemove { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private string StatusOf(MonitoringRuleRevisionDto revision)
+    {
+        DateTimeOffset now = Clock.UtcNow;
+        if (revision.EffectiveTo is not null && revision.EffectiveTo <= now)
+        {
+            return "Historical";
+        }
+
+        if (revision.EffectiveFrom is null || revision.EffectiveFrom > now)
+        {
+            return "Scheduled";
+        }
+
+        return "Current";
+    }
+
+    private static string StatusClass(string status)
+    {
+        return status == "Current" ? "te-current" : status == "Scheduled" ? "te-scheduled" : string.Empty;
+    }
+
+    private static string RevisionLabel(MonitoringRuleRevisionDto revision)
+    {
+        return revision.RevisionNumber?.ToString() ?? "(unnumbered)";
+    }
+}

@@ -1,0 +1,23 @@
+@inject IJSRuntime JS
+
+<NavigationLock OnBeforeInternalNavigation="GuardNavigation"
+                ConfirmExternalNavigation="@IsDirty" />
+
+@code {
+    [Parameter]
+    public bool IsDirty { get; set; }
+
+    private async Task GuardNavigation(LocationChangingContext context)
+    {
+        if (IsDirty)
+        {
+            bool confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "You have unsaved changes. Leave this page and discard them?");
+            if (confirmed is false)
+            {
+                context.PreventNavigation();
+            }
+        }
+    }
+}

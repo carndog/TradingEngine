@@ -13,5 +13,6 @@ builder.Services.AddScoped(_ => new HttpClient
 });
 builder.Services.AddScoped<TradingEngineApiClient>();
 builder.Services.AddScoped<InstrumentListState>();
+builder.Services.AddSingleton<IUiClock>(SystemUiClock.Instance);
 
 await builder.Build().RunAsync();

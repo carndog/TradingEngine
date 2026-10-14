@@ -1,0 +1,73 @@
+@if (Applicable is not null)
+{
+    <section class="te-detail-card" aria-label="Current configuration">
+        <div class="te-row">
+            <h3>Revision @RevisionLabel</h3>
+            <span class="te-badge te-current">Current · read-only</span>
+        </div>
+        <p class="te-note">
+            Effective from @UtcTimes.Format(Applicable.EffectiveFrom)
+            @(Applicable.EffectiveTo is null ? " · No end set" : $" · Ends {UtcTimes.Format(Applicable.EffectiveTo)}")
+        </p>
+        <div style="margin-top:14px">
+            <DefinitionSummary Definition="@Applicable.Definition" />
+        </div>
+        <div class="te-footer">
+            <a class="te-primary" style="padding:8px 12px;border-radius:6px;text-decoration:none"
+               href="instruments/@InstrumentId/drafts/new?from=@Applicable.Id">Copy to new draft</a>
+        </div>
+    </section>
+}
+else if (Error is not null)
+{
+    <ErrorNotice Error="@Error">
+        <button type="button" @onclick="OnRetry">Retry</button>
+        @if (Error.IsUnauthorized)
+        {
+            <a href="@SignInUrl">Sign in again</a>
+        }
+    </ErrorNotice>
+}
+else
+{
+    <section class="te-detail-card" aria-label="No current configuration">
+        <h3>No current configuration</h3>
+        <p class="te-note">
+            No monitoring-rule revision applies at the current time.
+            @if (CoverageOrigin is not null)
+            {
+                <text>Coverage starts @UtcTimes.Format(CoverageOrigin).</text>
+            }
+            Apply a draft to begin monitoring sooner.
+        </p>
+        <div class="te-footer">
+            <button type="button" class="te-primary" @onclick="OnOpenDrafts">Open drafts</button>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter]
+    public MonitoringRuleRevisionDto? Applicable { get; set; }
+
+    [Parameter]
+    public ApiError? Error { get; set; }
+
+    [Parameter]
+    public DateTimeOffset? CoverageOrigin { get; set; }
+
+    [Parameter]
+    public Guid InstrumentId { get; set; }
+
+    [Parameter]
+    public string SignInUrl { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback OnRetry { get; set; }
+
+    [Parameter]
+    public EventCallback OnOpenDrafts { get; set; }
+
+    private string RevisionLabel =>
+        Applicable?.RevisionNumber?.ToString() ?? "(unnumbered)";
+}
