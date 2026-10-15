@@ -95,7 +95,7 @@ public sealed class DefinitionEditModel
                 continue;
             }
 
-            int currentIndex = FindZoneIndexById(current, latest[latestIndex].Id);
+            int currentIndex = FindZoneIndexById(current, usedCurrent, latest[latestIndex].Id);
             if (currentIndex < 0)
             {
                 continue;
@@ -109,7 +109,6 @@ public sealed class DefinitionEditModel
             }
         }
 
-        int cursor = 0;
         for (int latestIndex = 0; latestIndex < latest.Count; latestIndex++)
         {
             if (usedLatest[latestIndex])
@@ -117,25 +116,35 @@ public sealed class DefinitionEditModel
                 continue;
             }
 
-            while (cursor < current.Count && usedCurrent[cursor])
+            int currentIndex = FindZoneIndexByContent(current, usedCurrent, latest[latestIndex]);
+            if (currentIndex < 0)
             {
-                cursor++;
-            }
-
-            if (cursor >= current.Count)
-            {
-                yield return $"{kind} zone {ZoneLabel(latest[latestIndex], latestIndex)} added ({DescribeBounds(latest[latestIndex])})";
                 continue;
             }
 
-            usedCurrent[cursor] = true;
+            usedCurrent[currentIndex] = true;
             usedLatest[latestIndex] = true;
-            foreach (string diff in DescribeZoneChange(kind, current[cursor], latest[latestIndex], latestIndex))
+        }
+
+        for (int latestIndex = 0; latestIndex < latest.Count; latestIndex++)
+        {
+            if (usedLatest[latestIndex])
             {
-                yield return diff;
+                continue;
             }
 
-            cursor++;
+            if (latestIndex < current.Count && usedCurrent[latestIndex] is false)
+            {
+                usedCurrent[latestIndex] = true;
+                foreach (string diff in DescribeZoneChange(kind, current[latestIndex], latest[latestIndex], latestIndex))
+                {
+                    yield return diff;
+                }
+            }
+            else
+            {
+                yield return $"{kind} zone {ZoneLabel(latest[latestIndex], latestIndex)} added ({DescribeBounds(latest[latestIndex])})";
+            }
         }
 
         for (int currentIndex = 0; currentIndex < current.Count; currentIndex++)
@@ -147,11 +156,24 @@ public sealed class DefinitionEditModel
         }
     }
 
-    private static int FindZoneIndexById(IReadOnlyList<ZoneEditModel> zones, string id)
+    private static int FindZoneIndexById(IReadOnlyList<ZoneEditModel> zones, bool[] used, string id)
     {
         for (int index = 0; index < zones.Count; index++)
         {
-            if (zones[index].Id == id)
+            if (used[index] is false && zones[index].Id == id)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int FindZoneIndexByContent(IReadOnlyList<ZoneEditModel> zones, bool[] used, ZoneEditModel match)
+    {
+        for (int index = 0; index < zones.Count; index++)
+        {
+            if (used[index] is false && zones[index].SameContent(match))
             {
                 return index;
             }
@@ -243,7 +265,12 @@ public sealed class DefinitionEditModel
 
     private static string DescribeBounds(ZoneEditModel zone)
     {
-        return $"{zone.Lower}–{zone.Upper} around {zone.Level}";
+        return $"{BoundText(zone.Lower)}–{BoundText(zone.Upper)} around {BoundText(zone.Level)}";
+    }
+
+    private static string BoundText(decimal? value)
+    {
+        return value is null ? "—" : value.Value.ToString();
     }
 
     private static string EmptyAsDash(string? value)

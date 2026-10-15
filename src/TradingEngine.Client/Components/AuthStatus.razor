@@ -25,6 +25,7 @@
 @code {
     private SessionPresentation? _presentation;
     private bool _checking;
+    private bool _disposed;
     private readonly CancellationTokenSource _lifetime = new();
 
     protected override async Task OnInitializedAsync()
@@ -35,7 +36,8 @@
 
     private void OnSessionInvalidated()
     {
-        if (_presentation?.Status is SessionStatus.Unauthorized or SessionStatus.Forbidden)
+        if (_disposed || _checking
+            || _presentation?.Status is SessionStatus.Unauthorized or SessionStatus.Forbidden)
         {
             return;
         }
@@ -46,7 +48,10 @@
     private async Task ReloadAndRenderAsync()
     {
         await ReloadAsync();
-        StateHasChanged();
+        if (_disposed is false)
+        {
+            StateHasChanged();
+        }
     }
 
     private async Task ReloadAsync()
@@ -73,6 +78,7 @@
 
     public void Dispose()
     {
+        _disposed = true;
         SessionState.Invalidated -= OnSessionInvalidated;
         _lifetime.Cancel();
         _lifetime.Dispose();

@@ -21,7 +21,7 @@ public sealed class AuthStatusTests
         SessionState sessionState = new();
         HttpClient http = new(handler) { BaseAddress = new Uri("http://localhost/") };
         ctx.Services.AddSingleton(sessionState);
-        ctx.Services.AddSingleton(new TradingEngineApiClient(http, TimeSpan.FromSeconds(30), []));
+        ctx.Services.AddSingleton(new TradingEngineApiClient(http, TimeSpan.FromSeconds(30), [], null, sessionState));
         IRenderedComponent<AuthStatus> cut = ctx.Render<AuthStatus>();
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("Signed in as Test User")),

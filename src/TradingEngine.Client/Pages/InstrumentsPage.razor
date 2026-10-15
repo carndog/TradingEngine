@@ -361,6 +361,7 @@ else if (_result is not null)
     {
         _searchText = args.Value?.ToString() ?? string.Empty;
         InvalidateSelection();
+        _searchVersion++;
         _debounce?.Cancel();
         _debounce?.Dispose();
         _debounce = new CancellationTokenSource();

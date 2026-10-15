@@ -490,6 +490,11 @@ public sealed class InstrumentsPageTests
             () => Assert.That(cut.Markup, Does.Contain("1 selected on this page")),
             TimeSpan.FromSeconds(5));
 
+        cut.FindAll("button").Single(b => b.TextContent == "Delete selected").Click();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Delete 1 instrument?")),
+            TimeSpan.FromSeconds(5));
+
         cut.FindAll("button").Single(b => b.TextContent == "Next").Click();
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("0 selected on this page")),

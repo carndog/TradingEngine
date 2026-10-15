@@ -18,7 +18,7 @@ The header renders one shared `AuthStatus` component backed by
 | --- | --- | --- |
 | Local run (Easy Auth absent) | `200 {"mode":"development"}` | `Local development` |
 | Deployed, allowlisted session | `200 {"mode":"entra","displayName":"…"}` | `Signed in as …` + `Sign out` |
-| Deployed, expired/unsigned session | `401` | `Sign in` linking to `/.auth/login/aad?post_login_redirect_uri=<current same-origin path>` |
+| Deployed, expired/unsigned session | `401` | `Sign in required` + `Sign in` link to `/.auth/login/aad?post_login_redirect_uri=<current same-origin path>` |
 | Deployed, signed-in but not allowlisted | `403` | `Access denied` + `Sign out` |
 | Endpoint unreachable or malformed | network/5xx/parse failure | `Session check unavailable` + `Retry` |
 

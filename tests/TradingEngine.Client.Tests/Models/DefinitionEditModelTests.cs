@@ -194,4 +194,58 @@ public sealed class DefinitionEditModelTests
 
         Assert.That(summary, Does.Contain("condition 'breakout' action 'old-action' → '—'"));
     }
+
+    [Test]
+    public void DescribeChangesAgainst_ReplacedZone_ReportsRemoveAndAdd()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        model.AddSupportZone();
+        model.SupportZones[1].Lower = 105m;
+        model.SupportZones[1].Upper = 115m;
+        model.SupportZones[1].Level = 110m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones.RemoveAt(0);
+        latest.AddSupportZone();
+        latest.SupportZones[1].Lower = 120m;
+        latest.SupportZones[1].Upper = 130m;
+        latest.SupportZones[1].Level = 125m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("support zone #2 added (120–130 around 125)"));
+            Assert.That(summary, Does.Contain("support zone #1 removed (was 90–100 around 95)"));
+            Assert.That(summary, Does.Not.Contain("bounds"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_DuplicateZoneIds_PairsEachZoneOnce()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Id = "dup";
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        DefinitionEditModel latest = model.Clone();
+        latest.AddSupportZone();
+        latest.SupportZones[1].Id = "dup";
+        latest.SupportZones[1].Lower = 120m;
+        latest.SupportZones[1].Upper = 130m;
+        latest.SupportZones[1].Level = 125m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("support zone 'dup' added (120–130 around 125)"));
+            Assert.That(summary, Does.Not.Contain("bounds"));
+        });
+    }
 }
