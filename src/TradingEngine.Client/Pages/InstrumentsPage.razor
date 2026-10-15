@@ -35,7 +35,7 @@
         <span class="te-small">@SelectionStatusText</span>
         <button type="button"
                 @ref="_deleteSelectedButton"
-                disabled="@(_selected.Count == 0 || _deleteBusy)"
+                disabled="@(_selected.Count == 0 || _deleteBusy || SelectionLocked)"
                 @onclick="OpenConfirmation">Delete selected</button>
     </div>
 </div>
@@ -98,7 +98,7 @@ else if (_result is not null)
                         <input type="checkbox"
                                @ref="_headerCheckbox"
                                checked="@AllPageRowsSelected"
-                               disabled="@_loading"
+                               disabled="@SelectionLocked"
                                @onchange="OnHeaderToggled"
                                aria-label="Select all instruments on this page">
                     </th>
@@ -116,7 +116,7 @@ else if (_result is not null)
                         <td data-label="Select" class="te-select">
                             <input type="checkbox"
                                    checked="@_selected.ContainsKey(item.Id)"
-                                   disabled="@_loading"
+                                   disabled="@SelectionLocked"
                                    @onchange="args => ToggleSelection(item, (bool)args.Value!)"
                                    aria-label="Select @item.Symbol on @item.Exchange in @item.QuoteCurrency">
                         </td>
@@ -186,6 +186,7 @@ else if (_result is not null)
     private ApiError? _error;
     private bool _loading = true;
     private bool _slowLoading;
+    private bool _searchPending;
     private int _searchVersion;
     private string _searchText = string.Empty;
     private int _pageSize = 25;
@@ -215,6 +216,8 @@ else if (_result is not null)
     public int RequestedPageSize { get; set; }
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
+
+    private bool SelectionLocked => _loading || _searchPending;
 
     private int CurrentPage => _result?.Page ?? Math.Max(1, Page);
 
@@ -256,6 +259,7 @@ else if (_result is not null)
         _searchVersion++;
         int version = _searchVersion;
         _loading = true;
+        _searchPending = false;
         _error = null;
         _searchText = Query ?? string.Empty;
         _pageSize = PageSizes.Contains(RequestedPageSize) ? RequestedPageSize : 25;
@@ -362,6 +366,7 @@ else if (_result is not null)
         _searchText = args.Value?.ToString() ?? string.Empty;
         InvalidateSelection();
         _searchVersion++;
+        _searchPending = true;
         _debounce?.Cancel();
         _debounce?.Dispose();
         _debounce = new CancellationTokenSource();
@@ -372,7 +377,7 @@ else if (_result is not null)
             await Task.Delay(300, debounce.Token);
             if (debounce.IsCancellationRequested is false)
             {
-                NavigateToQuery(replace: true);
+                await NavigateToQueryAsync(replace: true);
             }
         }
         catch (TaskCanceledException)
@@ -380,25 +385,37 @@ else if (_result is not null)
         }
     }
 
-    private void OnSearchKeyDown(KeyboardEventArgs args)
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
     {
         if (args.Key == "Enter")
         {
             _debounce?.Cancel();
-            NavigateToQuery(replace: false);
+            await NavigateToQueryAsync(replace: false);
         }
     }
 
-    private void ClearSearch()
+    private async Task ClearSearch()
     {
         _searchText = string.Empty;
-        NavigateToQuery(replace: true);
+        await NavigateToQueryAsync(replace: true);
     }
 
-    private void NavigateToQuery(bool replace)
+    private async Task NavigateToQueryAsync(bool replace)
     {
         InvalidateSelection();
-        Navigation.NavigateTo(BuildUrl(_searchText, 1, _pageSize), replace: replace);
+        string url = BuildUrl(_searchText, 1, _pageSize);
+        if (Navigation.ToBaseRelativePath(Navigation.Uri) == url)
+        {
+            _searchPending = false;
+            if (_loading)
+            {
+                await OnParametersSetAsync();
+            }
+
+            return;
+        }
+
+        Navigation.NavigateTo(url, replace: replace);
     }
 
     private void OnPageSizeChanged(ChangeEventArgs args)
@@ -426,7 +443,7 @@ else if (_result is not null)
 
     private void ToggleSelection(WatchedInstrumentSummaryDto item, bool selected)
     {
-        if (_loading)
+        if (SelectionLocked)
         {
             return;
         }
@@ -445,7 +462,7 @@ else if (_result is not null)
 
     private void OnHeaderToggled(ChangeEventArgs args)
     {
-        if (_result is null || _loading)
+        if (_result is null || SelectionLocked)
         {
             return;
         }
@@ -476,7 +493,7 @@ else if (_result is not null)
 
     private void OpenConfirmation()
     {
-        if (_selected.Count == 0 || _deleteBusy || _loading)
+        if (_selected.Count == 0 || _deleteBusy || SelectionLocked)
         {
             return;
         }
@@ -510,7 +527,7 @@ else if (_result is not null)
 
     private async Task ConfirmDeleteAsync()
     {
-        if (_confirmItems is null || _deleteBusy || _loading)
+        if (_confirmItems is null || _deleteBusy || SelectionLocked)
         {
             return;
         }

@@ -87,6 +87,7 @@ public sealed class DefinitionEditModel
         IReadOnlyList<ZoneEditModel> latest)
     {
         bool[] usedCurrent = new bool[current.Count];
+        bool[] contestedCurrent = new bool[current.Count];
         bool[] usedLatest = new bool[latest.Count];
         for (int latestIndex = 0; latestIndex < latest.Count; latestIndex++)
         {
@@ -133,27 +134,120 @@ public sealed class DefinitionEditModel
                 continue;
             }
 
-            if (latestIndex < current.Count && usedCurrent[latestIndex] is false)
+            int currentIndex = FindZoneIndexBySimilarity(current, usedCurrent, latest[latestIndex]);
+            if (currentIndex >= 0
+                && HasCompetingLatest(
+                    latest, usedLatest, latestIndex, current[currentIndex],
+                    ZoneSimilarity(current[currentIndex], latest[latestIndex])))
             {
-                usedCurrent[latestIndex] = true;
-                foreach (string diff in DescribeZoneChange(kind, current[latestIndex], latest[latestIndex], latestIndex))
-                {
-                    yield return diff;
-                }
+                usedCurrent[currentIndex] = true;
+                contestedCurrent[currentIndex] = true;
+                yield return $"{kind} zone {ZoneLabel(latest[latestIndex], latestIndex)} added ({DescribeBounds(latest[latestIndex])})";
+                continue;
             }
-            else
+
+            if (currentIndex < 0)
             {
                 yield return $"{kind} zone {ZoneLabel(latest[latestIndex], latestIndex)} added ({DescribeBounds(latest[latestIndex])})";
+                continue;
+            }
+
+            usedCurrent[currentIndex] = true;
+            foreach (string diff in DescribeZoneChange(kind, current[currentIndex], latest[latestIndex], latestIndex))
+            {
+                yield return diff;
             }
         }
 
         for (int currentIndex = 0; currentIndex < current.Count; currentIndex++)
         {
-            if (usedCurrent[currentIndex] is false)
+            if (usedCurrent[currentIndex] is false || contestedCurrent[currentIndex])
             {
                 yield return $"{kind} zone {ZoneLabel(current[currentIndex], currentIndex)} removed (was {DescribeBounds(current[currentIndex])})";
             }
         }
+    }
+
+    private static int FindZoneIndexBySimilarity(
+        IReadOnlyList<ZoneEditModel> zones,
+        bool[] used,
+        ZoneEditModel match)
+    {
+        int candidates = 0;
+        int bestIndex = -1;
+        int bestScore = 0;
+        bool tied = false;
+        for (int index = 0; index < zones.Count; index++)
+        {
+            if (used[index])
+            {
+                continue;
+            }
+
+            candidates++;
+            int score = ZoneSimilarity(zones[index], match);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestIndex = index;
+                tied = false;
+            }
+            else if (score == bestScore && score > 0)
+            {
+                tied = true;
+            }
+        }
+
+        if (tied || bestScore == 0)
+        {
+            return -1;
+        }
+
+        return bestScore >= 2 || candidates == 1 ? bestIndex : -1;
+    }
+
+    private static bool HasCompetingLatest(
+        IReadOnlyList<ZoneEditModel> latest,
+        bool[] usedLatest,
+        int currentLatestIndex,
+        ZoneEditModel candidate,
+        int score)
+    {
+        for (int index = 0; index < latest.Count; index++)
+        {
+            if (index == currentLatestIndex || usedLatest[index])
+            {
+                continue;
+            }
+
+            if (ZoneSimilarity(candidate, latest[index]) >= score)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int ZoneSimilarity(ZoneEditModel left, ZoneEditModel right)
+    {
+        int score = 0;
+        if (left.Lower == right.Lower)
+        {
+            score++;
+        }
+
+        if (left.Level == right.Level)
+        {
+            score++;
+        }
+
+        if (left.Upper == right.Upper)
+        {
+            score++;
+        }
+
+        return score;
     }
 
     private static int FindZoneIndexById(IReadOnlyList<ZoneEditModel> zones, bool[] used, string id)

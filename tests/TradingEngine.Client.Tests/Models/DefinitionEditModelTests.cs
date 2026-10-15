@@ -225,6 +225,173 @@ public sealed class DefinitionEditModelTests
     }
 
     [Test]
+    public void DescribeChangesAgainst_MovedEditedAnonymousZone_PairsBySimilarity()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        model.AddSupportZone();
+        model.SupportZones[1].Lower = 105m;
+        model.SupportZones[1].Upper = 115m;
+        model.SupportZones[1].Level = 110m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones.RemoveAt(0);
+        latest.SupportZones[0].Upper = 118m;
+        latest.AddSupportZone();
+        latest.SupportZones[1].Lower = 120m;
+        latest.SupportZones[1].Upper = 130m;
+        latest.SupportZones[1].Level = 125m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("bounds 105–115 around 110 → 105–118 around 110"));
+            Assert.That(summary, Does.Contain("support zone #2 added (120–130 around 125)"));
+            Assert.That(summary, Does.Contain("support zone #1 removed (was 90–100 around 95)"));
+            Assert.That(summary, Does.Not.Contain("90–100 around 95 →"));
+            Assert.That(summary, Does.Not.Contain("→ 120–130"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_UnrelatedAnonymousZones_ReportsAddAndRemove()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        model.AddSupportZone();
+        model.SupportZones[1].Lower = 105m;
+        model.SupportZones[1].Upper = 115m;
+        model.SupportZones[1].Level = 110m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones.Clear();
+        latest.AddSupportZone();
+        latest.SupportZones[0].Lower = 40m;
+        latest.SupportZones[0].Upper = 50m;
+        latest.SupportZones[0].Level = 45m;
+        latest.AddSupportZone();
+        latest.SupportZones[1].Lower = 60m;
+        latest.SupportZones[1].Upper = 70m;
+        latest.SupportZones[1].Level = 65m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("support zone #1 added (40–50 around 45)"));
+            Assert.That(summary, Does.Contain("support zone #2 added (60–70 around 65)"));
+            Assert.That(summary, Does.Contain("support zone #1 removed (was 90–100 around 95)"));
+            Assert.That(summary, Does.Contain("support zone #2 removed (was 105–115 around 110)"));
+            Assert.That(summary, Does.Not.Contain("→"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_SingleAnonymousZoneEdit_ReportsEdit()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones[0].Lower = 80m;
+        latest.SupportZones[0].Level = 92m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("bounds 90–100 around 95 → 80–100 around 92"));
+            Assert.That(summary, Does.Not.Contain("added"));
+            Assert.That(summary, Does.Not.Contain("removed"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_AmbiguousAnonymousPair_ReportsAddAndRemove()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        model.AddSupportZone();
+        model.SupportZones[1].Lower = 90m;
+        model.SupportZones[1].Upper = 100m;
+        model.SupportZones[1].Level = 95m;
+        model.SupportZones[1].Conditions[0].ActionId = "b-action";
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones.RemoveAt(0);
+        latest.SupportZones[0].Level = 99m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("removed"));
+            Assert.That(summary, Does.Not.Contain("→"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_CompetingLatestCandidates_ReportsAddAndRemove()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Level = 95m;
+        model.SupportZones[0].Upper = 100m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones[0].Upper = 101m;
+        latest.AddSupportZone();
+        latest.SupportZones[1].Lower = 90m;
+        latest.SupportZones[1].Level = 95m;
+        latest.SupportZones[1].Upper = 102m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("support zone #1 added (90–101 around 95)"));
+            Assert.That(summary, Does.Contain("support zone #2 added (90–102 around 95)"));
+            Assert.That(summary, Does.Contain("support zone #1 removed (was 90–100 around 95)"));
+            Assert.That(summary, Does.Not.Contain("→"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_CompetingLatestCandidatesReversed_ReportsSameAddAndRemove()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Level = 95m;
+        model.SupportZones[0].Upper = 100m;
+        DefinitionEditModel latest = model.Clone();
+        latest.AddSupportZone();
+        latest.SupportZones[1].Lower = 90m;
+        latest.SupportZones[1].Level = 95m;
+        latest.SupportZones[1].Upper = 101m;
+        latest.SupportZones[0].Upper = 102m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("added (90–102 around 95)"));
+            Assert.That(summary, Does.Contain("added (90–101 around 95)"));
+            Assert.That(summary, Does.Contain("removed (was 90–100 around 95)"));
+            Assert.That(summary, Does.Not.Contain("→"));
+        });
+    }
+
+    [Test]
     public void DescribeChangesAgainst_DuplicateZoneIds_PairsEachZoneOnce()
     {
         DefinitionEditModel model = DefinitionEditModel.Empty();

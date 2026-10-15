@@ -238,6 +238,103 @@ public sealed class InstrumentsPageTests
     }
 
     [Test]
+    public async Task SearchInput_BeforeDebounceCompletes_BlocksReselectionAndDeletion()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 2, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 1, Item(ThirdId, "CCC", "tok-c"))));
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("AAA")),
+            TimeSpan.FromSeconds(5));
+
+        RowCheckbox(cut, FirstId).Change(true);
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("1 selected on this page")),
+            TimeSpan.FromSeconds(5));
+
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("input[type='search']").Input("CC");
+
+            IElement rowBox = RowCheckbox(cut, FirstId);
+            Assert.Multiple(() =>
+            {
+                Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+                Assert.That(rowBox.HasAttribute("disabled"), Is.True);
+                Assert.That(
+                    cut.Find("thead input[type='checkbox']").HasAttribute("disabled"),
+                    Is.True);
+                Assert.That(
+                    cut.FindAll("button")
+                        .Single(b => b.TextContent == "Delete selected")
+                        .HasAttribute("disabled"),
+                    Is.True);
+                Assert.That(handler.RequestCount, Is.EqualTo(1));
+            });
+
+            rowBox.Change(true);
+            cut.Find("thead input[type='checkbox']").Change(true);
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+
+            Assert.That(
+                cut.FindAll("button").Count(b => b.TextContent == "Delete 1 instrument"),
+                Is.EqualTo(0));
+            Assert.That(handler.RequestCount, Is.EqualTo(1));
+        });
+
+        await WaitForMarkupAsync(cut, "CCC");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+            Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
+        });
+    }
+
+    [Test]
+    public async Task SearchInput_SameUrlWhileLoadInFlight_ReloadsAndRestoresSelection()
+    {
+        StubHttpMessageHandler handler = new();
+        TaskCompletionSource<HttpResponseMessage> gated = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 2, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+        handler.Enqueue((_, _) => gated.Task);
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 1, Item(ThirdId, "CCC", "tok-c"))));
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("AAA")),
+            TimeSpan.FromSeconds(5));
+
+        cut.Find("input[type='search']").Input("AA");
+        await WaitForRequestCountAsync(cut, handler, 2);
+
+        cut.Find("input[type='search']").Input("AA ");
+        await WaitForRequestCountAsync(cut, handler, 3);
+
+        gated.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 0)));
+
+        await WaitForMarkupAsync(cut, "CCC");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+            Assert.That(RowCheckbox(cut, ThirdId).HasAttribute("disabled"), Is.False);
+        });
+
+        RowCheckbox(cut, ThirdId).Change(true);
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("1 selected on this page")),
+            TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task ConfirmDelete_WithSelection_PostsIdsAndTokensThenReloads()
     {
         StubHttpMessageHandler handler = new();
@@ -546,11 +643,10 @@ public sealed class InstrumentsPageTests
             () => Assert.That(cut.Markup, Does.Contain("CCC")),
             TimeSpan.FromSeconds(5));
 
+        int rendersBefore = cut.RenderCount;
         gatedDelete.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
             ClientTestData.JsonOf(new BulkDeleteWatchedInstrumentsResponse([FirstId], []))));
-        await Task.Delay(150);
-        await cut.InvokeAsync(() => { });
-        await cut.InvokeAsync(() => { });
+        await WaitForRenderAsync(cut, rendersBefore);
 
         Assert.Multiple(() =>
         {
@@ -562,6 +658,47 @@ public sealed class InstrumentsPageTests
                 handler.Methods.Count(m => m == HttpMethod.Post),
                 Is.EqualTo(1));
         });
+    }
+
+    private static async Task WaitForRequestCountAsync(
+        IRenderedComponent<InstrumentsPage> cut,
+        StubHttpMessageHandler handler,
+        int expected,
+        int timeoutMilliseconds = 5000)
+    {
+        long deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (handler.RequestCount >= expected)
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+            await cut.InvokeAsync(() => { });
+        }
+
+        Assert.That(handler.RequestCount, Is.GreaterThanOrEqualTo(expected));
+    }
+
+    private static async Task WaitForRenderAsync(
+        IRenderedComponent<InstrumentsPage> cut,
+        int rendersBefore,
+        int timeoutMilliseconds = 5000)
+    {
+        long deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (cut.RenderCount > rendersBefore)
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+            await cut.InvokeAsync(() => { });
+        }
+
+        Assert.That(cut.RenderCount, Is.GreaterThan(rendersBefore));
     }
 
     [Test]
