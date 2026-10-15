@@ -405,6 +405,97 @@ public sealed class InstrumentsPageTests
     }
 
     [Test]
+    public async Task PageChange_WithDelayedLoad_SelectionClearedBeforeNewPageArrives()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 2, 3, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+        TaskCompletionSource<HttpResponseMessage> gated = new();
+        handler.Enqueue((_, _) => gated.Task);
+        using BunitContext ctx = CreateContext(handler);
+        ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/instruments?pageSize=2");
+        IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("AAA")),
+            TimeSpan.FromSeconds(2));
+
+        RowCheckbox(cut, FirstId).Change(true);
+        await Task.Delay(50);
+        Assert.That(cut.Markup, Does.Contain("1 selected on this page"));
+
+        cut.FindAll("button").Single(b => b.TextContent == "Next").Click();
+        await Task.Delay(50);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+            Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
+        });
+
+        gated.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(2, 2, 3, Item(ThirdId, "CCC", "tok-c"))));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("CCC")),
+            TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+            Assert.That(
+                handler.Methods.Count(m => m == HttpMethod.Post),
+                Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task NavigationChange_DuringInFlightDelete_DoesNotOverwriteNewPageState()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 2, 3, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+        TaskCompletionSource<HttpResponseMessage> gatedDelete = new();
+        handler.Enqueue((_, _) => gatedDelete.Task);
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(2, 2, 3, Item(ThirdId, "CCC", "tok-c"))));
+        using BunitContext ctx = CreateContext(handler);
+        ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/instruments?pageSize=2");
+        IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("AAA")),
+            TimeSpan.FromSeconds(2));
+
+        RowCheckbox(cut, FirstId).Change(true);
+        await Task.Delay(50);
+        cut.FindAll("button").Single(b => b.TextContent == "Delete selected").Click();
+        await Task.Delay(50);
+        cut.FindAll("button").Single(b => b.TextContent == "Delete 1 instrument").Click();
+        await Task.Delay(50);
+
+        ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/instruments?page=2&pageSize=2");
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("CCC")),
+            TimeSpan.FromSeconds(2));
+
+        gatedDelete.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            ClientTestData.JsonOf(new BulkDeleteWatchedInstrumentsResponse([FirstId], []))));
+        await Task.Delay(200);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("CCC"));
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+            Assert.That(cut.Markup, Does.Not.Contain("Deleted 1 instrument."));
+            Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
+            Assert.That(
+                handler.Methods.Count(m => m == HttpMethod.Post),
+                Is.EqualTo(1));
+        });
+    }
+
+    [Test]
     public void DeleteButton_WithNoSelection_IsDisabled()
     {
         StubHttpMessageHandler handler = new();

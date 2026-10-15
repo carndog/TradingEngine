@@ -11,6 +11,7 @@ builder.Services.AddScoped(_ => new HttpClient
 {
     BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
 });
+builder.Services.AddScoped<SessionState>();
 builder.Services.AddScoped<TradingEngineApiClient>();
 builder.Services.AddScoped<InstrumentListState>();
 builder.Services.AddSingleton<IUiClock>(SystemUiClock.Instance);

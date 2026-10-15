@@ -105,31 +105,44 @@ In a private browser window:
 
 ## Investigating a reported HTTP 500
 
-Every failure response now carries a `traceId` extension in its problem
-JSON (including the generic `server.internal_error` body written by the
-exception handler). Quote it, then correlate:
+Every failure response produced by the app carries a `traceId` extension
+in its problem JSON, including the generic `server.internal_error` body
+written by the exception handler. When a W3C `Activity` is in flight the
+value is its full traceparent (`00-<trace-id>-<span-id>-01`); otherwise it
+falls back to `HttpContext.TraceIdentifier`, an opaque per-request ID that
+is only searchable in app request logs — not in Application Insights.
+Responses produced before the app runs (Easy Auth `401`s, platform-level
+`403`s, container/startup failures) are platform responses with no app
+`traceId` at all.
 
-1. In Application Insights → Logs, find the request by timestamp and
-   `resultCode == 500`; its `operation_Id` equals the `traceId` suffix.
+To correlate a W3C `traceId`, use the **second** segment — the trace id —
+which equals Application Insights `operation_Id`:
 
-   ```kusto
-   union requests, dependencies, exceptions
-   | where operation_Id == "<operation-id>"
-   | order by timestamp asc
-   ```
-2. Classify: a `dependencies` SQL call that failed or timed out means SQL
-   connectivity/resume; an `exceptions` row gives the sanitized type
-   (`customDimensions["exception.original_type"]`); a missing SQL
-   dependency with a schema error suggests a pending migration; no
-   application rows at all means the request never reached the app
-   (platform/startup — check container logs via `az webapp log tail`).
+```kusto
+union requests, dependencies, exceptions
+| where operation_Id == "<second segment of 00-<trace-id>-<span-id>-01>"
+| order by timestamp asc
+```
 
-The first-call 500 that resolves on retry is consistent with the
-serverless database resuming from auto-pause — the resume can exceed the
-SQL connect timeout on the very first request. A later success is **not**
-proof of a cold start either way; confirm against the dependency row
-before treating the cause as resolved. Record `unresolved` when no
-operation rows exist for the failing window.
+Then classify what you find, carefully:
+
+- A `dependencies` SQL row that failed or timed out is evidence for SQL
+  connectivity or resume-from-pause — nothing weaker than that row
+  proves it.
+- An `exceptions` row gives the sanitized type
+  (`customDimensions["exception.original_type"]`).
+- A missing SQL dependency together with a schema error suggests a
+  pending migration.
+- No application rows at all means the request never reached the app
+  (platform/startup — check container logs via `az webapp log tail`);
+  absence of telemetry cannot prove whether the request arrived, so do
+  not treat it as evidence for any specific cause.
+
+The reported initial-delayed-500 observation remains **unresolved**
+unless logs for that window show the failing request and dependency. A
+later success, a successful SQL call, or a missing telemetry row each
+prove nothing about the original cause on their own. Record the incident
+as `unresolved` when no operation rows exist for the failing window.
 
 ## Diagnosing a stale `/version`
 
@@ -186,13 +199,21 @@ Sequencing:
    `concurrencyToken`; `POST /api/watched-instruments/bulk-delete`
    accepts `{"items":[{"instrumentId":"…","concurrencyToken":"…"}]}`.
 
-Rollback limitations: rolling back the migration recreates the
-unconditional unique index, which **fails** if any deleted instrument
-still shares a business key with an active re-registration. Reversing
-the migration therefore requires either purging those deleted rows or
-accepting the filtered index staying in place; deploy rollback of the
-code alone always works because `DeletedAt` is nullable and ignored by
-the old build.
+Rollback limitations — a code-only rollback to a **pre-deletion build is
+not safe**: the old build ignores `DeletedAt`, so logically deleted
+instruments reappear in the catalogue, resume monitoring eligibility and
+accept edits, and the unconditional-read paths treat them as active.
+Rolling back the schema instead (dropping `DeletedAt`) **erases the
+deletion state** and recreates the unconditional unique index, which
+**fails** if any deleted instrument shares a business key with an active
+re-registration. Never purge deleted rows or their revision history as an
+automatic rollback action — that history is the audit trail.
+
+Preferred recovery: roll **forward** with a fix, or deploy a
+deletion-aware build. If instruments were already re-exposed by a
+code-only rollback, stop monitoring operations first and follow an
+approved recovery plan before any data repair. The upgrade sequence is
+always schema-first, then code; the reverse order is never safe.
 
 Manual acceptance (synthetic records only, disposable/local database):
 

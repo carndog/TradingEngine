@@ -80,4 +80,60 @@ public sealed class DefinitionEditModelTests
             Assert.That(model.ResistanceZones, Is.Empty);
         });
     }
+
+    [Test]
+    public void DescribeChangesAgainst_IdenticalModel_ReportsIdentical()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        DefinitionEditModel latest = model.Clone();
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.That(summary, Does.Contain("identical"));
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_DifferentPriceScale_ReportsScaleChange()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.PriceScale = 4;
+        DefinitionEditModel latest = model.Clone();
+        latest.PriceScale = 6;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.That(summary, Does.Contain("price scale 4 → 6"));
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_ZoneBoundsChanged_ReportsZoneDetail()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Id = "support-a";
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones[0].Lower = 80m;
+        latest.SupportZones[0].Upper = 110m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.That(summary, Does.Contain("support zone 'support-a' changed"));
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_ZoneAdded_ReportsZoneCountChange()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        DefinitionEditModel latest = model.Clone();
+        latest.AddResistanceZone();
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.That(summary, Does.Contain("resistance zones 0 → 1"));
+    }
 }

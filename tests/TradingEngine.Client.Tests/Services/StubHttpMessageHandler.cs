@@ -10,6 +10,8 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
 
     public IReadOnlyList<HttpMethod> Methods => _methods;
 
+    public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? Fallback { get; set; }
+
     private readonly List<HttpMethod> _methods = [];
 
     public void Enqueue(HttpResponseMessage response)
@@ -32,6 +34,11 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
         if (_handlers.Count > 0)
         {
             return _handlers.Dequeue()(request, cancellationToken);
+        }
+
+        if (Fallback is not null)
+        {
+            return Fallback(request, cancellationToken);
         }
 
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

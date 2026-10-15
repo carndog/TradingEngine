@@ -98,6 +98,7 @@ else if (_result is not null)
                         <input type="checkbox"
                                @ref="_headerCheckbox"
                                checked="@AllPageRowsSelected"
+                               disabled="@_loading"
                                @onchange="OnHeaderToggled"
                                aria-label="Select all instruments on this page">
                     </th>
@@ -115,6 +116,7 @@ else if (_result is not null)
                         <td data-label="Select" class="te-select">
                             <input type="checkbox"
                                    checked="@_selected.ContainsKey(item.Id)"
+                                   disabled="@_loading"
                                    @onchange="args => ToggleSelection(item, (bool)args.Value!)"
                                    aria-label="Select @item.Symbol on @item.Exchange in @item.QuoteCurrency">
                         </td>
@@ -196,6 +198,8 @@ else if (_result is not null)
     private IReadOnlyList<WatchedInstrumentSummaryDto>? _confirmItems;
     private ApiError? _deleteError;
     private bool _deleteBusy;
+    private int _deleteOperation;
+    private CancellationTokenSource? _deleteCts;
     private string? _notice;
     private ElementReference _headerCheckbox;
     private ElementReference _deleteSelectedButton;
@@ -257,7 +261,7 @@ else if (_result is not null)
         _pageSize = PageSizes.Contains(RequestedPageSize) ? RequestedPageSize : 25;
         int page = Page < 1 ? 1 : Page;
 
-        ClearSelection();
+        InvalidateSelection();
 
         ListState.ListUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
         _focusId = ListState.SelectedId;
@@ -391,6 +395,7 @@ else if (_result is not null)
 
     private void NavigateToQuery(bool replace)
     {
+        InvalidateSelection();
         Navigation.NavigateTo(BuildUrl(_searchText, 1, _pageSize), replace: replace);
     }
 
@@ -399,23 +404,31 @@ else if (_result is not null)
         if (int.TryParse(args.Value?.ToString(), out int size))
         {
             _pageSize = size;
+            InvalidateSelection();
             Navigation.NavigateTo(BuildUrl(_searchText, 1, size), replace: true);
         }
     }
 
     private void GoToPage(int page)
     {
+        InvalidateSelection();
         Navigation.NavigateTo(BuildUrl(_searchText, page, _pageSize));
     }
 
     private void OpenInstrument(Guid id)
     {
+        InvalidateSelection();
         ListState.SelectedId = id;
         Navigation.NavigateTo($"instruments/{id}");
     }
 
     private void ToggleSelection(WatchedInstrumentSummaryDto item, bool selected)
     {
+        if (_loading)
+        {
+            return;
+        }
+
         if (selected)
         {
             _selected[item.Id] = item;
@@ -430,7 +443,7 @@ else if (_result is not null)
 
     private void OnHeaderToggled(ChangeEventArgs args)
     {
-        if (_result is null)
+        if (_result is null || _loading)
         {
             return;
         }
@@ -438,26 +451,50 @@ else if (_result is not null)
         bool selectAll = args.Value is bool flag ? flag : AllPageRowsSelected is false;
         foreach (WatchedInstrumentSummaryDto item in PageItems)
         {
-            ToggleSelection(item, selectAll);
+            if (selectAll)
+            {
+                _selected[item.Id] = item;
+            }
+            else
+            {
+                _selected.Remove(item.Id);
+            }
         }
+
+        _notice = null;
     }
 
-    private void ClearSelection()
+    private void InvalidateSelection()
     {
         _selected.Clear();
         _confirmItems = null;
         _deleteError = null;
-        _deleteBusy = false;
+        _deleteCts?.Cancel();
     }
 
     private void OpenConfirmation()
     {
-        if (_selected.Count == 0 || _deleteBusy)
+        if (_selected.Count == 0 || _deleteBusy || _loading)
         {
             return;
         }
 
-        _confirmItems = _selected.Values.ToArray();
+        HashSet<Guid> pageIds = PageItems.Select(item => item.Id).ToHashSet();
+        IReadOnlyList<WatchedInstrumentSummaryDto> snapshot = _selected.Values
+            .Where(item => pageIds.Contains(item.Id))
+            .ToArray();
+        _selected.Clear();
+        foreach (WatchedInstrumentSummaryDto item in snapshot)
+        {
+            _selected[item.Id] = item;
+        }
+
+        if (_selected.Count == 0)
+        {
+            return;
+        }
+
+        _confirmItems = snapshot;
         _deleteError = null;
         _notice = null;
     }
@@ -471,53 +508,85 @@ else if (_result is not null)
 
     private async Task ConfirmDeleteAsync()
     {
-        if (_confirmItems is null || _deleteBusy)
+        if (_confirmItems is null || _deleteBusy || _loading)
         {
+            return;
+        }
+
+        IReadOnlyList<WatchedInstrumentSummaryDto> snapshot = _confirmItems;
+        HashSet<Guid> pageIds = PageItems.Select(item => item.Id).ToHashSet();
+        if (snapshot.Any(item => pageIds.Contains(item.Id) is false))
+        {
+            _confirmItems = null;
+            _notice = "The selection no longer matches the current page. Reselect and try again.";
+            await OnParametersSetAsync();
             return;
         }
 
         _deleteBusy = true;
         _deleteError = null;
         _notice = null;
+        int operation = ++_deleteOperation;
 
-        BulkDeleteWatchedInstrumentItemDto[] items = _confirmItems
-            .Select(item => new BulkDeleteWatchedInstrumentItemDto(
-                item.Id,
-                item.ConcurrencyToken))
-            .ToArray();
+        _deleteCts?.Cancel();
+        _deleteCts?.Dispose();
+        _deleteCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        CancellationTokenSource operationCts = _deleteCts;
 
-        ApiResult<BulkDeleteWatchedInstrumentsResponse> outcome =
-            await Api.BulkDeleteInstrumentsAsync(
-                new BulkDeleteWatchedInstrumentsRequest(items),
-                _lifetime.Token);
-
-        _deleteBusy = false;
-
-        if (outcome.IsSuccess)
+        try
         {
-            BulkDeleteWatchedInstrumentsResponse body = outcome.Value!;
-            int deleted = body.DeletedIds.Count;
-            int alreadyRemoved = body.AlreadyDeletedIds.Count;
-            _notice = $"Deleted {deleted} {ItemNoun(deleted)}."
-                + (alreadyRemoved > 0
-                    ? $" {alreadyRemoved} {ItemNoun(alreadyRemoved)} had already been removed."
-                    : string.Empty);
-            _confirmItems = null;
-            _selected.Clear();
-            _deleteFocusPending = true;
-            await OnParametersSetAsync();
-            return;
-        }
+            BulkDeleteWatchedInstrumentItemDto[] items = snapshot
+                .Select(item => new BulkDeleteWatchedInstrumentItemDto(
+                    item.Id,
+                    item.ConcurrencyToken))
+                .ToArray();
 
-        ApiError failure = outcome.Error!;
-        if (RequiresReselection(failure))
+            ApiResult<BulkDeleteWatchedInstrumentsResponse> outcome =
+                await Api.BulkDeleteInstrumentsAsync(
+                    new BulkDeleteWatchedInstrumentsRequest(items),
+                    operationCts.Token);
+
+            if (operation != _deleteOperation || operationCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (outcome.IsSuccess)
+            {
+                BulkDeleteWatchedInstrumentsResponse body = outcome.Value!;
+                int deleted = body.DeletedIds.Count;
+                int alreadyRemoved = body.AlreadyDeletedIds.Count;
+                _notice = $"Deleted {deleted} {ItemNoun(deleted)}."
+                    + (alreadyRemoved > 0
+                        ? $" {alreadyRemoved} {ItemNoun(alreadyRemoved)} had already been removed."
+                        : string.Empty);
+                _confirmItems = null;
+                _selected.Clear();
+                _deleteFocusPending = true;
+                await OnParametersSetAsync();
+                return;
+            }
+
+            ApiError failure = outcome.Error!;
+            if (RequiresReselection(failure))
+            {
+                _notice = "The selection changed on the server. The page was refreshed — reselect and try again.";
+                await OnParametersSetAsync();
+                return;
+            }
+
+            _deleteError = failure;
+        }
+        catch (OperationCanceledException) when (operationCts.IsCancellationRequested)
         {
-            _notice = "The selection changed on the server. The page was refreshed — reselect and try again.";
-            await OnParametersSetAsync();
-            return;
         }
-
-        _deleteError = failure;
+        finally
+        {
+            if (operation == _deleteOperation)
+            {
+                _deleteBusy = false;
+            }
+        }
     }
 
     private static bool RequiresReselection(ApiError error)
@@ -565,6 +634,8 @@ else if (_result is not null)
         _debounce?.Dispose();
         _slowTimer?.Cancel();
         _slowTimer?.Dispose();
+        _deleteCts?.Cancel();
+        _deleteCts?.Dispose();
         _lifetime.Cancel();
         _lifetime.Dispose();
     }

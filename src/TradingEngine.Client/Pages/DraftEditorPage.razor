@@ -49,16 +49,23 @@ else
         <div class="te-fields">
             <label>
                 Proposed start (UTC, optional)
-                <input type="datetime-local" step="1" value="@_proposedFrom.Text"
+                <input type="datetime-local" step="0.001" value="@_proposedFrom.Text"
                        @onchange="args => _proposedFrom.Set(args.Value?.ToString())"
                        aria-label="Proposed effective from UTC">
             </label>
             <label>
                 Proposed end (UTC, optional)
-                <input type="datetime-local" step="1" value="@_proposedTo.Text"
+                <input type="datetime-local" step="0.001" value="@_proposedTo.Text"
                        @onchange="args => _proposedTo.Set(args.Value?.ToString())"
                        aria-label="Proposed effective to UTC">
             </label>
+            @if (_proposedFrom.HasSubMillisecondBaseline || _proposedTo.HasSubMillisecondBaseline)
+            {
+                <p class="te-note">
+                    Stored values @(_proposedFrom.HasSubMillisecondBaseline ? _proposedFrom.BaselinePreciseLabel : string.Empty)@(_proposedFrom.HasSubMillisecondBaseline && _proposedTo.HasSubMillisecondBaseline ? " / " : string.Empty)@(_proposedTo.HasSubMillisecondBaseline ? _proposedTo.BaselinePreciseLabel : string.Empty)
+                    — the picker edits to millisecond precision; leaving a field untouched keeps its stored value exactly.
+                </p>
+            }
             <label>
                 Change reason
                 <input @bind="_reason" @bind:event="oninput" maxlength="500"
@@ -94,7 +101,7 @@ else
                             OnDiscard="DiscardTimelineConflict"
                             OnReapply="ReapplyTimelineConflictAsync">
                 <LatestSummary>
-                    Timeline now has @_timelineConflict.Latest?.Revisions.Count revisions.
+                    Timeline now: @_timelineConflictSummary
                 </LatestSummary>
             </ConflictNotice>
         }
@@ -118,7 +125,8 @@ else
                         Busy="@_busy"
                         Error="@_pendingError"
                         OnConfirm="ConfirmPendingAsync"
-                        OnCancel="CancelPendingAsync" />
+                        OnCancel="CancelPendingAsync"
+                        OnInputChanged="OnPendingInputChanged" />
 }
 
 <DirtyGuard IsDirty="@AnyDirty" />
@@ -176,7 +184,29 @@ else
                 return string.Empty;
             }
 
-            return $"reason '{latest.ChangeReason ?? "—"}', proposed {UtcTimes.FormatRange(latest.ProposedEffectiveFrom, latest.ProposedEffectiveTo)}";
+            string definition = latest.Definition is null
+                ? "no definition"
+                : DefinitionEditModel.FromDto(latest.Definition).DescribeChangesAgainst(_definition);
+            return $"reason '{latest.ChangeReason ?? "—"}', proposed {UtcTimes.FormatRange(latest.ProposedEffectiveFrom, latest.ProposedEffectiveTo)}; {definition}";
+        }
+    }
+
+    private string _timelineConflictSummary
+    {
+        get
+        {
+            MonitoringRuleTimelineResponse? timeline = _timelineConflict.Latest;
+            if (timeline is null)
+            {
+                return string.Empty;
+            }
+
+            MonitoringRuleRevisionDto? newest = timeline.Revisions
+                .OrderByDescending(revision => revision.CreatedAt)
+                .FirstOrDefault();
+            return newest is null
+                ? $"{timeline.Revisions.Count} revisions"
+                : $"{timeline.Revisions.Count} revisions; newest '{newest.ChangeReason ?? "—"}' {UtcTimes.FormatRange(newest.EffectiveFrom, newest.EffectiveTo)}";
         }
     }
 
@@ -311,8 +341,13 @@ else
     {
     }
 
-    private void BeginApply()
+    private async Task BeginApply()
     {
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
+            return;
+        }
+
         _pending = new PendingAction(PendingActionKind.Apply, _draft!, _token)
         {
             To = new UtcTimeField(_draft!.ProposedEffectiveTo)
@@ -321,8 +356,13 @@ else
         _notice = null;
     }
 
-    private void BeginSchedule()
+    private async Task BeginSchedule()
     {
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
+            return;
+        }
+
         _pending = new PendingAction(PendingActionKind.Schedule, _draft!, _token)
         {
             From = new UtcTimeField(_draft!.ProposedEffectiveFrom),
@@ -332,11 +372,33 @@ else
         _notice = null;
     }
 
-    private void BeginDelete()
+    private async Task BeginDelete()
     {
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
+            return;
+        }
+
         _pending = new PendingAction(PendingActionKind.DeleteDraft, _draft!, _token);
         _pendingError = null;
         _notice = null;
+    }
+
+    private void OnPendingInputChanged()
+    {
+        StateHasChanged();
+    }
+
+    private async Task<bool> ConfirmDiscardPendingInputAsync()
+    {
+        if (_pending?.HasInput == true)
+        {
+            return await JS.InvokeAsync<bool>(
+                "confirm",
+                "Discard the times you entered for the current action?");
+        }
+
+        return true;
     }
 
     private async Task CancelPendingAsync()

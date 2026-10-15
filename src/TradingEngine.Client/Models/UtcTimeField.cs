@@ -12,6 +12,12 @@ public sealed class UtcTimeField
 
     public DateTimeOffset? Baseline { get; private set; }
 
+    public bool HasSubMillisecondBaseline => UtcTimes.HasSubMillisecondTicks(Baseline);
+
+    public string BaselinePreciseLabel => Baseline is null
+        ? string.Empty
+        : UtcTimes.FormatPrecise(Baseline.Value);
+
     public string Text { get; private set; }
 
     public bool Modified { get; private set; }

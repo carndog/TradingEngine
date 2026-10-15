@@ -54,6 +54,28 @@ public sealed class WatchedInstrumentDeletionMigrationTests
             await command.ExecuteNonQueryAsync();
         }
 
+        Guid ruleId = Guid.NewGuid();
+        Guid revisionId = Guid.NewGuid();
+        await using (SqlConnection connection = new(ConnectionString()))
+        {
+            await connection.OpenAsync();
+            await using SqlCommand command = connection.CreateCommand();
+            command.CommandText =
+                "INSERT INTO MonitoringRules (Id, WatchedInstrumentId, CreatedAt) " +
+                "VALUES (@ruleId, @instrumentId, '2026-01-02T09:30:00.0000000'); " +
+                "INSERT INTO MonitoringRuleRevisions " +
+                "(Id, MonitoringRuleId, RevisionNumber, CreatedAt, CreatedBy, " +
+                "ChangeReason, DefinitionXml, EffectiveFrom, EffectiveTo, " +
+                "ProposedFrom, ProposedTo) " +
+                "VALUES (@revisionId, @ruleId, 1, '2026-01-02T09:30:00.0000000', " +
+                "'synthetic-user', 'legacy revision', '<definition scale=\"4\" />', " +
+                "'2026-01-02T10:00:00.0000000', NULL, NULL, NULL)";
+            command.Parameters.AddWithValue("@ruleId", ruleId);
+            command.Parameters.AddWithValue("@instrumentId", InstrumentId);
+            command.Parameters.AddWithValue("@revisionId", revisionId);
+            await command.ExecuteNonQueryAsync();
+        }
+
         await using (TradingEngineDbContext context = CreateContext())
         {
             await context.Database.MigrateAsync();
@@ -111,6 +133,24 @@ public sealed class WatchedInstrumentDeletionMigrationTests
                 "'2026-01-03T09:30:00.0000000', '2026-01-03T09:30:00.0000000')";
             reRegister.Parameters.AddWithValue("@id", Guid.NewGuid());
             Assert.That(await reRegister.ExecuteNonQueryAsync(), Is.EqualTo(1));
+        }
+
+        await using (SqlCommand history = verify.CreateCommand())
+        {
+            history.CommandText =
+                "SELECT r.RevisionNumber, r.ChangeReason, r.DefinitionXml " +
+                "FROM MonitoringRuleRevisions r " +
+                "JOIN MonitoringRules m ON m.Id = r.MonitoringRuleId " +
+                "WHERE m.WatchedInstrumentId = @id";
+            history.Parameters.AddWithValue("@id", InstrumentId);
+            await using SqlDataReader reader = await history.ExecuteReaderAsync();
+            Assert.That(await reader.ReadAsync(), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(reader.GetInt32(0), Is.EqualTo(1));
+                Assert.That(reader.GetString(1), Is.EqualTo("legacy revision"));
+                Assert.That(reader.GetString(2), Does.Contain("definition"));
+            });
         }
     }
 

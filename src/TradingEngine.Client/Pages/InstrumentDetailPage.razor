@@ -56,7 +56,14 @@ else
 
     @if (_refreshFaulted)
     {
-        <div class="te-alert te-warn" role="status">Background refresh paused after an unexpected error. <button type="button" @onclick="ReloadAllAsync">Refresh now</button></div>
+        <div class="te-alert te-warn" role="status">
+            @RefreshFailureText
+            <button type="button" @onclick="ReloadAllAsync">Refresh now</button>
+            @if (_refreshError?.IsUnauthorized == true)
+            {
+                <a href="@SignInUrl">Sign in again</a>
+            }
+        </div>
     }
 
     @if (_tab == "current")
@@ -84,7 +91,8 @@ else
                                 Busy="@_pendingBusy"
                                 Error="@_pendingError"
                                 OnConfirm="ConfirmPendingAsync"
-                                OnCancel="CancelPendingAsync" />
+                                OnCancel="CancelPendingAsync"
+                                OnInputChanged="OnPendingInputChanged" />
         </DraftListPanel>
     }
 
@@ -100,7 +108,8 @@ else
                                 Busy="@_pendingBusy"
                                 Error="@_pendingError"
                                 OnConfirm="ConfirmPendingAsync"
-                                OnCancel="CancelPendingAsync" />
+                                OnCancel="CancelPendingAsync"
+                                OnInputChanged="OnPendingInputChanged" />
         </TimelinePanel>
     }
 
@@ -137,6 +146,7 @@ else
     private CancellationTokenSource? _loadCts;
     private bool _refreshLoopStarted;
     private bool _refreshFaulted;
+    private ApiError? _refreshError;
     private bool _headingFocusPending;
     private readonly CancellationTokenSource _lifetime = new();
 
@@ -166,6 +176,29 @@ else
         _ => "remove"
     };
 
+    private string RefreshFailureText
+    {
+        get
+        {
+            if (_refreshError is null)
+            {
+                return "Background refresh paused after an unexpected error.";
+            }
+
+            if (_refreshError.IsUnauthorized)
+            {
+                return "Background refresh failed — your session may have expired. Your current input is kept.";
+            }
+
+            if (_refreshError.IsNotFound)
+            {
+                return "Background refresh failed — this instrument no longer exists or was deleted. Your current input is kept.";
+            }
+
+            return "Background refresh failed. Your current input is kept.";
+        }
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         _tab = TabQuery is "drafts" or "timeline" or "settings" ? TabQuery : "current";
@@ -186,6 +219,8 @@ else
             _pendingConflict.Take();
             _notice = null;
             _nextBoundary = null;
+            _refreshError = null;
+            _refreshFaulted = false;
             await ReloadAllAsync();
         }
     }
@@ -222,15 +257,26 @@ else
 
             if (settings.IsFailure)
             {
+                if (_settings is null)
+                {
+                    _fatal = settings.Error!.IsNotFound
+                        ? ApiError.Create(404, "instrument.not_found",
+                            "This instrument does not exist or was removed.", null)
+                        : settings.Error;
+                    return;
+                }
 
-                _fatal = settings.Error!.IsNotFound
+                _refreshError = settings.Error!.IsNotFound
                     ? ApiError.Create(404, "instrument.not_found",
                         "This instrument does not exist or was removed.", null)
                     : settings.Error;
+                _refreshFaulted = true;
                 return;
             }
 
             _settings = settings.Value;
+            _refreshError = null;
+            _refreshFaulted = false;
 
             Task<ApiResult<MonitoringRuleTimelineResponse>> timelineTask =
                 Api.GetTimelineAsync(Id, cancellation);
@@ -296,11 +342,16 @@ else
         _notice = "Settings saved.";
     }
 
-    internal void BeginApply(MonitoringRuleRevisionDto draft)
+    internal async Task BeginApply(MonitoringRuleRevisionDto draft)
     {
         if (_timeline is null)
         {
             _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
             return;
         }
 
@@ -312,11 +363,16 @@ else
         _notice = null;
     }
 
-    internal void BeginSchedule(MonitoringRuleRevisionDto draft)
+    internal async Task BeginSchedule(MonitoringRuleRevisionDto draft)
     {
         if (_timeline is null)
         {
             _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
             return;
         }
 
@@ -329,11 +385,16 @@ else
         _notice = null;
     }
 
-    internal void BeginDeleteDraft(MonitoringRuleRevisionDto draft)
+    internal async Task BeginDeleteDraft(MonitoringRuleRevisionDto draft)
     {
         if (_timeline is null)
         {
             _notice = "Timeline is still loading — try again shortly.";
+            return;
+        }
+
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
             return;
         }
 
@@ -342,7 +403,7 @@ else
         _notice = null;
     }
 
-    internal void BeginRemoveRevision(MonitoringRuleRevisionDto revision)
+    internal async Task BeginRemoveRevision(MonitoringRuleRevisionDto revision)
     {
         if (_timeline is null)
         {
@@ -350,9 +411,31 @@ else
             return;
         }
 
+        if (await ConfirmDiscardPendingInputAsync() is false)
+        {
+            return;
+        }
+
         _pending = new PendingAction(PendingActionKind.RemoveRevision, revision, _timeline.ConcurrencyToken);
         _pendingError = null;
         _notice = null;
+    }
+
+    private void OnPendingInputChanged()
+    {
+        StateHasChanged();
+    }
+
+    private async Task<bool> ConfirmDiscardPendingInputAsync()
+    {
+        if (_pending?.HasInput == true)
+        {
+            return await JS.InvokeAsync<bool>(
+                "confirm",
+                "Discard the times you entered for the current action?");
+        }
+
+        return true;
     }
 
     private ApiError? ResolvePendingInputs(

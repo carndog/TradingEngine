@@ -35,7 +35,9 @@ WebApplication app = builder.Build();
 
 app.UseExceptionHandler(handler =>
     handler.Run(context =>
-        ApiProblemDetails.InternalError(context.TraceIdentifier).ExecuteAsync(context)));
+        ApiProblemDetails.InternalError(
+                System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier)
+            .ExecuteAsync(context)));
 
 app.UseWhen(
     context => context.Request.Path.StartsWithSegments("/health/database"),

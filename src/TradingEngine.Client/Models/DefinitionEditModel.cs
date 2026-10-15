@@ -57,6 +57,55 @@ public sealed class DefinitionEditModel
             && first.Zip(second, (left, right) => left.SameContent(right)).All(equal => equal);
     }
 
+    public string Describe()
+    {
+        return $"{SupportZones.Count} support / {ResistanceZones.Count} resistance zones, price scale {PriceScale}";
+    }
+
+    public string DescribeChangesAgainst(DefinitionEditModel current)
+    {
+        if (SameContent(current))
+        {
+            return "definition identical to your edit";
+        }
+
+        List<string> parts = [];
+        if (PriceScale != current.PriceScale)
+        {
+            parts.Add($"price scale {current.PriceScale} → {PriceScale}");
+        }
+
+        parts.AddRange(ZoneDiffs("support", current.SupportZones, SupportZones));
+        parts.AddRange(ZoneDiffs("resistance", current.ResistanceZones, ResistanceZones));
+
+        return parts.Count == 0 ? "definition differs" : string.Join("; ", parts);
+    }
+
+    private static IEnumerable<string> ZoneDiffs(
+        string kind,
+        IReadOnlyList<ZoneEditModel> current,
+        IReadOnlyList<ZoneEditModel> latest)
+    {
+        if (current.Count != latest.Count)
+        {
+            yield return $"{kind} zones {current.Count} → {latest.Count}";
+        }
+
+        int shared = Math.Min(current.Count, latest.Count);
+        for (int index = 0; index < shared; index++)
+        {
+            ZoneEditModel before = current[index];
+            ZoneEditModel after = latest[index];
+            if (before.SameContent(after))
+            {
+                continue;
+            }
+
+            string label = string.IsNullOrWhiteSpace(after.Id) ? $"#{index + 1}" : $"'{after.Id}'";
+            yield return $"{kind} zone {label} changed to {after.Lower}–{after.Upper} around {after.Level}";
+        }
+    }
+
     public static DefinitionEditModel Empty()
     {
         return new DefinitionEditModel();

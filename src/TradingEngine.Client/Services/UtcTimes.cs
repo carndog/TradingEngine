@@ -36,10 +36,18 @@ public static class UtcTimes
         }
 
         DateTime utc = value.Value.UtcDateTime;
-        string format = utc.Ticks % TimeSpan.TicksPerSecond == 0
+        long truncatedTicks = utc.Ticks - utc.Ticks % TimeSpan.TicksPerMillisecond;
+        string format = truncatedTicks % TimeSpan.TicksPerSecond == 0
             ? "yyyy-MM-dd'T'HH:mm:ss"
-            : "yyyy-MM-dd'T'HH:mm:ss.fffffff";
-        return utc.ToString(format, CultureInfo.InvariantCulture);
+            : "yyyy-MM-dd'T'HH:mm:ss.fff";
+        return new DateTime(truncatedTicks, DateTimeKind.Utc)
+            .ToString(format, CultureInfo.InvariantCulture);
+    }
+
+    public static bool HasSubMillisecondTicks(DateTimeOffset? value)
+    {
+        return value is not null
+            && value.Value.UtcDateTime.Ticks % TimeSpan.TicksPerMillisecond != 0;
     }
 
     public static bool TryParseInput(string? value, out DateTimeOffset? result)

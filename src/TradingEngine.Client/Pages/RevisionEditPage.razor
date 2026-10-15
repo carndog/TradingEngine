@@ -55,10 +55,14 @@ else
         <div class="te-fields te-two">
             <label>
                 Effective from (UTC)
-                <input type="datetime-local" step="1" value="@_effectiveFrom.Text"
+                <input type="datetime-local" step="0.001" value="@_effectiveFrom.Text"
                        @onchange="args => _effectiveFrom.Set(args.Value?.ToString())"
                        aria-label="Effective from UTC">
             </label>
+            @if (_effectiveFrom.HasSubMillisecondBaseline)
+            {
+                <p class="te-note">Stored value @_effectiveFrom.BaselinePreciseLabel — the picker edits to millisecond precision; leaving the field untouched keeps the stored value exactly.</p>
+            }
             <label>
                 Change reason
                 <input @bind="_reason" @bind:event="oninput" maxlength="500"
@@ -84,7 +88,7 @@ else
                             OnReapply="ReapplyConflictAsync">
                 <LatestSummary>
                     Latest revision: starts @UtcTimes.Format(_conflict.Latest?.Revision.EffectiveFrom),
-                    reason '@(_conflict.Latest?.Revision.ChangeReason ?? "—")'.
+                    reason '@(_conflict.Latest?.Revision.ChangeReason ?? "—")'; @_conflictDefinitionSummary.
                     Your input is kept — choose whether to adopt the latest version or reapply yours.
                 </LatestSummary>
             </ConflictNotice>
@@ -130,6 +134,21 @@ else
         _definition.SameContent(_definitionBaseline) is false
         || _reason != _reasonBaseline
         || _effectiveFrom.Modified;
+
+    private string _conflictDefinitionSummary
+    {
+        get
+        {
+            MonitoringRuleRevisionDto? latest = _conflict.Latest?.Revision;
+            if (latest?.Definition is null)
+            {
+                return "no definition";
+            }
+
+            return DefinitionEditModel.FromDto(latest.Definition)
+                .DescribeChangesAgainst(_definition);
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {

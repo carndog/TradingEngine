@@ -12,10 +12,14 @@
             <p>This draft becomes the current configuration immediately.</p>
             <label style="max-width:260px">
                 Effective until (UTC, optional)
-                <input type="datetime-local" step="1" value="@Action.To?.Text"
-                       @onchange="args => Action.To?.Set(args.Value?.ToString())"
+                <input type="datetime-local" step="0.001" value="@Action.To?.Text"
+                       @onchange="OnToChanged"
                        aria-label="Effective until UTC">
             </label>
+            @if (Action.To?.HasSubMillisecondBaseline == true)
+            {
+                <p class="te-note">Stored value @Action.To.BaselinePreciseLabel — leaving the field untouched keeps it exactly.</p>
+            }
         </ConfirmPanel>
     }
     else if (Action.Kind == PendingActionKind.Schedule)
@@ -31,17 +35,24 @@
             <div class="te-fields te-two">
                 <label>
                     Effective from (UTC)
-                    <input type="datetime-local" step="1" value="@Action.From?.Text"
-                           @onchange="args => Action.From?.Set(args.Value?.ToString())"
+                    <input type="datetime-local" step="0.001" value="@Action.From?.Text"
+                           @onchange="OnFromChanged"
                            aria-label="Effective from UTC">
                 </label>
                 <label>
                     Effective until (UTC, optional)
-                    <input type="datetime-local" step="1" value="@Action.To?.Text"
-                           @onchange="args => Action.To?.Set(args.Value?.ToString())"
+                    <input type="datetime-local" step="0.001" value="@Action.To?.Text"
+                           @onchange="OnToChanged"
                            aria-label="Effective until UTC">
                 </label>
             </div>
+            @if (Action.From?.HasSubMillisecondBaseline == true || Action.To?.HasSubMillisecondBaseline == true)
+            {
+                <p class="te-note">
+                    Stored values @(Action.From?.HasSubMillisecondBaseline == true ? Action.From.BaselinePreciseLabel : string.Empty)@(Action.From?.HasSubMillisecondBaseline == true && Action.To?.HasSubMillisecondBaseline == true ? " / " : string.Empty)@(Action.To?.HasSubMillisecondBaseline == true ? Action.To.BaselinePreciseLabel : string.Empty)
+                    — leaving a field untouched keeps its stored value exactly.
+                </p>
+            }
         </ConfirmPanel>
     }
     else if (Action.Kind == PendingActionKind.DeleteDraft)
@@ -85,4 +96,19 @@
 
     [Parameter]
     public EventCallback OnCancel { get; set; }
+
+    [Parameter]
+    public EventCallback OnInputChanged { get; set; }
+
+    private async Task OnFromChanged(ChangeEventArgs args)
+    {
+        Action?.From?.Set(args.Value?.ToString());
+        await OnInputChanged.InvokeAsync();
+    }
+
+    private async Task OnToChanged(ChangeEventArgs args)
+    {
+        Action?.To?.Set(args.Value?.ToString());
+        await OnInputChanged.InvokeAsync();
+    }
 }

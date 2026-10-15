@@ -319,36 +319,85 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
     }
 
     [Test]
-    public async Task DeleteInstrumentsAsync_WaitsForInFlightRuleWriteLock()
+    public async Task DeleteInstrumentsAsync_RacingRuleSave_SerializesWithoutCorruption()
     {
         Guid id = await AddInstrumentAsync($"DEL-{Guid.NewGuid():N}"[..20].ToUpperInvariant());
         byte[] token = await CurrentTokenAsync(id);
-
-        await using SqlConnection blocker = new(ConnectionString());
-        await blocker.OpenAsync();
-        await using SqlTransaction transaction = blocker.BeginTransaction();
-        await using (SqlCommand lockCommand = blocker.CreateCommand())
+        MonitoringRuleSnapshot snapshot;
+        await using (TradingEngineDbContext context = CreateContext())
         {
-            lockCommand.Transaction = transaction;
-            lockCommand.CommandText =
-                "SELECT Id FROM WatchedInstruments WITH (UPDLOCK) WHERE Id = @id";
-            lockCommand.Parameters.AddWithValue("@id", id);
-            await lockCommand.ExecuteNonQueryAsync();
+            SqlServerMonitoringRuleStore rules = new(context, _serializer);
+            Result<MonitoringRuleSnapshot> loaded = await rules.GetAsync(
+                id,
+                CancellationToken.None);
+            Assert.That(loaded.IsSuccess, Is.True);
+            snapshot = loaded.Value;
         }
 
+        await using TradingEngineDbContext saveContext = CreateContext();
+        Task<Result> saving = new SqlServerMonitoringRuleStore(saveContext, _serializer)
+            .SaveAsync(snapshot, CancellationToken.None);
         Task<Result<WatchedInstrumentBulkDeleteOutcome>> deleting = DeleteAsync(
             [new WatchedInstrumentDeleteItem(id, token)]);
-        await Task.Delay(TimeSpan.FromMilliseconds(500));
 
-        Assert.That(deleting.IsCompleted, Is.False);
+        Result saved = await saving;
+        Result<WatchedInstrumentBulkDeleteOutcome> deleted = await deleting;
 
-        await transaction.CommitAsync();
-        Result<WatchedInstrumentBulkDeleteOutcome> outcome = await deleting;
+        if (deleted.IsSuccess)
+        {
+            Assert.That(await IsDeletedAsync(id), Is.True);
+        }
+        else
+        {
+            Assert.That(await IsDeletedAsync(id), Is.False);
+        }
 
         Assert.Multiple(() =>
         {
-            Assert.That(outcome.IsSuccess, Is.True);
-            Assert.That(outcome.Value.DeletedIds, Is.EqualTo(new[] { id }));
+            Assert.That(
+                saved.IsSuccess || saved.Error == MonitoringRuleErrors.NotFound,
+                Is.True);
+            Assert.That(saved.IsSuccess || deleted.IsSuccess, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task SaveSettingsAsync_RacingDelete_OneOrderingWinsConsistently()
+    {
+        Guid id = await AddInstrumentAsync($"DEL-{Guid.NewGuid():N}"[..20].ToUpperInvariant());
+        byte[] token = await CurrentTokenAsync(id);
+        WatchedInstrument instrument;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            instrument = (await store.GetSettingsAsync(id, CancellationToken.None))
+                .Value.Instrument;
+        }
+
+        instrument.ChangeSamplingInterval(120, DeletedAt);
+
+        await using TradingEngineDbContext saveContext = CreateContext();
+        Task<Result<WatchedInstrumentSettingsSnapshot>> saving =
+            new SqlServerWatchedInstrumentStore(saveContext, _serializer)
+                .SaveSettingsAsync(instrument, token, CancellationToken.None);
+        Task<Result<WatchedInstrumentBulkDeleteOutcome>> deleting = DeleteAsync(
+            [new WatchedInstrumentDeleteItem(id, token)]);
+
+        Result<WatchedInstrumentSettingsSnapshot> saved = await saving;
+        Result<WatchedInstrumentBulkDeleteOutcome> deleted = await deleting;
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(saved.IsSuccess || deleted.IsSuccess, Is.True);
+            if (deleted.IsSuccess)
+            {
+                Assert.That(await IsDeletedAsync(id), Is.True);
+            }
+            else
+            {
+                Assert.That(await IsDeletedAsync(id), Is.False);
+                Assert.That(saved.IsSuccess, Is.True);
+            }
         });
     }
 

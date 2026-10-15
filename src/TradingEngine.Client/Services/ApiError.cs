@@ -7,6 +7,7 @@ public sealed class ApiError
         string? code,
         string? detail,
         TimeSpan? retryAfter,
+        DateTimeOffset? retryAfterUtc,
         bool isNetworkError,
         string? reference)
     {
@@ -14,6 +15,7 @@ public sealed class ApiError
         Code = code;
         Detail = detail;
         RetryAfter = retryAfter;
+        RetryAfterUtc = retryAfterUtc;
         IsNetworkError = isNetworkError;
         Reference = reference;
     }
@@ -25,6 +27,8 @@ public sealed class ApiError
     public string? Detail { get; }
 
     public TimeSpan? RetryAfter { get; }
+
+    public DateTimeOffset? RetryAfterUtc { get; }
 
     public bool IsNetworkError { get; }
 
@@ -51,18 +55,20 @@ public sealed class ApiError
         string? code,
         string? detail,
         TimeSpan? retryAfter,
-        string? reference = null)
+        string? reference = null,
+        DateTimeOffset? retryAfterUtc = null)
     {
-        return new ApiError(status, code, detail, retryAfter, false, reference);
+        return new ApiError(
+            status, code, detail, retryAfter, retryAfterUtc, false, reference);
     }
 
     public static ApiError Network(string detail)
     {
-        return new ApiError(0, "network.unreachable", detail, null, true, null);
+        return new ApiError(0, "network.unreachable", detail, null, null, true, null);
     }
 
     public static ApiError Unexpected(string detail, string reference)
     {
-        return new ApiError(0, "response.unexpected", detail, null, false, reference);
+        return new ApiError(0, "response.unexpected", detail, null, null, false, reference);
     }
 }

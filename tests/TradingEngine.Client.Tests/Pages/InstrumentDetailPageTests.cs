@@ -161,6 +161,253 @@ public sealed class InstrumentDetailPageTests
         });
     }
 
+    [TestCase("server", "Background refresh failed. Your current input is kept.")]
+    [TestCase("timeout", "Background refresh failed. Your current input is kept.")]
+    [TestCase("unauthorized", "session may have expired")]
+    [TestCase("notfound", "no longer exists or was deleted")]
+    public async Task BoundaryRefresh_WhenLoadFails_KeepsEditorAndInput(
+        string failure,
+        string expectedMessage)
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleRevisionDto boundary = ClientTestData.Revision(
+            Guid.NewGuid(),
+            kind: "committed",
+            revisionNumber: 2,
+            effectiveFrom: clock.UtcNow + TimeSpan.FromMilliseconds(200));
+        TaskCompletionSource<HttpResponseMessage> initial = new();
+        handler.Enqueue((_, _) => initial.Task);
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-1", boundary))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Drafts("tok-1"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.NotFound, "{}"));
+
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.Instance.RefreshInterval = TimeSpan.FromMilliseconds(10);
+        initial.SetResult(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentA, "XTEST"))));
+        await Task.Delay(400);
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(5));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Settings").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(
+                cut.FindAll("input[aria-label='Sampling interval seconds']"), Has.Count.EqualTo(1)),
+            TimeSpan.FromSeconds(2));
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Sampling interval seconds']").Input("120"));
+
+        handler.Fallback = failure switch
+        {
+            "server" => (_, _) => Task.FromResult(StubHttpMessageHandler.Json(
+                HttpStatusCode.InternalServerError, """{"detail":"down"}""")),
+            "timeout" => (_, _) => throw new TaskCanceledException(),
+            "unauthorized" => (_, _) => Task.FromResult(StubHttpMessageHandler.Json(
+                HttpStatusCode.Unauthorized, """{"detail":"expired"}""")),
+            _ => (_, _) => Task.FromResult(StubHttpMessageHandler.Json(
+                HttpStatusCode.NotFound, """{"detail":"gone"}"""))
+        };
+        Assert.That(cut.Instance.NextBoundary, Is.Not.Null);
+        int requestsBefore = handler.RequestCount;
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await Task.Delay(600);
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Instance.NextBoundary, Is.Not.Null);
+            Assert.That(handler.RequestCount, Is.GreaterThan(requestsBefore));
+        });
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Instance.RefreshFaulted, Is.True),
+            TimeSpan.FromSeconds(5));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain(expectedMessage));
+            Assert.That(cut.Markup, Does.Contain("Instrument settings"));
+            Assert.That(cut.Markup, Does.Contain("value=\"120\""));
+            Assert.That(cut.Markup, Does.Contain("Refresh now"));
+        });
+        if (failure == "unauthorized")
+        {
+            Assert.That(cut.Markup, Does.Contain("Sign in again"));
+        }
+
+        cut.Instance.RefreshInterval = TimeSpan.FromMinutes(5);
+        handler.Fallback = null;
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-3", boundary), ClientTestData.Drafts("tok-3"));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Refresh now").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Instance.RefreshFaulted, Is.False),
+            TimeSpan.FromSeconds(5));
+
+        Assert.That(cut.Markup, Does.Contain("Instrument settings"));
+    }
+
+    [Test]
+    public async Task PendingInput_WhenChanged_ImmediatelyBlocksInternalNavigation()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleRevisionDto draft = ClientTestData.Revision(Guid.NewGuid());
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-1"), ClientTestData.Drafts("tok-1", draft));
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Schedule").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Schedule draft")),
+            TimeSpan.FromSeconds(2));
+        Assert.That(cut.Instance.ActivePending!.HasInput, Is.False);
+
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Effective from UTC']")
+                .Change("2030-01-02T00:00:00"));
+
+        Assert.That(cut.Instance.ActivePending!.HasInput, Is.True);
+
+        NavigationManager nav = ctx.Services.GetRequiredService<NavigationManager>();
+        string uriBefore = nav.Uri;
+        nav.NavigateTo("http://localhost/instruments");
+        await Task.Delay(150);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(nav.Uri, Is.EqualTo(uriBefore));
+            Assert.That(
+                ctx.JSInterop.Invocations.Any(i => i.Identifier == "confirm"),
+                Is.True);
+        });
+    }
+
+    [Test]
+    public async Task BeginApply_WhenPendingHasInput_KeepsExistingPendingAction()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleRevisionDto draft = ClientTestData.Revision(Guid.NewGuid());
+        MonitoringRuleRevisionDto other = ClientTestData.Revision(Guid.NewGuid());
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-1"), ClientTestData.Drafts("tok-1", draft, other));
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").First(b => b.TextContent == "Schedule").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Schedule draft")),
+            TimeSpan.FromSeconds(2));
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Effective from UTC']")
+                .Change("2030-01-02T00:00:00"));
+
+        await cut.InvokeAsync(() => cut.Instance.BeginApply(other));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                cut.Instance.ActivePending!.Kind,
+                Is.EqualTo(PendingActionKind.Schedule));
+            Assert.That(cut.Instance.ActivePending.Revision.Id, Is.EqualTo(draft.Id));
+        });
+    }
+
+    [Test]
+    public async Task SettingsConflict_WhenDiscarded_EditorAdoptsLatestAndSaveUsesNewToken()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-1"), ClientTestData.Drafts("tok-1"));
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Settings").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(
+                cut.FindAll("input[aria-label='Sampling interval seconds']"), Has.Count.EqualTo(1)),
+            TimeSpan.FromSeconds(2));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.PreconditionFailed,
+            """{"detail":"stale","code":"watched_instrument.settings_concurrent_change"}"""));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(
+                InstrumentA, "XTEST", interval: 90, token: "tok-2"))));
+
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Sampling interval seconds']").Input("120"));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save settings").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Server now shows")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(
+                b => b.TextContent == "Use latest and discard my input").Click());
+        await Task.Delay(100);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Not.Contain("Server now shows"));
+            Assert.That(cut.Markup, Does.Contain("value=\"90\""));
+            Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes"));
+        });
+
+        string? ifMatch = null;
+        handler.Enqueue(async (request, _) =>
+        {
+            ifMatch = request.Headers.IfMatch?.ToString();
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                ClientTestData.JsonOf(ClientTestData.Settings(
+                    InstrumentA, "XTEST", interval: 130, token: "tok-3")));
+        });
+
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Sampling interval seconds']").Input("130"));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save settings").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(ifMatch, Is.Not.Null),
+            TimeSpan.FromSeconds(2));
+
+        Assert.That(ifMatch, Does.Contain("tok-2"));
+    }
+
     [Test]
     public void PendingConfirm_WithoutTimeline_ShowsNoticeInsteadOfThrowing()
     {

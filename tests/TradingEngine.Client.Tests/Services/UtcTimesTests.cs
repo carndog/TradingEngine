@@ -24,13 +24,51 @@ public sealed class UtcTimesTests
     }
 
     [Test]
-    public void ToInputValue_FractionalValue_PreservesFractionalDigits()
+    public void ToInputValue_SubMillisecondValue_TruncatesToMilliseconds()
     {
-        DateTimeOffset value = DateTimeOffset.Parse("2026-10-07T10:11:12.9999999Z");
+        DateTimeOffset value = DateTimeOffset.Parse("2026-10-07T10:11:12.1234567Z");
 
         string input = UtcTimes.ToInputValue(value);
 
-        Assert.That(input, Is.EqualTo("2026-10-07T10:11:12.9999999"));
+        Assert.That(input, Is.EqualTo("2026-10-07T10:11:12.123"));
+    }
+
+    [Test]
+    public void ToInputValue_MillisecondValue_EmitsThreeFractionalDigits()
+    {
+        DateTimeOffset value = DateTimeOffset.Parse("2026-10-07T10:11:12.1230000Z");
+
+        string input = UtcTimes.ToInputValue(value);
+
+        Assert.That(input, Is.EqualTo("2026-10-07T10:11:12.123"));
+    }
+
+    [Test]
+    public void ToInputValue_SubSecondZeroFraction_OmitsFractionalDigits()
+    {
+        DateTimeOffset value = DateTimeOffset.Parse("2026-10-07T10:11:12.0004000Z");
+
+        string input = UtcTimes.ToInputValue(value);
+
+        Assert.That(input, Is.EqualTo("2026-10-07T10:11:12"));
+    }
+
+    [Test]
+    public void HasSubMillisecondTicks_SubMillisecondValue_ReturnsTrue()
+    {
+        Assert.That(
+            UtcTimes.HasSubMillisecondTicks(
+                DateTimeOffset.Parse("2026-10-07T10:11:12.1234567Z")),
+            Is.True);
+    }
+
+    [Test]
+    public void HasSubMillisecondTicks_MillisecondAlignedValue_ReturnsFalse()
+    {
+        Assert.That(
+            UtcTimes.HasSubMillisecondTicks(
+                DateTimeOffset.Parse("2026-10-07T10:11:12.1230000Z")),
+            Is.False);
     }
 
     [Test]

@@ -17,20 +17,29 @@ public sealed class TradingEngineApiClient
     private readonly HttpClient _http;
     private readonly TimeSpan _requestTimeout;
     private readonly TimeSpan[] _readRetryDelays;
+    private readonly IUiClock _clock;
+    private readonly SessionState? _sessionState;
 
-    public TradingEngineApiClient(HttpClient http)
-        : this(http, DefaultRequestTimeout, DefaultReadRetryDelays)
+    public TradingEngineApiClient(
+        HttpClient http,
+        SessionState sessionState,
+        IUiClock clock)
+        : this(http, DefaultRequestTimeout, DefaultReadRetryDelays, clock, sessionState)
     {
     }
 
     internal TradingEngineApiClient(
         HttpClient http,
         TimeSpan requestTimeout,
-        TimeSpan[] readRetryDelays)
+        TimeSpan[] readRetryDelays,
+        IUiClock? clock = null,
+        SessionState? sessionState = null)
     {
         _http = http;
         _requestTimeout = requestTimeout;
         _readRetryDelays = readRetryDelays;
+        _clock = clock ?? SystemUiClock.Instance;
+        _sessionState = sessionState;
     }
 
     public Task<ApiResult<WatchedInstrumentPageResponse>> SearchInstrumentsAsync(
@@ -289,6 +298,7 @@ public sealed class TradingEngineApiClient
         bounded.CancelAfter(_requestTimeout);
 
         int retries = method == HttpMethod.Get ? _readRetryDelays.Length : 0;
+        DateTimeOffset started = _clock.UtcNow;
 
         for (int attempt = 0; ; attempt++)
         {
@@ -305,7 +315,17 @@ public sealed class TradingEngineApiClient
                 return outcome;
             }
 
-            TimeSpan delay = BoundedDelay(outcome.Error!, attempt);
+            TimeSpan? serverDelay = ResolveServerDelay(outcome.Error!);
+            if (serverDelay is not null)
+            {
+                TimeSpan remaining = _requestTimeout - (_clock.UtcNow - started);
+                if (serverDelay.Value > remaining || serverDelay.Value > MaximumRetryDelay)
+                {
+                    return outcome;
+                }
+            }
+
+            TimeSpan delay = serverDelay ?? _readRetryDelays[attempt];
             try
             {
                 await Task.Delay(delay, bounded.Token);
@@ -348,7 +368,12 @@ public sealed class TradingEngineApiClient
                 return await ReadSuccessAsync<T>(response, boundedToken);
             }
 
-            ApiError error = await ReadErrorAsync(response, boundedToken);
+            ApiError error = await ReadErrorAsync(response, boundedToken, _clock.UtcNow);
+            if (error.IsUnauthorized || error.IsForbidden)
+            {
+                _sessionState?.Invalidate();
+            }
+
             return ApiResult<T>.Fail(error);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -411,10 +436,14 @@ public sealed class TradingEngineApiClient
 
     private static async Task<ApiError> ReadErrorAsync(
         HttpResponseMessage response,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTimeOffset receivedAt)
     {
         int status = (int)response.StatusCode;
         TimeSpan? retryAfter = response.Headers.RetryAfter?.Delta;
+        DateTimeOffset? retryAfterUtc =
+            response.Headers.RetryAfter?.Date ??
+            (retryAfter is { } delta ? receivedAt + delta : null);
 
         try
         {
@@ -428,7 +457,7 @@ public sealed class TradingEngineApiClient
                     string? detail = TryGetString(root, "detail") ?? TryGetString(root, "title");
                     string? code = TryGetString(root, "code");
                     string? traceId = TryGetString(root, "traceId");
-                    return ApiError.Create(status, code, detail, retryAfter, traceId);
+                    return ApiError.Create(status, code, detail, retryAfter, traceId, retryAfterUtc);
                 }
             }
         }
@@ -436,7 +465,7 @@ public sealed class TradingEngineApiClient
         {
         }
 
-        return ApiError.Create(status, null, null, retryAfter);
+        return ApiError.Create(status, null, null, retryAfter, retryAfterUtc: retryAfterUtc);
     }
 
     private static bool IsTransient(ApiError error)
@@ -444,10 +473,15 @@ public sealed class TradingEngineApiClient
         return error.IsNetworkError || error.Status is 408 or 429 or 500 or 502 or 503 or 504;
     }
 
-    private TimeSpan BoundedDelay(ApiError error, int attempt)
+    private TimeSpan? ResolveServerDelay(ApiError error)
     {
-        TimeSpan delay = error.RetryAfter ?? _readRetryDelays[attempt];
-        return delay > MaximumRetryDelay ? MaximumRetryDelay : delay;
+        if (error.RetryAfterUtc is DateTimeOffset retryAt)
+        {
+            TimeSpan delta = retryAt - _clock.UtcNow;
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+        }
+
+        return error.RetryAfter;
     }
 
     private static string NewReference()

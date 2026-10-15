@@ -321,10 +321,226 @@ public sealed class TradingEngineApiClientTests
         });
     }
 
+    [Test]
+    public async Task SearchInstrumentsAsync_WhenRetryAfterDeltaExceedsBudget_ReturnsErrorWithoutRetry()
+    {
+        HttpResponseMessage limited = StubHttpMessageHandler.Json(
+            (HttpStatusCode)429, """{"detail":"slow down"}""");
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            TimeSpan.FromSeconds(30));
+        _handler.Enqueue(limited);
+
+        DateTimeOffset now = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
+        TradingEngineApiClient client = CreateClient(
+            _handler,
+            retryDelays: [TimeSpan.FromMilliseconds(1)],
+            clock: new ManualUiClock(now));
+        ApiResult<WatchedInstrumentPageResponse> result =
+            await client.SearchInstrumentsAsync(null, 1, 25);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(result.Error!.Status, Is.EqualTo(429));
+            Assert.That(result.Error.RetryAfterUtc, Is.EqualTo(now.AddSeconds(30)));
+            Assert.That(_handler.RequestCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task SearchInstrumentsAsync_WhenRetryAfterDateExceedsBudget_ReturnsErrorWithoutRetry()
+    {
+        ManualUiClock clock = new(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        HttpResponseMessage limited = StubHttpMessageHandler.Json(
+            (HttpStatusCode)503, """{"detail":"unavailable"}""");
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            clock.UtcNow.AddMinutes(2));
+        _handler.Enqueue(limited);
+
+        TradingEngineApiClient client = CreateClient(
+            _handler,
+            retryDelays: [TimeSpan.FromMilliseconds(1)],
+            clock: clock);
+        ApiResult<WatchedInstrumentPageResponse> result =
+            await client.SearchInstrumentsAsync(null, 1, 25);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(result.Error!.RetryAfterUtc, Is.EqualTo(clock.UtcNow.AddMinutes(2)));
+            Assert.That(_handler.RequestCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task SearchInstrumentsAsync_WhenRetryAfterDateWithinBudget_WaitsThenRetries()
+    {
+        ManualUiClock clock = new(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        HttpResponseMessage limited = StubHttpMessageHandler.Json(
+            (HttpStatusCode)429, """{"detail":"slow down"}""");
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            clock.UtcNow.AddMilliseconds(300));
+        _handler.Enqueue(limited);
+        _handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            """{"items":[],"page":1,"pageSize":25,"totalCount":0}"""));
+
+        TradingEngineApiClient client = CreateClient(
+            _handler,
+            retryDelays: [TimeSpan.FromMilliseconds(1)],
+            clock: clock);
+        System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        ApiResult<WatchedInstrumentPageResponse> result =
+            await client.SearchInstrumentsAsync(null, 1, 25);
+        stopwatch.Stop();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(_handler.RequestCount, Is.EqualTo(2));
+            Assert.That(stopwatch.ElapsedMilliseconds, Is.GreaterThanOrEqualTo(150));
+        });
+    }
+
+    [Test]
+    public async Task SearchInstrumentsAsync_WhenRetryAfterPastDate_RetriesWithoutLongWait()
+    {
+        ManualUiClock clock = new(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        HttpResponseMessage limited = StubHttpMessageHandler.Json(
+            (HttpStatusCode)429, """{"detail":"slow down"}""");
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            clock.UtcNow.AddMinutes(-1));
+        _handler.Enqueue(limited);
+        _handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            """{"items":[],"page":1,"pageSize":25,"totalCount":0}"""));
+
+        TradingEngineApiClient client = CreateClient(
+            _handler,
+            retryDelays: [TimeSpan.FromMilliseconds(1)],
+            clock: clock);
+        ApiResult<WatchedInstrumentPageResponse> result =
+            await client.SearchInstrumentsAsync(null, 1, 25);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(_handler.RequestCount, Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public async Task SearchInstrumentsAsync_WhenRetryWaitCancelled_PropagatesCancellation()
+    {
+        ManualUiClock clock = new(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        HttpResponseMessage limited = StubHttpMessageHandler.Json(
+            (HttpStatusCode)429, """{"detail":"slow down"}""");
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            clock.UtcNow.AddMilliseconds(800));
+        _handler.Enqueue(limited);
+
+        TradingEngineApiClient client = CreateClient(
+            _handler,
+            retryDelays: [TimeSpan.FromMilliseconds(1)],
+            clock: clock);
+        using CancellationTokenSource source = new(TimeSpan.FromMilliseconds(80));
+
+        OperationCanceledException? exception = await Assert.CatchAsync<OperationCanceledException>(
+            () => client.SearchInstrumentsAsync(null, 1, 25, source.Token));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception, Is.Not.Null);
+            Assert.That(_handler.RequestCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task SearchInstrumentsAsync_WhenRetryAfterFitsMinimumButNotBudget_ReturnsError()
+    {
+        ManualUiClock clock = new(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        HttpResponseMessage limited = StubHttpMessageHandler.Json(
+            (HttpStatusCode)429, """{"detail":"slow down"}""");
+        limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            TimeSpan.FromMilliseconds(900));
+        _handler.Enqueue(limited);
+
+        TradingEngineApiClient client = CreateClient(
+            _handler,
+            requestTimeout: TimeSpan.FromMilliseconds(200),
+            retryDelays: [TimeSpan.FromMilliseconds(1)],
+            clock: clock);
+        ApiResult<WatchedInstrumentPageResponse> result =
+            await client.SearchInstrumentsAsync(null, 1, 25);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(_handler.RequestCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task GetInstrumentAsync_WhenUnauthorized_RaisesSessionInvalidated()
+    {
+        SessionState session = new();
+        int invalidated = 0;
+        session.Invalidated += () => invalidated++;
+
+        _handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.Unauthorized,
+            """{"detail":"missing","code":"authentication.principal_required"}"""));
+        TradingEngineApiClient client = CreateClient(_handler, sessionState: session);
+
+        ApiResult<WatchedInstrumentResponse> result =
+            await client.GetInstrumentAsync(Guid.NewGuid());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Error!.IsUnauthorized, Is.True);
+            Assert.That(invalidated, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task GetInstrumentAsync_WhenForbidden_RaisesSessionInvalidated()
+    {
+        SessionState session = new();
+        int invalidated = 0;
+        session.Invalidated += () => invalidated++;
+
+        _handler.Enqueue(StubHttpMessageHandler.Html(
+            HttpStatusCode.Forbidden, "<html>denied</html>"));
+        TradingEngineApiClient client = CreateClient(_handler, sessionState: session);
+
+        await client.GetInstrumentAsync(Guid.NewGuid());
+
+        Assert.That(invalidated, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task GetInstrumentAsync_WhenNotFound_DoesNotInvalidateSession()
+    {
+        SessionState session = new();
+        int invalidated = 0;
+        session.Invalidated += () => invalidated++;
+
+        _handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.NotFound,
+            """{"detail":"missing","code":"watched_instrument.not_found"}"""));
+        TradingEngineApiClient client = CreateClient(_handler, sessionState: session);
+
+        await client.GetInstrumentAsync(Guid.NewGuid());
+
+        Assert.That(invalidated, Is.EqualTo(0));
+    }
+
     private static TradingEngineApiClient CreateClient(
         StubHttpMessageHandler handler,
         TimeSpan? requestTimeout = null,
-        TimeSpan[]? retryDelays = null)
+        TimeSpan[]? retryDelays = null,
+        IUiClock? clock = null,
+        SessionState? sessionState = null)
     {
         HttpClient http = new(handler)
         {
@@ -334,6 +550,8 @@ public sealed class TradingEngineApiClientTests
         return new TradingEngineApiClient(
             http,
             requestTimeout ?? LongTimeout,
-            retryDelays ?? NoRetries);
+            retryDelays ?? NoRetries,
+            clock,
+            sessionState);
     }
 }

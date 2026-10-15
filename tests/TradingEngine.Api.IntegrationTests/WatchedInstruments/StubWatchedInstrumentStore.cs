@@ -22,6 +22,8 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Exception? SearchException { get; set; }
 
+    public Action? BeforeSearch { get; set; }
+
     public WatchedInstrumentRegistration? AddedRegistration { get; private set; }
 
     public Instant? RequestedAt { get; private set; }
@@ -69,6 +71,7 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         RequestedSearch = (query, page, pageSize);
+        BeforeSearch?.Invoke();
 
         if (SearchException is not null)
         {
