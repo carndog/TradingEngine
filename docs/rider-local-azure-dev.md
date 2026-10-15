@@ -47,7 +47,12 @@ Use the exact connection string format documented in
 Start the API (Rider `http` profile or `dotnet run --project
 src/TradingEngine.Api`) and check `GET http://localhost:5068/health` and
 `/version`. `/health/database` stays anonymous-only behind the probe key and
-is a deployed check.
+is a deployed check. Note the local run shares the same Azure Dev database
+as the deployed app by default — verify the actual target before any
+migration or fixture write; a local/disposable database is an optional
+alternative, never a prerequisite. Full local and deployed verification
+checklists live in
+[docs/local-and-deployed-verification.md](local-and-deployed-verification.md).
 
 ## HTTP walkthrough
 

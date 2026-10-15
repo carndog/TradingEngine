@@ -17,13 +17,22 @@ internal static class ApiProblemDetails
             _ => StatusCodes.Status500InternalServerError
         };
 
+        Dictionary<string, object?> extensions = new()
+        {
+            ["code"] = error.Code
+        };
+        if (error.Extensions is not null)
+        {
+            foreach (KeyValuePair<string, object?> extension in error.Extensions)
+            {
+                extensions[extension.Key] = extension.Value;
+            }
+        }
+
         return TypedResults.Problem(
             statusCode: statusCode,
             detail: error.Description,
-            extensions: new Dictionary<string, object?>
-            {
-                ["code"] = error.Code
-            });
+            extensions: extensions);
     }
 
     internal static ProblemHttpResult Unauthorized(string code, string detail)
@@ -45,6 +54,18 @@ internal static class ApiProblemDetails
             extensions: new Dictionary<string, object?>
             {
                 ["code"] = code
+            });
+    }
+
+    internal static ProblemHttpResult InternalError(string traceId)
+    {
+        return TypedResults.Problem(
+            statusCode: StatusCodes.Status500InternalServerError,
+            detail: "An unexpected error occurred. Quote the trace identifier when reporting this failure.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "server.internal_error",
+                ["traceId"] = traceId
             });
     }
 

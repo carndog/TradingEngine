@@ -34,3 +34,6 @@ azure-dev-target.local.psd1
 ## EF Core migration bundles
 efbundle
 efbundle.exe
+
+## Recorded acceptance walkthroughs
+*.avi

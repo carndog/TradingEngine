@@ -19,6 +19,16 @@ public sealed class ConditionEditModel
         return new ChartConditionDto(Type, ActionId.Trim());
     }
 
+    public ConditionEditModel Clone()
+    {
+        return new ConditionEditModel(Type, ActionId);
+    }
+
+    public bool SameContent(ConditionEditModel other)
+    {
+        return Type == other.Type && ActionId == other.ActionId;
+    }
+
     public static ConditionEditModel FromDto(ChartConditionDto dto)
     {
         return new ConditionEditModel(dto.Type ?? string.Empty, dto.ActionId ?? string.Empty);

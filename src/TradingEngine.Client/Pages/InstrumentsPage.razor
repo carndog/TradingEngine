@@ -13,12 +13,13 @@
     </div>
     <div class="te-row" style="gap:8px">
         <a class="te-primary" href="instruments/new" style="padding:8px 12px;border-radius:6px;text-decoration:none">Add instrument</a>
-        @if (CanSignIn)
-        {
-            <a href="signin.html">Sign in</a>
-        }
     </div>
 </div>
+
+@if (_notice is not null)
+{
+    <p class="te-small" role="status">@_notice</p>
+}
 
 <div class="te-toolbar">
     <label class="te-search">
@@ -30,25 +31,53 @@
                @onkeydown="OnSearchKeyDown"
                aria-label="Search instruments">
     </label>
+    <div class="te-row" style="gap:8px;align-items:center">
+        <span class="te-small">@SelectionStatusText</span>
+        <button type="button"
+                @ref="_deleteSelectedButton"
+                disabled="@(_selected.Count == 0 || _deleteBusy || SelectionLocked)"
+                @onclick="OpenConfirmation">Delete selected</button>
+    </div>
 </div>
 
-@if (_error is not null)
+@if (_error is not null && _result is null)
 {
     <ErrorNotice Error="@_error">
         <button type="button" @onclick="RetryAsync">Retry</button>
         @if (_error.IsUnauthorized)
         {
-            <a href="signin.html">Sign in</a>
+            <a href="@SignInUrl">Sign in again</a>
         }
     </ErrorNotice>
 }
-else if (_loading)
+else if (_result is null)
 {
     <div class="te-panel" role="status" aria-label="Loading instruments">
         <p class="te-sub">Loading instruments…</p>
+        @if (_slowLoading)
+        {
+            <p class="te-sub">Still working — the service is taking longer than usual.</p>
+        }
     </div>
 }
-else if (_result is not null && _result.TotalCount == 0)
+else
+{
+    @if (_error is not null)
+    {
+        <ErrorNotice Error="@_error">
+            <button type="button" @onclick="RetryAsync">Retry</button>
+            @if (_error.IsUnauthorized)
+            {
+                <a href="@SignInUrl">Sign in again</a>
+            }
+        </ErrorNotice>
+    }
+    @if (_loading)
+    {
+        <p class="te-small" role="status">Refreshing…</p>
+    }
+}
+@if (_result is not null && _result.TotalCount == 0)
 {
     <section class="te-panel" aria-label="No instruments">
         <h3>No instruments found</h3>
@@ -65,6 +94,14 @@ else if (_result is not null)
         <table aria-label="Watched instruments">
             <thead>
                 <tr>
+                    <th class="te-select">
+                        <input type="checkbox"
+                               @ref="_headerCheckbox"
+                               checked="@AllPageRowsSelected"
+                               disabled="@SelectionLocked"
+                               @onchange="OnHeaderToggled"
+                               aria-label="Select all instruments on this page">
+                    </th>
                     <th>Symbol</th>
                     <th>Exchange</th>
                     <th>Quote currency</th>
@@ -73,9 +110,16 @@ else if (_result is not null)
                 </tr>
             </thead>
             <tbody>
-                @foreach (WatchedInstrumentSummaryDto item in _result.Items)
+                @foreach (WatchedInstrumentSummaryDto item in PageItems)
                 {
                     <tr aria-current="@(ListState.SelectedId == item.Id ? "true" : null)">
+                        <td data-label="Select" class="te-select">
+                            <input type="checkbox"
+                                   checked="@_selected.ContainsKey(item.Id)"
+                                   disabled="@SelectionLocked"
+                                   @onchange="args => ToggleSelection(item, (bool)args.Value!)"
+                                   aria-label="Select @item.Symbol on @item.Exchange in @item.QuoteCurrency">
+                        </td>
                         <td data-label="Symbol">
                             <button type="button" class="te-open"
                                     data-record="@item.Id"
@@ -112,19 +156,55 @@ else if (_result is not null)
     </div>
 }
 
+@if (_confirmItems is not null)
+{
+    <ConfirmPanel Title="@ConfirmationTitle"
+                  ConfirmLabel="@($"Delete {_confirmItems.Count} {ItemNoun(_confirmItems.Count)}")"
+                  BusyLabel="Deleting…"
+                  Busy="@_deleteBusy"
+                  Error="@_deleteError"
+                  OnConfirm="ConfirmDeleteAsync"
+                  OnCancel="CancelConfirmation">
+        <p class="te-sub">
+            Deleting stops monitoring of @_confirmItems.Count selected
+            @ItemNoun(_confirmItems.Count) immediately. Revision and audit history
+            is retained. Drafts and revisions are not deleted.
+        </p>
+        <ul class="te-confirm-list">
+            @foreach (WatchedInstrumentSummaryDto item in _confirmItems)
+            {
+                <li>@item.Symbol · @item.Exchange · @item.QuoteCurrency</li>
+            }
+        </ul>
+    </ConfirmPanel>
+}
+
 @code {
     private static readonly int[] PageSizes = [10, 25, 50];
 
     private WatchedInstrumentPageResponse? _result;
     private ApiError? _error;
     private bool _loading = true;
+    private bool _slowLoading;
+    private bool _searchPending;
     private int _searchVersion;
     private string _searchText = string.Empty;
     private int _pageSize = 25;
+    private CancellationTokenSource? _slowTimer;
     private CancellationTokenSource? _debounce;
     private readonly CancellationTokenSource _lifetime = new();
     private Guid? _focusId;
     private bool _focusPending;
+    private readonly Dictionary<Guid, WatchedInstrumentSummaryDto> _selected = new();
+    private IReadOnlyList<WatchedInstrumentSummaryDto>? _confirmItems;
+    private ApiError? _deleteError;
+    private bool _deleteBusy;
+    private int _deleteOperation;
+    private CancellationTokenSource? _deleteCts;
+    private string? _notice;
+    private ElementReference _headerCheckbox;
+    private ElementReference _deleteSelectedButton;
+    private bool _deleteFocusPending;
 
     [SupplyParameterFromQuery(Name = "q")]
     public string? Query { get; set; }
@@ -135,13 +215,29 @@ else if (_result is not null)
     [SupplyParameterFromQuery(Name = "pageSize")]
     public int RequestedPageSize { get; set; }
 
-    private bool CanSignIn => true;
+    private string SignInUrl => AuthLinks.SignInUrl(Navigation);
+
+    private bool SelectionLocked => _loading || _searchPending;
 
     private int CurrentPage => _result?.Page ?? Math.Max(1, Page);
 
     private int TotalPages => _result is null || _result.TotalCount == 0
         ? 1
         : (int)Math.Ceiling(_result.TotalCount / (double)_result.PageSize);
+
+    private IReadOnlyList<WatchedInstrumentSummaryDto> PageItems => _result?.Items ?? [];
+
+    private bool AllPageRowsSelected => PageItems.Count > 0
+        && PageItems.All(item => _selected.ContainsKey(item.Id));
+
+    private bool SomePageRowsSelected => PageItems.Any(item => _selected.ContainsKey(item.Id));
+
+    private string SelectionStatusText => _selected.Count == 0
+        ? "0 selected on this page"
+        : $"{_selected.Count} selected on this page";
+
+    private string ConfirmationTitle =>
+        $"Delete {_confirmItems?.Count ?? 0} {ItemNoun(_confirmItems?.Count ?? 0)}?";
 
     private string RangeText
     {
@@ -152,8 +248,8 @@ else if (_result is not null)
                 return string.Empty;
             }
 
-            int first = (_result.Page - 1) * _result.PageSize + 1;
-            int last = Math.Min(_result.Page * _result.PageSize, _result.TotalCount);
+            long first = ((long)_result.Page - 1) * _result.PageSize + 1;
+            long last = Math.Min((long)_result.Page * _result.PageSize, _result.TotalCount);
             return $"Showing {first}–{last} of {_result.TotalCount} instruments";
         }
     }
@@ -163,14 +259,21 @@ else if (_result is not null)
         _searchVersion++;
         int version = _searchVersion;
         _loading = true;
+        _searchPending = false;
         _error = null;
-        _result = null;
         _searchText = Query ?? string.Empty;
         _pageSize = PageSizes.Contains(RequestedPageSize) ? RequestedPageSize : 25;
         int page = Page < 1 ? 1 : Page;
 
+        InvalidateSelection();
+
         ListState.ListUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
         _focusId = ListState.SelectedId;
+
+        if (_result is null)
+        {
+            StartSlowIndicator(version);
+        }
 
         ApiResult<WatchedInstrumentPageResponse> result = await Api.SearchInstrumentsAsync(
             _searchText,
@@ -184,6 +287,7 @@ else if (_result is not null)
         }
 
         _loading = false;
+        _slowLoading = false;
 
         if (result.IsSuccess)
         {
@@ -192,6 +296,12 @@ else if (_result is not null)
             if (_result!.TotalCount > 0 && page > TotalPages)
             {
                 Navigation.NavigateTo(BuildUrl(_searchText, TotalPages, _pageSize), replace: true);
+                return;
+            }
+
+            if (_result.TotalCount == 0 && page > 1)
+            {
+                Navigation.NavigateTo(BuildUrl(_searchText, 1, _pageSize), replace: true);
                 return;
             }
 
@@ -205,17 +315,58 @@ else if (_result is not null)
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (PageItems.Count > 0)
+        {
+            await JS.InvokeVoidAsync(
+                "teSetIndeterminate",
+                _headerCheckbox,
+                SomePageRowsSelected && AllPageRowsSelected is false);
+        }
+
         if (_focusPending && _focusId is not null)
         {
             _focusPending = false;
             await JS.InvokeVoidAsync("teFocus", $"[data-record='{_focusId}']");
             _focusId = null;
         }
+
+        if (_deleteFocusPending)
+        {
+            _deleteFocusPending = false;
+            await _deleteSelectedButton.FocusAsync();
+        }
+    }
+
+    private void StartSlowIndicator(int version)
+    {
+        _slowTimer?.Cancel();
+        _slowTimer?.Dispose();
+        _slowTimer = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _ = ShowSlowNoticeAsync(version, _slowTimer.Token);
+    }
+
+    private async Task ShowSlowNoticeAsync(int version, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            if (version == _searchVersion && _loading)
+            {
+                _slowLoading = true;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
     }
 
     private async Task OnSearchInput(ChangeEventArgs args)
     {
         _searchText = args.Value?.ToString() ?? string.Empty;
+        InvalidateSelection();
+        _searchVersion++;
+        _searchPending = true;
         _debounce?.Cancel();
         _debounce?.Dispose();
         _debounce = new CancellationTokenSource();
@@ -226,32 +377,45 @@ else if (_result is not null)
             await Task.Delay(300, debounce.Token);
             if (debounce.IsCancellationRequested is false)
             {
-                NavigateToQuery(replace: true);
+                await NavigateToQueryAsync(replace: true);
             }
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
         }
     }
 
-    private void OnSearchKeyDown(KeyboardEventArgs args)
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
     {
         if (args.Key == "Enter")
         {
             _debounce?.Cancel();
-            NavigateToQuery(replace: false);
+            await NavigateToQueryAsync(replace: false);
         }
     }
 
-    private void ClearSearch()
+    private async Task ClearSearch()
     {
         _searchText = string.Empty;
-        NavigateToQuery(replace: true);
+        await NavigateToQueryAsync(replace: true);
     }
 
-    private void NavigateToQuery(bool replace)
+    private async Task NavigateToQueryAsync(bool replace)
     {
-        Navigation.NavigateTo(BuildUrl(_searchText, 1, _pageSize), replace: replace);
+        InvalidateSelection();
+        string url = BuildUrl(_searchText, 1, _pageSize);
+        if (Navigation.ToBaseRelativePath(Navigation.Uri) == url)
+        {
+            _searchPending = false;
+            if (_loading)
+            {
+                await OnParametersSetAsync();
+            }
+
+            return;
+        }
+
+        Navigation.NavigateTo(url, replace: replace);
     }
 
     private void OnPageSizeChanged(ChangeEventArgs args)
@@ -259,24 +423,207 @@ else if (_result is not null)
         if (int.TryParse(args.Value?.ToString(), out int size))
         {
             _pageSize = size;
+            InvalidateSelection();
             Navigation.NavigateTo(BuildUrl(_searchText, 1, size), replace: true);
         }
     }
 
     private void GoToPage(int page)
     {
+        InvalidateSelection();
         Navigation.NavigateTo(BuildUrl(_searchText, page, _pageSize));
     }
 
     private void OpenInstrument(Guid id)
     {
+        InvalidateSelection();
         ListState.SelectedId = id;
         Navigation.NavigateTo($"instruments/{id}");
+    }
+
+    private void ToggleSelection(WatchedInstrumentSummaryDto item, bool selected)
+    {
+        if (SelectionLocked)
+        {
+            return;
+        }
+
+        if (selected)
+        {
+            _selected[item.Id] = item;
+        }
+        else
+        {
+            _selected.Remove(item.Id);
+        }
+
+        _notice = null;
+    }
+
+    private void OnHeaderToggled(ChangeEventArgs args)
+    {
+        if (_result is null || SelectionLocked)
+        {
+            return;
+        }
+
+        bool selectAll = args.Value is bool flag ? flag : AllPageRowsSelected is false;
+        foreach (WatchedInstrumentSummaryDto item in PageItems)
+        {
+            if (selectAll)
+            {
+                _selected[item.Id] = item;
+            }
+            else
+            {
+                _selected.Remove(item.Id);
+            }
+        }
+
+        _notice = null;
+    }
+
+    private void InvalidateSelection()
+    {
+        _selected.Clear();
+        _confirmItems = null;
+        _deleteError = null;
+        _deleteCts?.Cancel();
+    }
+
+    private void OpenConfirmation()
+    {
+        if (_selected.Count == 0 || _deleteBusy || SelectionLocked)
+        {
+            return;
+        }
+
+        HashSet<Guid> pageIds = PageItems.Select(item => item.Id).ToHashSet();
+        IReadOnlyList<WatchedInstrumentSummaryDto> snapshot = _selected.Values
+            .Where(item => pageIds.Contains(item.Id))
+            .ToArray();
+        _selected.Clear();
+        foreach (WatchedInstrumentSummaryDto item in snapshot)
+        {
+            _selected[item.Id] = item;
+        }
+
+        if (_selected.Count == 0)
+        {
+            return;
+        }
+
+        _confirmItems = snapshot;
+        _deleteError = null;
+        _notice = null;
+    }
+
+    private void CancelConfirmation()
+    {
+        _confirmItems = null;
+        _deleteError = null;
+        _deleteFocusPending = true;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_confirmItems is null || _deleteBusy || SelectionLocked)
+        {
+            return;
+        }
+
+        IReadOnlyList<WatchedInstrumentSummaryDto> snapshot = _confirmItems;
+        HashSet<Guid> pageIds = PageItems.Select(item => item.Id).ToHashSet();
+        if (snapshot.Any(item => pageIds.Contains(item.Id) is false))
+        {
+            _confirmItems = null;
+            _notice = "The selection no longer matches the current page. Reselect and try again.";
+            await OnParametersSetAsync();
+            return;
+        }
+
+        _deleteBusy = true;
+        _deleteError = null;
+        _notice = null;
+        int operation = ++_deleteOperation;
+
+        _deleteCts?.Cancel();
+        _deleteCts?.Dispose();
+        _deleteCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        CancellationTokenSource operationCts = _deleteCts;
+
+        try
+        {
+            BulkDeleteWatchedInstrumentItemDto[] items = snapshot
+                .Select(item => new BulkDeleteWatchedInstrumentItemDto(
+                    item.Id,
+                    item.ConcurrencyToken))
+                .ToArray();
+
+            ApiResult<BulkDeleteWatchedInstrumentsResponse> outcome =
+                await Api.BulkDeleteInstrumentsAsync(
+                    new BulkDeleteWatchedInstrumentsRequest(items),
+                    operationCts.Token);
+
+            if (operation != _deleteOperation || operationCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (outcome.IsSuccess)
+            {
+                BulkDeleteWatchedInstrumentsResponse body = outcome.Value!;
+                int deleted = body.DeletedIds.Count;
+                int alreadyRemoved = body.AlreadyDeletedIds.Count;
+                _notice = $"Deleted {deleted} {ItemNoun(deleted)}."
+                    + (alreadyRemoved > 0
+                        ? $" {alreadyRemoved} {ItemNoun(alreadyRemoved)} had already been removed."
+                        : string.Empty);
+                _confirmItems = null;
+                _selected.Clear();
+                _deleteFocusPending = true;
+                await OnParametersSetAsync();
+                return;
+            }
+
+            ApiError failure = outcome.Error!;
+            if (RequiresReselection(failure))
+            {
+                _notice = "The selection changed on the server. The page was refreshed — reselect and try again.";
+                await OnParametersSetAsync();
+                return;
+            }
+
+            _deleteError = failure;
+        }
+        catch (OperationCanceledException) when (operationCts.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (operation == _deleteOperation)
+            {
+                _deleteBusy = false;
+            }
+        }
+    }
+
+    private static bool RequiresReselection(ApiError error)
+    {
+        return error.IsPreconditionFailed
+            || error.IsConflict
+            || error.IsNotFound
+            || error.IsPreconditionRequired;
     }
 
     private Task RetryAsync()
     {
         return OnParametersSetAsync();
+    }
+
+    private static string ItemNoun(int count)
+    {
+        return count == 1 ? "instrument" : "instruments";
     }
 
     private static string BuildUrl(string query, int page, int pageSize)
@@ -304,6 +651,10 @@ else if (_result is not null)
     {
         _debounce?.Cancel();
         _debounce?.Dispose();
+        _slowTimer?.Cancel();
+        _slowTimer?.Dispose();
+        _deleteCts?.Cancel();
+        _deleteCts?.Dispose();
         _lifetime.Cancel();
         _lifetime.Dispose();
     }

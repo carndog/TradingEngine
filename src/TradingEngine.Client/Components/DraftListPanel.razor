@@ -1,0 +1,85 @@
+<section class="te-detail-card" aria-label="Draft revisions">
+    <div class="te-row">
+        <h3>Draft revisions</h3>
+        <a class="te-primary" style="padding:8px 12px;border-radius:6px;text-decoration:none"
+           href="instruments/@InstrumentId/drafts/new">+ New draft</a>
+    </div>
+    @if (Error is not null)
+    {
+        <ErrorNotice Error="@Error">
+            <button type="button" @onclick="OnRetry">Retry</button>
+            @if (Error.IsUnauthorized)
+            {
+                <a href="@SignInUrl">Sign in again</a>
+            }
+        </ErrorNotice>
+    }
+    else if (Drafts is null || Drafts.Drafts.Count == 0)
+    {
+        <p class="te-note" style="margin-top:12px">No drafts. Create one to prepare a configuration change.</p>
+    }
+    else
+    {
+        <ul class="te-history" style="margin-top:14px">
+            @foreach (MonitoringRuleRevisionDto draft in Drafts.Drafts)
+            {
+                <li>
+                    <div class="te-row">
+                        <div>
+                            <strong>Draft</strong>
+                            <div class="te-small">
+                                Created @UtcTimes.Format(draft.CreatedAt) by @draft.CreatedBy
+                                @if (string.IsNullOrWhiteSpace(draft.ChangeReason) is false)
+                                {
+                                    <text> · @draft.ChangeReason</text>
+                                }
+                            </div>
+                            @if (draft.ProposedEffectiveFrom is not null || draft.ProposedEffectiveTo is not null)
+                            {
+                                <div class="te-small">
+                                    Proposal @UtcTimes.FormatRange(draft.ProposedEffectiveFrom, draft.ProposedEffectiveTo) (nonbinding)
+                                </div>
+                            }
+                        </div>
+                        <div class="te-inline-actions">
+                            <a href="instruments/@InstrumentId/drafts/@draft.Id">Edit</a>
+                            <button type="button" @onclick="() => OnApply.InvokeAsync(draft)">Apply now</button>
+                            <button type="button" @onclick="() => OnSchedule.InvokeAsync(draft)">Schedule</button>
+                            <button type="button" @onclick="() => OnDelete.InvokeAsync(draft)">Delete</button>
+                        </div>
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+    @ChildContent
+</section>
+
+@code {
+    [Parameter]
+    public MonitoringRuleDraftsResponse? Drafts { get; set; }
+
+    [Parameter]
+    public ApiError? Error { get; set; }
+
+    [Parameter]
+    public Guid InstrumentId { get; set; }
+
+    [Parameter]
+    public string SignInUrl { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback OnRetry { get; set; }
+
+    [Parameter]
+    public EventCallback<MonitoringRuleRevisionDto> OnApply { get; set; }
+
+    [Parameter]
+    public EventCallback<MonitoringRuleRevisionDto> OnSchedule { get; set; }
+
+    [Parameter]
+    public EventCallback<MonitoringRuleRevisionDto> OnDelete { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

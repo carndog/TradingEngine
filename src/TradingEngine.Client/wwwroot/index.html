@@ -16,6 +16,9 @@
             const el = document.querySelector(selector);
             if (el) { el.focus(); }
         };
+        window.teSetIndeterminate = function (element, value) {
+            if (element) { element.indeterminate = !!value; }
+        };
     </script>
     <script src="_framework/blazor.webassembly.js"></script>
 </body>

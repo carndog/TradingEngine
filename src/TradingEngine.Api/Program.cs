@@ -4,6 +4,7 @@ using TradingEngine.Api.Authentication;
 using TradingEngine.Api.Diagnostics;
 using TradingEngine.Api.MonitoringRules;
 using TradingEngine.Api.RateLimiting;
+using TradingEngine.Api.Session;
 using TradingEngine.Api.WatchedInstruments;
 using TradingEngine.Infrastructure;
 
@@ -31,6 +32,12 @@ builder.Services
     .AddTradingEngineInfrastructure(connectionString);
 
 WebApplication app = builder.Build();
+
+app.UseExceptionHandler(handler =>
+    handler.Run(context =>
+        ApiProblemDetails.InternalError(
+                System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier)
+            .ExecuteAsync(context)));
 
 app.UseWhen(
     context => context.Request.Path.StartsWithSegments("/health/database"),
@@ -79,6 +86,7 @@ app.MapGet("/auth-check", () => TypedResults.NoContent())
 
 app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();
+app.MapSessionEndpoints();
 
 HttpMethodMetadata getAndHeadOnly = new([HttpMethods.Get, HttpMethods.Head]);
 

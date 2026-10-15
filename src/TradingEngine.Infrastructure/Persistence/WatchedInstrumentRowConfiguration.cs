@@ -48,11 +48,18 @@ internal sealed class WatchedInstrumentRowConfiguration : IEntityTypeConfigurati
             .HasColumnType("datetime2(7)")
             .HasConversion(InstantConverters.ToUtcDateTime, InstantConverters.FromUtcDateTime);
 
+        builder.Property(row => row.DeletedAt)
+            .HasColumnType("datetime2(7)")
+            .HasConversion(
+                InstantConverters.ToUtcDateTimeNullable,
+                InstantConverters.FromUtcDateTimeNullable);
+
         builder.Property(row => row.RowVersion)
             .IsRowVersion();
 
         builder.HasIndex(row => new { row.Exchange, row.Symbol, row.QuoteCurrency })
             .IsUnique()
+            .HasFilter("[DeletedAt] IS NULL")
             .HasDatabaseName("UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency");
 
         builder.ToTable(table => table.HasCheckConstraint(

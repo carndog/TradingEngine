@@ -32,6 +32,30 @@ public sealed class ZoneEditModel
             Conditions.Select(condition => condition.ToDto()).ToList());
     }
 
+    public ZoneEditModel Clone()
+    {
+        return new ZoneEditModel(
+            Kind,
+            Conditions.Select(condition => condition.Clone()).ToList())
+        {
+            Id = Id,
+            Lower = Lower,
+            Level = Level,
+            Upper = Upper
+        };
+    }
+
+    public bool SameContent(ZoneEditModel other)
+    {
+        return Kind == other.Kind
+            && Id == other.Id
+            && Lower == other.Lower
+            && Level == other.Level
+            && Upper == other.Upper
+            && Conditions.Count == other.Conditions.Count
+            && Conditions.Zip(other.Conditions, (left, right) => left.SameContent(right)).All(equal => equal);
+    }
+
     public static ZoneEditModel CreateSupport()
     {
         return new ZoneEditModel(

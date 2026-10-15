@@ -5,7 +5,7 @@
         <div class="te-fields" style="grid-template-columns:minmax(0,200px)">
             <label>
                 <span class="te-sr">Price scale</span>
-                <input type="number" min="0" max="8" @bind="Model.PriceScale" @bind:event="oninput" @onchange="NotifyChanged">
+                <input type="number" min="0" max="8" @bind="Model.PriceScale" @bind:event="oninput" @bind:after="NotifyChanged">
             </label>
         </div>
     </div>
@@ -18,7 +18,7 @@
         <p class="te-note">Each support zone requires a buy-zone and a support-loss condition.</p>
         @foreach (ZoneEditModel zone in Model.SupportZones)
         {
-            <ZoneEditor Zone="@zone" OnChanged="NotifyChanged" OnRemove="() => Model.SupportZones.Remove(zone)" />
+            <ZoneEditor Zone="@zone" OnChanged="NotifyChanged" OnRemove="() => RemoveSupport(zone)" />
         }
     </div>
 
@@ -30,7 +30,7 @@
         <p class="te-note">Each resistance zone requires a breakout condition.</p>
         @foreach (ZoneEditModel zone in Model.ResistanceZones)
         {
-            <ZoneEditor Zone="@zone" OnChanged="NotifyChanged" OnRemove="() => Model.ResistanceZones.Remove(zone)" />
+            <ZoneEditor Zone="@zone" OnChanged="NotifyChanged" OnRemove="() => RemoveResistance(zone)" />
         }
     </div>
 </div>
@@ -51,6 +51,18 @@
     private async Task AddResistance()
     {
         Model.AddResistanceZone();
+        await NotifyChanged();
+    }
+
+    private async Task RemoveSupport(ZoneEditModel zone)
+    {
+        Model.SupportZones.Remove(zone);
+        await NotifyChanged();
+    }
+
+    private async Task RemoveResistance(ZoneEditModel zone)
+    {
+        Model.ResistanceZones.Remove(zone);
         await NotifyChanged();
     }
 

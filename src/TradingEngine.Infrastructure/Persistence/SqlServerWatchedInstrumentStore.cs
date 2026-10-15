@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Storage;
 using NodaTime;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Time;
@@ -93,7 +94,9 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         CancellationToken cancellationToken)
     {
         WatchedInstrumentRow? row = await _context.WatchedInstruments
-            .SingleOrDefaultAsync(instrument => instrument.Id == instrumentId, cancellationToken);
+            .SingleOrDefaultAsync(
+                instrument => instrument.Id == instrumentId && instrument.DeletedAt == null,
+                cancellationToken);
 
         if (row is null)
         {
@@ -133,7 +136,8 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         CancellationToken cancellationToken)
     {
         IQueryable<WatchedInstrumentRow> candidates = _context.WatchedInstruments
-            .AsNoTracking();
+            .AsNoTracking()
+            .Where(instrument => instrument.DeletedAt == null);
 
         if (string.IsNullOrWhiteSpace(query) is false)
         {
@@ -145,12 +149,15 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
         int totalCount = await candidates.CountAsync(cancellationToken);
 
+        long requestedOffset = Math.Max(0L, (long)(page - 1) * pageSize);
+        int offset = requestedOffset > int.MaxValue ? int.MaxValue : (int)requestedOffset;
+
         List<WatchedInstrumentRow> rows = await candidates
             .OrderBy(instrument => instrument.Symbol.ToUpper())
             .ThenBy(instrument => instrument.Exchange.ToUpper())
             .ThenBy(instrument => instrument.QuoteCurrency.ToUpper())
             .ThenBy(instrument => instrument.Id)
-            .Skip((page - 1) * pageSize)
+            .Skip(offset)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
@@ -161,7 +168,8 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
                 row.Exchange,
                 row.QuoteCurrency,
                 ParseMonitoringState(row),
-                row.SamplingIntervalSeconds))
+                row.SamplingIntervalSeconds,
+                row.RowVersion))
             .ToArray();
 
         return new WatchedInstrumentPage(items, page, pageSize, totalCount);
@@ -173,7 +181,9 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
     {
         WatchedInstrumentRow? row = await _context.WatchedInstruments
             .AsNoTracking()
-            .SingleOrDefaultAsync(instrument => instrument.Id == instrumentId, cancellationToken);
+            .SingleOrDefaultAsync(
+                instrument => instrument.Id == instrumentId && instrument.DeletedAt == null,
+                cancellationToken);
 
         if (row is null)
         {
@@ -196,7 +206,7 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         WatchedInstrumentRow? row = await _context.WatchedInstruments
             .SingleOrDefaultAsync(candidate => candidate.Id == instrument.Id, cancellationToken);
 
-        if (row is null)
+        if (row is null || row.DeletedAt is not null)
         {
             return WatchedInstrumentErrors.SettingsNotFound;
         }
@@ -223,6 +233,95 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         return new WatchedInstrumentSettingsSnapshot(instrument, row.RowVersion);
     }
 
+    public async Task<Result<WatchedInstrumentBulkDeleteOutcome>> DeleteInstrumentsAsync(
+        IReadOnlyList<WatchedInstrumentDeleteItem> items,
+        Instant deletedAt,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        HashSet<Guid> requestedIds = items.Select(item => item.InstrumentId).ToHashSet();
+
+        await using IDbContextTransaction transaction = await _context.Database
+            .BeginTransactionAsync(cancellationToken);
+
+        List<WatchedInstrumentRow> rows = await _context.WatchedInstruments
+            .Where(row => requestedIds.Contains(row.Id))
+            .ToListAsync(cancellationToken);
+
+        Dictionary<Guid, WatchedInstrumentRow> byId = rows.ToDictionary(row => row.Id);
+
+        Guid[] unknownIds = items
+            .Where(item => byId.ContainsKey(item.InstrumentId) is false)
+            .Select(item => item.InstrumentId)
+            .ToArray();
+        if (unknownIds.Length > 0)
+        {
+            return WatchedInstrumentErrors.DeleteItemsNotFound
+                .WithExtension("instrumentIds", unknownIds);
+        }
+
+        List<Guid> alreadyDeletedIds = [];
+        List<Guid> staleIds = [];
+        List<(WatchedInstrumentRow Row, WatchedInstrumentDeleteItem Item)> pending = [];
+
+        foreach (WatchedInstrumentDeleteItem item in items)
+        {
+            WatchedInstrumentRow row = byId[item.InstrumentId];
+            if (row.DeletedAt is not null)
+            {
+                alreadyDeletedIds.Add(item.InstrumentId);
+            }
+            else if (row.RowVersion.SequenceEqual(item.ExpectedConcurrencyToken!) is false)
+            {
+                staleIds.Add(item.InstrumentId);
+            }
+            else
+            {
+                pending.Add((row, item));
+            }
+        }
+
+        if (staleIds.Count > 0)
+        {
+            return WatchedInstrumentErrors.DeleteItemsStale
+                .WithExtension("instrumentIds", staleIds.ToArray());
+        }
+
+        List<Guid> deletedIds = [];
+        foreach ((WatchedInstrumentRow row, WatchedInstrumentDeleteItem item) in pending)
+        {
+            Result<WatchedInstrument> instrument = Restore(row);
+            Result marked = instrument.Value.MarkDeleted(deletedAt);
+            if (marked.IsFailure)
+            {
+                return marked.Error;
+            }
+
+            EntityEntry<WatchedInstrumentRow> entry = _context.Entry(row);
+            entry.Property(nameof(WatchedInstrumentRow.RowVersion)).OriginalValue =
+                item.ExpectedConcurrencyToken!;
+
+            row.MonitoringState = instrument.Value.MonitoringState.ToString();
+            row.LastChangedAt = instrument.Value.LastChangedAt;
+            row.DeletedAt = instrument.Value.DeletedAt;
+            deletedIds.Add(row.Id);
+        }
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return WatchedInstrumentErrors.ConcurrentChange
+                .WithExtension("instrumentIds", deletedIds.ToArray());
+        }
+
+        return new WatchedInstrumentBulkDeleteOutcome(deletedIds, alreadyDeletedIds);
+    }
+
     private Result<WatchedInstrument> Restore(WatchedInstrumentRow row)
     {
         Result<WatchedInstrument> instrument = WatchedInstrument.Restore(
@@ -233,7 +332,8 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
             ParseMonitoringState(row),
             row.SamplingIntervalSeconds,
             row.CreatedAt,
-            row.LastChangedAt);
+            row.LastChangedAt,
+            row.DeletedAt);
 
         if (instrument.IsFailure)
         {

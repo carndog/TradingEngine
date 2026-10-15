@@ -20,6 +20,8 @@ internal sealed class WatchedInstrumentRow
 
     public Instant LastChangedAt { get; set; }
 
+    public Instant? DeletedAt { get; set; }
+
     public byte[] RowVersion { get; set; } = [];
 
     public ChartAnalysisDefinitionRow? ChartAnalysisDefinition { get; set; }

@@ -6,20 +6,20 @@
     <div class="te-fields">
         <label>
             Identifier
-            <input @bind="Zone.Id" @bind:event="oninput" @onchange="NotifyChanged"
+            <input @bind="Zone.Id" @bind:event="oninput" @bind:after="NotifyChanged"
                    placeholder="e.g. support-a" aria-label="Zone identifier" maxlength="64">
         </label>
         <label>
             Lower
-            <input type="number" step="any" @bind="Zone.Lower" @bind:event="oninput" @onchange="NotifyChanged" aria-label="Lower bound">
+            <input type="number" step="any" @bind="Zone.Lower" @bind:event="oninput" @bind:after="NotifyChanged" aria-label="Lower bound">
         </label>
         <label>
             Level
-            <input type="number" step="any" @bind="Zone.Level" @bind:event="oninput" @onchange="NotifyChanged" aria-label="Level">
+            <input type="number" step="any" @bind="Zone.Level" @bind:event="oninput" @bind:after="NotifyChanged" aria-label="Level">
         </label>
         <label>
             Upper
-            <input type="number" step="any" @bind="Zone.Upper" @bind:event="oninput" @onchange="NotifyChanged" aria-label="Upper bound">
+            <input type="number" step="any" @bind="Zone.Upper" @bind:event="oninput" @bind:after="NotifyChanged" aria-label="Upper bound">
         </label>
     </div>
     @foreach (ConditionEditModel condition in Zone.Conditions)
@@ -28,7 +28,7 @@
             <span class="te-tag">@condition.Type</span>
             <label style="flex:1;max-width:340px">
                 <span class="te-sr">@condition.Type action identifier</span>
-                <input @bind="condition.ActionId" @bind:event="oninput" @onchange="NotifyChanged"
+                <input @bind="condition.ActionId" @bind:event="oninput" @bind:after="NotifyChanged"
                        placeholder="Action identifier" aria-label="@condition.Type action identifier">
             </label>
         </div>

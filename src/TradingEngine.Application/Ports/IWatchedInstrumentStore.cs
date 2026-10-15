@@ -30,4 +30,9 @@ public interface IWatchedInstrumentStore
         WatchedInstrument instrument,
         byte[] expectedConcurrencyToken,
         CancellationToken cancellationToken);
+
+    Task<Result<WatchedInstrumentBulkDeleteOutcome>> DeleteInstrumentsAsync(
+        IReadOnlyList<WatchedInstrumentDeleteItem> items,
+        Instant deletedAt,
+        CancellationToken cancellationToken);
 }

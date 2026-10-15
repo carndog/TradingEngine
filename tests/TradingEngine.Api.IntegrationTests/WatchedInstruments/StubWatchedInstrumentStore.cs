@@ -20,6 +20,10 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Result<WatchedInstrumentSettingsSnapshot>? SaveSettingsResult { get; set; }
 
+    public Exception? SearchException { get; set; }
+
+    public Action? BeforeSearch { get; set; }
+
     public WatchedInstrumentRegistration? AddedRegistration { get; private set; }
 
     public Instant? RequestedAt { get; private set; }
@@ -29,6 +33,10 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
     public WatchedInstrument? SavedInstrument { get; private set; }
 
     public byte[]? ExpectedToken { get; private set; }
+
+    public (IReadOnlyList<WatchedInstrumentDeleteItem> Items, Instant DeletedAt)? RequestedDelete { get; private set; }
+
+    public Result<WatchedInstrumentBulkDeleteOutcome>? DeleteResult { get; set; }
 
     public StubWatchedInstrumentStore()
     {
@@ -63,6 +71,12 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         RequestedSearch = (query, page, pageSize);
+        BeforeSearch?.Invoke();
+
+        if (SearchException is not null)
+        {
+            throw SearchException;
+        }
 
         return Task.FromResult(
             SearchResult ?? new WatchedInstrumentPage([], page, pageSize, 0));
@@ -94,5 +108,19 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
         return Task.FromResult<Result<WatchedInstrumentSettingsSnapshot>>(
             new WatchedInstrumentSettingsSnapshot(instrument, [9, 9, 9, 9, 9, 9, 9, 9]));
+    }
+
+    public Task<Result<WatchedInstrumentBulkDeleteOutcome>> DeleteInstrumentsAsync(
+        IReadOnlyList<WatchedInstrumentDeleteItem> items,
+        Instant deletedAt,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RequestedDelete = (items, deletedAt);
+
+        return Task.FromResult(
+            DeleteResult ?? new WatchedInstrumentBulkDeleteOutcome(
+                items.Select(item => item.InstrumentId).ToArray(),
+                []));
     }
 }

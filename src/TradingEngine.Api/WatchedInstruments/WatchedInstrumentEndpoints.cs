@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using NodaTime;
 using TradingEngine.Application.WatchedInstruments;
+using TradingEngine.Application.WatchedInstruments.Delete;
 using TradingEngine.Application.WatchedInstruments.Read;
 using TradingEngine.Application.WatchedInstruments.Register;
 using TradingEngine.Application.WatchedInstruments.Search;
@@ -28,6 +29,7 @@ internal static class WatchedInstrumentEndpoints
         group.MapGet("/{id:guid}", GetAsync);
         group.MapGet("/{id:guid}/settings", GetSettingsAsync);
         group.MapPut("/{id:guid}/settings", PutSettingsAsync);
+        group.MapPost("/bulk-delete", BulkDeleteAsync);
 
         return group;
     }
@@ -116,6 +118,11 @@ internal static class WatchedInstrumentEndpoints
             return ApiProblemDetails.Problem(WatchedInstrumentErrors.PageSizeOutOfRange);
         }
 
+        if ((long)(requestedPage - 1) * requestedPageSize > int.MaxValue)
+        {
+            return ApiProblemDetails.Problem(WatchedInstrumentErrors.PageOutOfRange);
+        }
+
         if (query is not null && query.Length > SearchQueryMaximumLength)
         {
             return ApiProblemDetails.Problem(WatchedInstrumentErrors.SearchQueryTooLong);
@@ -200,6 +207,55 @@ internal static class WatchedInstrumentEndpoints
         return TypedResults.Ok(ToSettingsResponse(saved.Value));
     }
 
+    private static async Task<IResult> BulkDeleteAsync(
+        BulkDeleteWatchedInstrumentsRequest? request,
+        BulkDeleteWatchedInstrumentsHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || request.Items is null)
+        {
+            return ApiProblemDetails.Problem(WatchedInstrumentErrors.RequestRequired);
+        }
+
+        List<WatchedInstrumentDeleteItem> items = new(request.Items.Count);
+        List<Guid> malformedIds = [];
+        foreach (BulkDeleteWatchedInstrumentItemDto item in request.Items)
+        {
+            if (item is null)
+            {
+                malformedIds.Add(Guid.Empty);
+                continue;
+            }
+
+            if (ConcurrencyTokens.TryParseToken(item.ConcurrencyToken, out byte[] token) is false)
+            {
+                malformedIds.Add(item.InstrumentId);
+                continue;
+            }
+
+            byte[]? expected = token.Length == 0 ? null : token;
+            items.Add(new WatchedInstrumentDeleteItem(item.InstrumentId, expected));
+        }
+
+        if (malformedIds.Count > 0)
+        {
+            return ApiProblemDetails.Problem(WatchedInstrumentErrors.DeleteTokenInvalid
+                .WithExtension("instrumentIds", malformedIds.ToArray()));
+        }
+
+        Result<WatchedInstrumentBulkDeleteOutcome> outcome = await handler.HandleAsync(
+            new BulkDeleteWatchedInstruments(items),
+            cancellationToken);
+        if (outcome.IsFailure)
+        {
+            return ApiProblemDetails.Problem(outcome.Error);
+        }
+
+        return TypedResults.Ok(new BulkDeleteWatchedInstrumentsResponse(
+            outcome.Value.DeletedIds,
+            outcome.Value.AlreadyDeletedIds));
+    }
+
     private static Result<MonitoringState> MapMonitoringState(string? value)
     {
         return value switch
@@ -236,7 +292,8 @@ internal static class WatchedInstrumentEndpoints
             summary.Exchange,
             summary.QuoteCurrency,
             FormatMonitoringState(summary.MonitoringState),
-            summary.SamplingIntervalSeconds);
+            summary.SamplingIntervalSeconds,
+            ConcurrencyTokens.FormatToken(summary.ConcurrencyToken));
     }
 
     private static WatchedInstrumentSettingsResponse ToSettingsResponse(

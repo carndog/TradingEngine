@@ -1,0 +1,28 @@
+<div class="te-alert te-warn" role="alert">
+    <div>
+        <strong>Changed elsewhere</strong>
+        <div>Someone else saved a newer version first. Your input is kept unchanged.</div>
+        @if (LatestSummary is not null)
+        {
+            <div class="te-small" style="margin-top:6px">@LatestSummary</div>
+        }
+    </div>
+    <div class="te-footer" style="margin-top:10px">
+        <button type="button" @onclick="OnReapply" disabled="@Busy">Keep my input and retry</button>
+        <button type="button" @onclick="OnDiscard" disabled="@Busy">Use latest and discard my input</button>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public RenderFragment? LatestSummary { get; set; }
+
+    [Parameter]
+    public bool Busy { get; set; }
+
+    [Parameter]
+    public EventCallback OnDiscard { get; set; }
+
+    [Parameter]
+    public EventCallback OnReapply { get; set; }
+}

@@ -28,6 +28,7 @@ These are separate principals with separate jobs. None can substitute for anothe
 | `GET /version` | Anonymous (`excludedPaths`) | The deploy workflow verifies the deployed commit with an unauthenticated `curl`. Response is application name, version and commit SHA — all public-repository facts. |
 | `GET /health/database` | Anonymous (`excludedPaths`) **plus** probe key | Kept anonymous so readiness probes do not need an Entra token, but still gated by `X-Database-Probe-Key`: without the header it returns 404, with it only `{"status":"..."}`. The key stays a deploy-time secret. |
 | `GET /signin.html`, `GET /css/app.css`, `GET /favicon.ico` | Anonymous (`excludedPaths`) | The static sign-in page links to `/.auth/login/aad` so an unauthenticated user can start the Easy Auth sign-in flow without knowing the hidden URL. The page contains only branding and a provider link. |
+| `GET /api/session` | Owner allowlist | Returns the minimal session display state consumed by the client's shared authentication presentation: `{"mode":"entra","displayName":"…"}` behind a trusted principal, `{"mode":"development"}` where platform headers are not trusted (local). Anonymous callers get 401 at the platform (deployed) or from the principal middleware; non-allowlisted principals get 403 from Easy Auth. It never returns tokens, the claims list or the object identifier. |
 | `GET /auth-check`, the Blazor client shell and all `/api/**` administration endpoints | Owner allowlist | `/auth-check` returns 204 with no data when an owner request reaches the API. The client application assets (`/`, `/index.html`, `/_framework/**`, `/instruments/**`) require an authenticated session — anonymous deep links receive 401; sign in via `/signin.html` first, then revisit the link. Every non-excluded path requires an allowed principal. |
 
 `excludedPaths` entries are listed explicitly rather than relying on prefix matching, so the policy does not depend on undocumented matching behaviour.
@@ -65,7 +66,7 @@ Between the deployment (step 6 prerequisite) and the federated credential, Easy 
 
 ## Local development
 
-Easy Auth does not exist locally. `dotnet run --project src/TradingEngine.Api` serves every endpoint anonymously; `AllowAnonymous()` is accurate there and the probe-key middleware still gates `/health/database`. Local testing of the deployed policy is not possible — verification happens against the deployed app only.
+Easy Auth does not exist locally. `dotnet run --project src/TradingEngine.Api` serves every endpoint anonymously; `AllowAnonymous()` is accurate there and the probe-key middleware still gates `/health/database`. The UI reports this honestly rather than simulating a sign-in: `GET /api/session` returns `{"mode":"development"}` and the header shows `Local development`. Local testing of the deployed policy is not possible — verification happens against the deployed app only (see [local and deployed verification](local-and-deployed-verification.md)).
 
 ## Verification (deployed)
 
@@ -76,6 +77,8 @@ For Rider, set `deployedHost`, `bearerToken` and `databaseProbeKey` in `src/Trad
 | Check | Expected |
 | --- | --- |
 | `GET /auth-check` anonymously | 401 — anonymous rejected |
+| `GET /api/session` anonymously | 401 — anonymous rejected |
+| `GET /api/session` with owner session | 200 `{"mode":"entra",…}` — drives the signed-in header |
 | `GET /health`, `/version` anonymously | 200 — documented anonymous policy |
 | `GET /health/database` without probe key | 404 — probe-key gate intact |
 | `GET /auth-check` with owner session or API bearer token | 204 — request reached the API |

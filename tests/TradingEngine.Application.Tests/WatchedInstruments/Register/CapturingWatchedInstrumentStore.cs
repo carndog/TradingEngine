@@ -111,4 +111,22 @@ internal sealed class CapturingWatchedInstrumentStore : IWatchedInstrumentStore
         return Task.FromResult<Result<WatchedInstrumentSettingsSnapshot>>(
             new WatchedInstrumentSettingsSnapshot(instrument, [7, 7, 7, 7, 7, 7, 7, 7]));
     }
+
+    public Task<Result<WatchedInstrumentBulkDeleteOutcome>> DeleteInstrumentsAsync(
+        IReadOnlyList<WatchedInstrumentDeleteItem> items,
+        Instant deletedAt,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RequestedDelete = (items, deletedAt);
+
+        return Task.FromResult(
+            DeleteResult ?? new WatchedInstrumentBulkDeleteOutcome(
+                items.Select(item => item.InstrumentId).ToArray(),
+                []));
+    }
+
+    public (IReadOnlyList<WatchedInstrumentDeleteItem> Items, Instant DeletedAt)? RequestedDelete { get; private set; }
+
+    public Result<WatchedInstrumentBulkDeleteOutcome>? DeleteResult { get; set; }
 }

@@ -493,6 +493,128 @@ public sealed class WatchedInstrumentTests
     }
 
     [Test]
+    public void Restore_WithDeletedAt_ReturnsDeletedInstrument()
+    {
+        Instant lastChangedAt = CreatedAt + Duration.FromMinutes(10);
+        Instant deletedAt = lastChangedAt + Duration.FromMinutes(5);
+
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            "DEMO-1",
+            "XTEST",
+            "GBP",
+            MonitoringState.Configured,
+            60,
+            CreatedAt,
+            lastChangedAt,
+            deletedAt);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Value.IsDeleted, Is.True);
+            Assert.That(result.Value.DeletedAt, Is.EqualTo(deletedAt));
+        });
+    }
+
+    [Test]
+    public void Restore_WithDeletedBeforeCreated_ReturnsError()
+    {
+        Result<WatchedInstrument> result = WatchedInstrument.Restore(
+            InstrumentId,
+            "DEMO-1",
+            "XTEST",
+            "GBP",
+            MonitoringState.Configured,
+            60,
+            CreatedAt,
+            CreatedAt,
+            CreatedAt - Duration.FromNanoseconds(1));
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.DeletedPrecedesCreated));
+    }
+
+    [Test]
+    public void MarkDeleted_WhenActive_StopsMonitoringAndStampsDeletion()
+    {
+        WatchedInstrument instrument = CreateInstrument().Value;
+        instrument.StartMonitoring(60, CreatedAt);
+        Instant deletedAt = CreatedAt + Duration.FromMinutes(5);
+
+        Result result = instrument.MarkDeleted(deletedAt);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(instrument.IsDeleted, Is.True);
+            Assert.That(instrument.DeletedAt, Is.EqualTo(deletedAt));
+            Assert.That(instrument.MonitoringState, Is.EqualTo(MonitoringState.Configured));
+            Assert.That(instrument.LastChangedAt, Is.EqualTo(deletedAt));
+        });
+    }
+
+    [Test]
+    public void MarkDeleted_WhenAlreadyDeleted_ReturnsConflictError()
+    {
+        WatchedInstrument instrument = CreateInstrument().Value;
+        instrument.MarkDeleted(CreatedAt);
+
+        Result result = instrument.MarkDeleted(CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.AlreadyDeleted));
+    }
+
+    [Test]
+    public void MarkDeleted_WhenTimestampPrecedesLatestChange_ReturnsError()
+    {
+        WatchedInstrument instrument = CreateInstrument().Value;
+        instrument.ChangeSamplingInterval(120, CreatedAt + Duration.FromMinutes(5));
+
+        Result result = instrument.MarkDeleted(CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.ChangePrecedesLatestChange));
+    }
+
+    [Test]
+    public void StartMonitoring_WhenDeleted_ReturnsAlreadyDeletedError()
+    {
+        WatchedInstrument instrument = CreateInstrument().Value;
+        instrument.MarkDeleted(CreatedAt);
+
+        Result result = instrument.StartMonitoring(60, CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.AlreadyDeleted));
+    }
+
+    [Test]
+    public void StopMonitoring_WhenDeleted_ReturnsAlreadyDeletedError()
+    {
+        WatchedInstrument instrument = CreateInstrument().Value;
+        instrument.MarkDeleted(CreatedAt);
+
+        Result result = instrument.StopMonitoring(CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.AlreadyDeleted));
+    }
+
+    [Test]
+    public void ChangeSamplingInterval_WhenDeleted_ReturnsAlreadyDeletedError()
+    {
+        WatchedInstrument instrument = CreateInstrument().Value;
+        instrument.MarkDeleted(CreatedAt);
+
+        Result result = instrument.ChangeSamplingInterval(120, CreatedAt);
+
+        Assert.That(result.IsFailure, Is.True);
+        Assert.That(result.Error, Is.EqualTo(WatchedInstrumentErrors.AlreadyDeleted));
+    }
+
+    [Test]
     public void WatchedInstrumentFields_CanOnlyBeCreatedThroughDomainValidation()
     {
         Assert.That(
