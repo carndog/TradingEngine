@@ -195,6 +195,77 @@ public sealed class WatchedInstrumentEndpointTests
     }
 
     [Test]
+    public async Task PostWatchedInstrument_WithDigitStartingActionIdentifier_ReturnsFieldContext()
+    {
+        HttpClient client = _factory.CreateClient();
+        ChartZoneDto zone = new(
+            "support-b",
+            95m,
+            100m,
+            105m,
+            [
+                new ChartConditionDto("buy-zone", "40"),
+                new ChartConditionDto("support-loss", "publish-signal")
+            ]);
+        RegisterWatchedInstrumentRequest request = CreateRequest() with
+        {
+            SupportZones = [zone],
+            ResistanceZones = []
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            request);
+        ProblemDetails? problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(
+                ProblemCode(problem),
+                Is.EqualTo("chart_analysis.identifier_invalid_characters"));
+            Assert.That(problem!.Detail, Does.Contain("action identifier"));
+            Assert.That(problem.Detail, Does.Contain("buy-zone"));
+            Assert.That(problem.Detail, Does.Contain("support-b"));
+            Assert.That(problem.Detail, Does.Contain("'40'"));
+            Assert.That(_store.AddedRegistration, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task PostWatchedInstrument_WithInvalidZoneIdentifier_ReturnsZoneContext()
+    {
+        HttpClient client = _factory.CreateClient();
+        ChartZoneDto zone = new(
+            "Support B",
+            95m,
+            100m,
+            105m,
+            CreateSupportConditions());
+        RegisterWatchedInstrumentRequest request = CreateRequest() with
+        {
+            SupportZones = [zone],
+            ResistanceZones = []
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            request);
+        ProblemDetails? problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(
+                ProblemCode(problem),
+                Is.EqualTo("chart_analysis.identifier_invalid_characters"));
+            Assert.That(problem!.Detail, Does.Contain("support zone 1"));
+            Assert.That(problem.Detail, Does.Contain("'Support B'"));
+            Assert.That(_store.AddedRegistration, Is.Null);
+        });
+    }
+
+    [Test]
     public async Task PostWatchedInstrument_WithUnknownMonitoringState_ReturnsValidationProblem()
     {
         HttpClient client = _factory.CreateClient();

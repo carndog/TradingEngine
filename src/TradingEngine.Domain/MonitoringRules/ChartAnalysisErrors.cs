@@ -48,6 +48,27 @@ public static class ChartAnalysisErrors
         "chart_analysis.price_scale_out_of_range",
         "The price scale must be between 0 and 8.");
 
+    public static Error IdentifierRequiredIn(string subject)
+    {
+        return Error.Validation(
+            "chart_analysis.identifier_required",
+            $"{subject} is required.");
+    }
+
+    public static Error IdentifierExceedsMaximumLengthIn(string subject)
+    {
+        return Error.Validation(
+            "chart_analysis.identifier_exceeds_maximum_length",
+            $"{subject} cannot exceed 64 characters.");
+    }
+
+    public static Error IdentifierInvalidCharactersIn(string subject, string? value)
+    {
+        return Error.Validation(
+            "chart_analysis.identifier_invalid_characters",
+            $"{subject} '{value}' must start with a lowercase ASCII letter and contain only lowercase ASCII letters, digits, periods and hyphens.");
+    }
+
     public static Error InvalidConditionOrder(
         string zoneDescription,
         IReadOnlyList<ChartConditionType> requiredOrder)

@@ -27,7 +27,7 @@
         <div class="te-row" style="justify-content:flex-start;gap:14px">
             <span class="te-tag">@condition.Type</span>
             <label style="flex:1;max-width:340px">
-                <span class="te-sr">@condition.Type action identifier</span>
+                <span class="te-small">@condition.Type action identifier</span>
                 <input @bind="condition.ActionId" @bind:event="oninput" @bind:after="NotifyChanged"
                        placeholder="Action identifier" aria-label="@condition.Type action identifier">
             </label>
