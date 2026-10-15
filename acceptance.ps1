@@ -415,6 +415,7 @@ COMMIT TRAN
     function Install-FetchTap {
         Invoke-Js @'
             window.__apiCalls = [];
+            if (window.__fetchTapped) { 'already'; } else { window.__fetchTapped = true;
             (function(of){ window.fetch = function(u,o){
                 const s = (typeof u === 'string') ? u : (u && u.url) || '';
                 const m = (o && o.method) || 'GET';
@@ -425,6 +426,7 @@ COMMIT TRAN
                 return of.apply(this, arguments).then(function(r){ rec.status = r.status; return r; },
                     function(e){ rec.status = -1; throw e; });
             }; })(window.fetch);
+            }
             'patched'
 '@ -AwaitPromise $false | Out-Null
     }
@@ -497,7 +499,7 @@ COMMIT TRAN
             (Invoke-Js "location.href.indexOf('q=') >= 0" -AwaitPromise $false) -eq $true)
 
         Invoke-Js "history.back(); 'ok'" -AwaitPromise $false | Out-Null
-        Wait-For 'back restores prior URL' "location.href.indexOf('q=') < 0 && location.href.indexOf('page=41') >= 0" -TimeoutSec 15
+        Wait-For 'back restores prior URL' "location.href.indexOf('q=') < 0 && location.href.indexOf('page=$totalPages') >= 0" -TimeoutSec 15
         Wait-For 'back restores prior page' "(document.querySelector('.te-page-label')||{textContent:''}).textContent.trim() === 'Page $totalPages of $totalPages'" -TimeoutSec 15
         Check 'browser back restores list state and URL' $true
 
@@ -539,7 +541,7 @@ COMMIT TRAN
     Invoke-Js "document.querySelector('table tbody input[type=checkbox]').click(); 'ok'" -AwaitPromise $false | Out-Null
     Wait-For 'row re-selected' "document.querySelector('.te-toolbar .te-small').textContent.trim() === '1 selected on this page'"
     Set-InputValue "input[type=search]" "$Symbol-x"
-    Wait-For 'pending lock disables rows' "Array.from(document.querySelectorAll('tbody input[type=checkbox]')).every(c => c.disabled)" -TimeoutSec 5
+    Wait-For 'pending lock disables rows' "document.querySelectorAll('tbody input[type=checkbox]').length > 0 && Array.from(document.querySelectorAll('tbody input[type=checkbox]')).every(c => c.disabled)" -TimeoutSec 5
     Check 'row checkboxes disabled during pending search' $true
     Check 'selection cleared on new input' (
         (Invoke-Js "document.querySelector('.te-toolbar .te-small').textContent.trim()" -AwaitPromise $false) -eq '0 selected on this page')
@@ -581,7 +583,10 @@ COMMIT TRAN
         Press-Key 'Tab' 'Tab' 9
     }
     Write-Host "  -- tab order: $($tabStops -join ' -> ')"
-    Check 'keyboard tab moves focus through controls' ($tabStops.Count -gt 0 -and ($tabStops | Where-Object { $_ -match 'Select|Delete|Search' }).Count -ge 2)
+    $distinctStops = @($tabStops | Select-Object -Unique)
+    Check 'keyboard tab moves focus through controls' (
+        $distinctStops.Count -ge 3 -and
+        ($distinctStops | Where-Object { $_ -match 'Select|Delete' }).Count -ge 2)
 
     # --- instrument detail: tabs and drafts ---
     $symbolUpper = $Symbol.ToUpperInvariant()
@@ -763,6 +768,6 @@ finally {
 }
 
 if ($script:cleanupFailures.Count -gt 0) {
-    exit 2
+    exit 200
 }
 exit @($script:results | Where-Object { $_.Result -eq 'FAIL' }).Count

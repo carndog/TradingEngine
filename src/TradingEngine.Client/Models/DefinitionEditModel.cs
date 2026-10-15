@@ -153,6 +153,7 @@ public sealed class DefinitionEditModel
             }
 
             usedCurrent[currentIndex] = true;
+            usedLatest[latestIndex] = true;
             foreach (string diff in DescribeZoneChange(kind, current[currentIndex], latest[latestIndex], latestIndex))
             {
                 yield return diff;

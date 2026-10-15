@@ -392,6 +392,32 @@ public sealed class DefinitionEditModelTests
     }
 
     [Test]
+    public void DescribeChangesAgainst_ConsumedLatestZone_DoesNotContestLaterPairing()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Level = 95m;
+        model.SupportZones[0].Upper = 100m;
+        model.AddSupportZone();
+        model.SupportZones[1].Lower = 90m;
+        model.SupportZones[1].Level = 95m;
+        model.SupportZones[1].Upper = 110m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones[0].Conditions[0].ActionId = "changed-action";
+        latest.SupportZones[1].Upper = 111m;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("bounds 90–110 around 95 → 90–111 around 95"));
+            Assert.That(summary, Does.Not.Contain("added"));
+            Assert.That(summary, Does.Not.Contain("removed"));
+        });
+    }
+
+    [Test]
     public void DescribeChangesAgainst_DuplicateZoneIds_PairsEachZoneOnce()
     {
         DefinitionEditModel model = DefinitionEditModel.Empty();

@@ -380,7 +380,7 @@ else if (_result is not null)
                 await NavigateToQueryAsync(replace: true);
             }
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
         }
     }
