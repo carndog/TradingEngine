@@ -12,13 +12,13 @@ internal static class ChartAnalysisMapping
         IReadOnlyList<ChartZoneDto>? supportZones,
         IReadOnlyList<ChartZoneDto>? resistanceZones)
     {
-        Result<ChartZone[]> support = MapZones(supportZones);
+        Result<ChartZone[]> support = MapZones("support", supportZones);
         if (support.IsFailure)
         {
             return support.Error;
         }
 
-        Result<ChartZone[]> resistance = MapZones(resistanceZones);
+        Result<ChartZone[]> resistance = MapZones("resistance", resistanceZones);
         if (resistance.IsFailure)
         {
             return resistance.Error;
@@ -38,7 +38,7 @@ internal static class ChartAnalysisMapping
             definition.ResistanceZones.Select(ToDto).ToArray());
     }
 
-    private static Result<ChartZone[]> MapZones(IReadOnlyList<ChartZoneDto>? zones)
+    private static Result<ChartZone[]> MapZones(string kind, IReadOnlyList<ChartZoneDto>? zones)
     {
         if (zones is null)
         {
@@ -46,9 +46,9 @@ internal static class ChartAnalysisMapping
         }
 
         List<ChartZone> mapped = new(zones.Count);
-        foreach (ChartZoneDto zone in zones)
+        for (int index = 0; index < zones.Count; index++)
         {
-            Result<ChartZone> result = MapZone(zone);
+            Result<ChartZone> result = MapZone(kind, index + 1, zones[index]);
             if (result.IsFailure)
             {
                 return result.Error;
@@ -60,7 +60,7 @@ internal static class ChartAnalysisMapping
         return mapped.ToArray();
     }
 
-    private static Result<ChartZone> MapZone(ChartZoneDto? zone)
+    private static Result<ChartZone> MapZone(string kind, int position, ChartZoneDto? zone)
     {
         if (zone is null)
         {
@@ -70,10 +70,10 @@ internal static class ChartAnalysisMapping
         Result<ChartAnalysisIdentifier> id = ChartAnalysisIdentifier.From(zone.Id);
         if (id.IsFailure)
         {
-            return id.Error;
+            return DescribeIdentifierError(id.Error, $"The {kind} zone {position} identifier", zone.Id);
         }
 
-        Result<ChartCondition[]> conditions = MapConditions(zone.Conditions);
+        Result<ChartCondition[]> conditions = MapConditions(zone.Id!, zone.Conditions);
         if (conditions.IsFailure)
         {
             return conditions.Error;
@@ -82,7 +82,7 @@ internal static class ChartAnalysisMapping
         return ChartZone.Create(id.Value, zone.Lower, zone.Level, zone.Upper, conditions.Value);
     }
 
-    private static Result<ChartCondition[]> MapConditions(IReadOnlyList<ChartConditionDto>? conditions)
+    private static Result<ChartCondition[]> MapConditions(string zoneId, IReadOnlyList<ChartConditionDto>? conditions)
     {
         if (conditions is null)
         {
@@ -90,9 +90,9 @@ internal static class ChartAnalysisMapping
         }
 
         List<ChartCondition> mapped = new(conditions.Count);
-        foreach (ChartConditionDto condition in conditions)
+        foreach (ChartConditionDto? condition in conditions)
         {
-            Result<ChartCondition> result = MapCondition(condition);
+            Result<ChartCondition> result = MapCondition(zoneId, condition);
             if (result.IsFailure)
             {
                 return result.Error;
@@ -104,7 +104,7 @@ internal static class ChartAnalysisMapping
         return mapped.ToArray();
     }
 
-    private static Result<ChartCondition> MapCondition(ChartConditionDto condition)
+    private static Result<ChartCondition> MapCondition(string zoneId, ChartConditionDto? condition)
     {
         if (condition is null)
         {
@@ -120,10 +120,28 @@ internal static class ChartAnalysisMapping
         Result<ChartAnalysisIdentifier> actionId = ChartAnalysisIdentifier.From(condition.ActionId);
         if (actionId.IsFailure)
         {
-            return actionId.Error;
+            return DescribeIdentifierError(
+                actionId.Error,
+                $"The action identifier on the {condition.Type} condition of zone '{zoneId}'",
+                condition.ActionId);
         }
 
         return ChartCondition.Create(type.Value, actionId.Value);
+    }
+
+    private static Error DescribeIdentifierError(Error error, string subject, string? value)
+    {
+        if (error == ChartAnalysisErrors.IdentifierRequired)
+        {
+            return ChartAnalysisErrors.IdentifierRequiredIn(subject);
+        }
+
+        if (error == ChartAnalysisErrors.IdentifierExceedsMaximumLength)
+        {
+            return ChartAnalysisErrors.IdentifierExceedsMaximumLengthIn(subject);
+        }
+
+        return ChartAnalysisErrors.IdentifierInvalidCharactersIn(subject, value);
     }
 
     private static Result<ChartConditionType> MapConditionType(string? value)
