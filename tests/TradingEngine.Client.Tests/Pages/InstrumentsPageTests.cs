@@ -65,6 +65,26 @@ public sealed class InstrumentsPageTests
                 .Contains(id == FirstId ? "AAA" : id == SecondId ? "BBB" : "CCC"));
     }
 
+    private static async Task WaitForMarkupAsync(
+        IRenderedComponent<InstrumentsPage> cut,
+        string expected,
+        int timeoutMilliseconds = 5000)
+    {
+        long deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (cut.Markup.Contains(expected))
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+            await cut.InvokeAsync(() => { });
+        }
+
+        Assert.That(cut.Markup, Does.Contain(expected));
+    }
+
     [Test]
     public async Task RowCheckbox_SelectingRow_ShowsSelectionStatus()
     {
@@ -99,9 +119,9 @@ public sealed class InstrumentsPageTests
         StubHttpMessageHandler handler = new();
         using BunitContext ctx = CreateContext(handler);
         ctx.Services.GetRequiredService<NavigationManager>()
-            .NavigateTo("http://localhost/instruments?page=2&pageSize=2");
+            .NavigateTo("http://localhost/instruments?page=2&pageSize=10");
         IRenderedComponent<InstrumentsPage> cut = RenderPage(ctx, handler,
-            PageJson(2, 2, 5, Item(ThirdId, "CCC", "tok-c")));
+            PageJson(2, 10, 11, Item(ThirdId, "CCC", "tok-c")));
 
         cut.Find("thead input[type='checkbox']").Change(true);
         await Task.Delay(50);
@@ -171,6 +191,49 @@ public sealed class InstrumentsPageTests
         {
             Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
             Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+        });
+    }
+
+    [Test]
+    public async Task SearchInput_BeforeDebounceCompletes_ClearsSelectionAndConfirmation()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 2, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(1, 25, 1, Item(ThirdId, "CCC", "tok-c"))));
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("AAA")),
+            TimeSpan.FromSeconds(5));
+
+        RowCheckbox(cut, FirstId).Change(true);
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("1 selected on this page")),
+            TimeSpan.FromSeconds(5));
+        cut.FindAll("button").Single(b => b.TextContent == "Delete selected").Click();
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Delete 1 instrument?")),
+            TimeSpan.FromSeconds(5));
+
+        await cut.InvokeAsync(() =>
+        {
+            cut.Find("input[type='search']").Input("CC");
+            Assert.Multiple(() =>
+            {
+                Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+                Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
+                Assert.That(handler.RequestCount, Is.EqualTo(1));
+            });
+        });
+
+        await WaitForMarkupAsync(cut, "CCC");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
+            Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
         });
     }
 
@@ -409,35 +472,34 @@ public sealed class InstrumentsPageTests
     {
         StubHttpMessageHandler handler = new();
         handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
-            PageJson(1, 2, 3, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+            PageJson(1, 10, 11, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
         TaskCompletionSource<HttpResponseMessage> gated = new();
         handler.Enqueue((_, _) => gated.Task);
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            PageJson(2, 10, 11, Item(ThirdId, "CCC", "tok-c"))));
         using BunitContext ctx = CreateContext(handler);
         ctx.Services.GetRequiredService<NavigationManager>()
-            .NavigateTo("http://localhost/instruments?pageSize=2");
+            .NavigateTo("http://localhost/instruments?pageSize=10");
         IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("AAA")),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(5));
 
         RowCheckbox(cut, FirstId).Change(true);
-        await Task.Delay(50);
-        Assert.That(cut.Markup, Does.Contain("1 selected on this page"));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("1 selected on this page")),
+            TimeSpan.FromSeconds(5));
 
         cut.FindAll("button").Single(b => b.TextContent == "Next").Click();
-        await Task.Delay(50);
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("0 selected on this page")),
+            TimeSpan.FromSeconds(5));
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(cut.Markup, Does.Contain("0 selected on this page"));
-            Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
-        });
+        Assert.That(cut.Markup, Does.Not.Contain("Delete 1 instrument?"));
 
         gated.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
-            PageJson(2, 2, 3, Item(ThirdId, "CCC", "tok-c"))));
-        cut.WaitForAssertion(
-            () => Assert.That(cut.Markup, Does.Contain("CCC")),
-            TimeSpan.FromSeconds(2));
+            PageJson(2, 10, 11, Item(ThirdId, "CCC", "tok-c"))));
+        await WaitForMarkupAsync(cut, "CCC");
 
         Assert.Multiple(() =>
         {
@@ -453,14 +515,14 @@ public sealed class InstrumentsPageTests
     {
         StubHttpMessageHandler handler = new();
         handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
-            PageJson(1, 2, 3, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
+            PageJson(1, 10, 11, Item(FirstId, "AAA", "tok-a"), Item(SecondId, "BBB", "tok-b"))));
         TaskCompletionSource<HttpResponseMessage> gatedDelete = new();
         handler.Enqueue((_, _) => gatedDelete.Task);
         handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
-            PageJson(2, 2, 3, Item(ThirdId, "CCC", "tok-c"))));
+            PageJson(2, 10, 11, Item(ThirdId, "CCC", "tok-c"))));
         using BunitContext ctx = CreateContext(handler);
         ctx.Services.GetRequiredService<NavigationManager>()
-            .NavigateTo("http://localhost/instruments?pageSize=2");
+            .NavigateTo("http://localhost/instruments?pageSize=10");
         IRenderedComponent<InstrumentsPage> cut = ctx.Render<InstrumentsPage>();
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("AAA")),
@@ -474,14 +536,16 @@ public sealed class InstrumentsPageTests
         await Task.Delay(50);
 
         ctx.Services.GetRequiredService<NavigationManager>()
-            .NavigateTo("http://localhost/instruments?page=2&pageSize=2");
+            .NavigateTo("http://localhost/instruments?page=2&pageSize=10");
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("CCC")),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(5));
 
         gatedDelete.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
             ClientTestData.JsonOf(new BulkDeleteWatchedInstrumentsResponse([FirstId], []))));
-        await Task.Delay(200);
+        await Task.Delay(150);
+        await cut.InvokeAsync(() => { });
+        await cut.InvokeAsync(() => { });
 
         Assert.Multiple(() =>
         {

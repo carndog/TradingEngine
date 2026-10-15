@@ -40,7 +40,13 @@
             return;
         }
 
-        _ = InvokeAsync(ReloadAsync);
+        _ = InvokeAsync(ReloadAndRenderAsync);
+    }
+
+    private async Task ReloadAndRenderAsync()
+    {
+        await ReloadAsync();
+        StateHasChanged();
     }
 
     private async Task ReloadAsync()

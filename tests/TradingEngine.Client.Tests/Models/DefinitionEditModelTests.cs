@@ -121,19 +121,77 @@ public sealed class DefinitionEditModelTests
 
         string summary = latest.DescribeChangesAgainst(model);
 
-        Assert.That(summary, Does.Contain("support zone 'support-a' changed"));
+        Assert.That(summary, Does.Contain("support zone 'support-a' bounds 90–100 around 95 → 80–110 around 95"));
     }
 
     [Test]
-    public void DescribeChangesAgainst_ZoneAdded_ReportsZoneCountChange()
+    public void DescribeChangesAgainst_ZoneAdded_ReportsAddedZone()
     {
         DefinitionEditModel model = DefinitionEditModel.Empty();
         model.AddSupportZone();
         DefinitionEditModel latest = model.Clone();
         latest.AddResistanceZone();
+        latest.ResistanceZones[0].Id = "res-b";
+        latest.ResistanceZones[0].Lower = 105m;
+        latest.ResistanceZones[0].Upper = 115m;
+        latest.ResistanceZones[0].Level = 110m;
 
         string summary = latest.DescribeChangesAgainst(model);
 
-        Assert.That(summary, Does.Contain("resistance zones 0 → 1"));
+        Assert.That(summary, Does.Contain("resistance zone 'res-b' added (105–115 around 110)"));
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_ZoneRemoved_ReportsRemovedZone()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddSupportZone();
+        model.SupportZones[0].Id = "support-a";
+        model.SupportZones[0].Lower = 90m;
+        model.SupportZones[0].Upper = 100m;
+        model.SupportZones[0].Level = 95m;
+        DefinitionEditModel latest = model.Clone();
+        latest.SupportZones.RemoveAt(0);
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.That(summary, Does.Contain("support zone 'support-a' removed (was 90–100 around 95)"));
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_ActionChanged_ReportsActionNotBounds()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddResistanceZone();
+        model.ResistanceZones[0].Id = "res-a";
+        model.ResistanceZones[0].Lower = 105m;
+        model.ResistanceZones[0].Upper = 115m;
+        model.ResistanceZones[0].Level = 110m;
+        model.ResistanceZones[0].Conditions[0].ActionId = "old-action";
+        DefinitionEditModel latest = model.Clone();
+        latest.ResistanceZones[0].Conditions[0].ActionId = "new-action";
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("condition 'breakout' action 'old-action' → 'new-action'"));
+            Assert.That(summary, Does.Not.Contain("bounds"));
+        });
+    }
+
+    [Test]
+    public void DescribeChangesAgainst_ConditionActionEmptied_ReportsEmptyAction()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddResistanceZone();
+        model.ResistanceZones[0].Id = "res-a";
+        model.ResistanceZones[0].Conditions[0].ActionId = "old-action";
+        DefinitionEditModel latest = model.Clone();
+        latest.ResistanceZones[0].Conditions[0].ActionId = string.Empty;
+
+        string summary = latest.DescribeChangesAgainst(model);
+
+        Assert.That(summary, Does.Contain("condition 'breakout' action 'old-action' → '—'"));
     }
 }

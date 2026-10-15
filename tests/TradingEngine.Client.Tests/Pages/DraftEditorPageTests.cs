@@ -102,7 +102,7 @@ public sealed class DraftEditorPageTests
         {
             Assert.That(cut.Markup, Does.Contain("reason 'competing change'"));
             Assert.That(cut.Markup, Does.Contain("price scale 2 → 4"));
-            Assert.That(cut.Markup, Does.Contain("support zone 'support-a' changed to 80–110 around 95"));
+            Assert.That(cut.Markup, Does.Contain("support zone 'support-a' bounds 90–100 around 95 → 80–110 around 95"));
             Assert.That(cut.Markup, Does.Contain("Your input is kept"));
         });
     }

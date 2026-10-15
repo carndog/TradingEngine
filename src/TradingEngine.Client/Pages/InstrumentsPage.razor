@@ -360,6 +360,7 @@ else if (_result is not null)
     private async Task OnSearchInput(ChangeEventArgs args)
     {
         _searchText = args.Value?.ToString() ?? string.Empty;
+        InvalidateSelection();
         _debounce?.Cancel();
         _debounce?.Dispose();
         _debounce = new CancellationTokenSource();

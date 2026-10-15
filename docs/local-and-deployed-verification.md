@@ -105,15 +105,19 @@ In a private browser window:
 
 ## Investigating a reported HTTP 500
 
-Every failure response produced by the app carries a `traceId` extension
-in its problem JSON, including the generic `server.internal_error` body
-written by the exception handler. When a W3C `Activity` is in flight the
-value is its full traceparent (`00-<trace-id>-<span-id>-01`); otherwise it
-falls back to `HttpContext.TraceIdentifier`, an opaque per-request ID that
-is only searchable in app request logs — not in Application Insights.
-Responses produced before the app runs (Easy Auth `401`s, platform-level
+Only the unhandled-error response — the generic `server.internal_error`
+body written by the exception handler — carries a `traceId` extension in
+its problem JSON. Expected application failures (validation, not-found,
+conflict, rate-limit) return a `code` extension without a `traceId`, and
+responses produced before the app runs (Easy Auth `401`s, platform-level
 `403`s, container/startup failures) are platform responses with no app
-`traceId` at all.
+problem body at all.
+
+For the unhandled-error `traceId`: when a W3C `Activity` is in flight
+the value is its full traceparent (`00-<trace-id>-<span-id>-01`);
+otherwise it falls back to `HttpContext.TraceIdentifier`, an opaque
+per-request ID that is only searchable in app request logs — not in
+Application Insights.
 
 To correlate a W3C `traceId`, use the **second** segment — the trace id —
 which equals Application Insights `operation_Id`:
@@ -126,17 +130,21 @@ union requests, dependencies, exceptions
 
 Then classify what you find, carefully:
 
-- A `dependencies` SQL row that failed or timed out is evidence for SQL
-  connectivity or resume-from-pause — nothing weaker than that row
-  proves it.
+- A `dependencies` SQL row that failed or timed out proves the SQL call
+  itself failed — nothing more. Serverless resume-from-pause is only a
+  candidate when the dependency shows the pause/timeout signature of an
+  auto-paused database at the relevant time; do not infer resume from a
+  generic failed SQL call alone.
 - An `exceptions` row gives the sanitized type
   (`customDimensions["exception.original_type"]`).
 - A missing SQL dependency together with a schema error suggests a
   pending migration.
-- No application rows at all means the request never reached the app
-  (platform/startup — check container logs via `az webapp log tail`);
-  absence of telemetry cannot prove whether the request arrived, so do
-  not treat it as evidence for any specific cause.
+- No application rows at all is *consistent with* the request never
+  reaching the app (platform/startup — check container logs via
+  `az webapp log tail`), but telemetry can also be dropped, delayed or
+  unsampled; absence alone does not prove the request missed the
+  application and must not be treated as evidence for any specific
+  cause.
 
 The reported initial-delayed-500 observation remains **unresolved**
 unless logs for that window show the failing request and dependency. A
