@@ -35,12 +35,15 @@ function Check {
 if ([string]::IsNullOrWhiteSpace($LocalDb)) {
     throw 'Refusing to run: set -LocalDb or $env:TE_ACCEPTANCE_DB to the disposable local SQL connection string.'
 }
-if ($LocalDb -match 'database\.windows\.net' -or $LocalDb -notmatch '(?i)(localhost|127\.0\.0\.1|\(localdb\))') {
-    throw 'Refusing to run: -LocalDb must target a local SQL instance, not a shared/remote database.'
+$serverValue = ([regex]::Match($LocalDb, '(?i)(?:server|data source)\s*=\s*([^;]+)')).Groups[1].Value.Trim()
+$serverHost = ($serverValue -split '[,:]')[0].Trim().ToLowerInvariant()
+$allowedHosts = @('localhost', '127.0.0.1', '::1', '.', '(local)', 'te-sql')
+if ($LocalDb -match 'database\.windows\.net' -or $allowedHosts -notcontains $serverHost) {
+    throw "Refusing to run: -LocalDb server '$serverValue' is not a recognised local test instance."
 }
 
 function Invoke-LocalSql {
-    param([string]$CommandText, [hashtable]$Parameters = @{})
+    param([string]$CommandText, [hashtable]$Parameters = @{}, [switch]$NonQuery)
     $cs = [System.Data.SqlClient.SqlConnection]::new($LocalDb)
     try {
         $cs.Open()
@@ -48,6 +51,9 @@ function Invoke-LocalSql {
         $cmd.CommandText = $CommandText
         foreach ($name in $Parameters.Keys) {
             [void]$cmd.Parameters.AddWithValue($name, $Parameters[$name])
+        }
+        if ($NonQuery) {
+            return $cmd.ExecuteNonQuery()
         }
         return $cmd.ExecuteScalar()
     } finally {
@@ -72,8 +78,25 @@ function Get-LocalLiveIds {
     }
 }
 
+function Remove-TestInstrument {
+    param([string]$Id)
+    $live = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/watched-instruments?page=1&pageSize=50"
+    $mine = $live.items | Where-Object { $_.id -eq $Id } | Select-Object -First 1
+    if ($null -eq $mine) { return $false }
+    $body = @{ items = @(@{ instrumentId = $Id; concurrencyToken = $mine.concurrencyToken }) } | ConvertTo-Json -Depth 5
+    Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/watched-instruments/bulk-delete" `
+        -ContentType 'application/json' -Body $body | Out-Null
+    return $true
+}
+
 $dbName = Invoke-LocalSql 'SELECT DB_NAME()'
 Write-Host "  -- local test database verified: $dbName"
+
+$fingerprintId = [Guid]::NewGuid().ToString()
+Invoke-LocalSql -NonQuery @'
+INSERT INTO WatchedInstruments (Id, Symbol, Exchange, QuoteCurrency, MonitoringState, SamplingIntervalSeconds, CreatedAt, LastChangedAt)
+VALUES (@id, @symbol, 'XTEST', 'GBP', 'Configured', 60, @now, @now)
+'@ @{ id = [Guid]$fingerprintId; symbol = 'ZPROBE-' + $fingerprintId.Substring(0, 8); now = [DateTime]::UtcNow } | Out-Null
 
 $apiIds = [System.Collections.Generic.List[string]]::new()
 $pageNumber = 1
@@ -85,10 +108,16 @@ do {
 
 $localIds = @(Get-LocalLiveIds | Sort-Object)
 $apiIdSet = @($apiIds | Sort-Object)
-if (Compare-Object $apiIdSet $localIds) {
+if ((Compare-Object $apiIdSet $localIds) -or ($apiIds -notcontains $fingerprintId)) {
     throw 'Refusing to run: the API live-instrument set does not match the configured local database - the API may be pointed at a different database.'
 }
-Write-Host "  -- API live-instrument set matches local database ($($localIds.Count) rows)"
+Write-Host "  -- API live-instrument set matches local database ($($localIds.Count) rows incl. probe)"
+
+Invoke-LocalSql -NonQuery 'UPDATE WatchedInstruments SET DeletedAt = @now WHERE Id = @id' @{
+    id  = [Guid]$fingerprintId
+    now = [DateTime]::UtcNow
+} | Out-Null
+Write-Host '  -- probe row hidden from live reads'
 
 $instrumentBody = @{
     symbol                  = $Symbol
@@ -132,50 +161,49 @@ try {
 
 $found = Invoke-LocalSql 'SELECT COUNT(*) FROM WatchedInstruments WHERE Id = @id' @{ id = [Guid]$instrumentId }
 if ([int]$found -ne 1) {
-    try {
-        Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/watched-instruments/bulk-delete" `
-            -ContentType 'application/json' -Body (@{ items = @(@{ id = $instrumentId; concurrencyToken = '' }) } | ConvertTo-Json -Depth 5) | Out-Null
-    } catch { }
-    throw "Seeded instrument $instrumentId is not present in the configured local database - the API wrote elsewhere. Aborting."
+    try { $strayRemoved = Remove-TestInstrument -Id $instrumentId } catch { $strayRemoved = $false }
+    throw "Seeded instrument $instrumentId is not present in the configured local database - the API wrote elsewhere. Stray row removed via API: $strayRemoved. Aborting."
 }
 Write-Host "  -- seeded row confirmed in local database"
 
 $timeline = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/watched-instruments/$instrumentId/monitoring-rule"
 $ruleToken = $timeline.concurrencyToken
 
+$draftBody = @{
+    changeReason   = 'acceptance seed'
+    proposedPeriod = @{
+        effectiveFrom = '2027-01-02T03:04:05.1234567Z'
+        effectiveTo   = '2027-02-03T04:05:06.1230000Z'
+    }
+    definition     = @{
+        priceScale      = 4
+        supportZones    = @(@{
+            id         = 'seed-z'
+            lower      = 90.0
+            level      = 95.0
+            upper      = 100.0
+            conditions = @(
+                @{ type = 'buy-zone'; actionId = 'act-observe' },
+                @{ type = 'support-loss'; actionId = 'act-observe' }
+            )
+        })
+        resistanceZones = @()
+    }
+} | ConvertTo-Json -Depth 8
+
 $drafts = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/watched-instruments/$instrumentId/monitoring-rule/drafts"
 $draftId = $null
-if ($drafts.drafts.Count -gt 0) {
-    $draftId = $drafts.drafts[0].id
-    Write-Host "  -- reusing existing draft id=$draftId"
-} else {
-    $draftBody = @{
-        changeReason   = 'acceptance seed'
-        proposedPeriod = @{
-            effectiveFrom = '2027-01-02T03:04:05.1234567Z'
-            effectiveTo   = '2027-02-03T04:05:06.1230000Z'
-        }
-        definition     = @{
-            priceScale      = 4
-            supportZones    = @(@{
-                id         = 'seed-z'
-                lower      = 90.0
-                level      = 95.0
-                upper      = 100.0
-                conditions = @(
-                    @{ type = 'buy-zone'; actionId = 'act-observe' },
-                    @{ type = 'support-loss'; actionId = 'act-observe' }
-                )
-            })
-            resistanceZones = @()
-        }
-    } | ConvertTo-Json -Depth 8
+try {
     Invoke-RestMethod -Method Post `
         -Uri "$BaseUrl/api/watched-instruments/$instrumentId/monitoring-rule/drafts" `
         -ContentType 'application/json' -Headers @{ 'If-Match' = $ruleToken } -Body $draftBody | Out-Null
     $drafts = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/watched-instruments/$instrumentId/monitoring-rule/drafts"
-    $draftId = $drafts.drafts[0].id
+    $draftId = $drafts.drafts[$drafts.drafts.Count - 1].id
     Write-Host "  -- seeded precise draft id=$draftId"
+} catch {
+    if ($drafts.drafts.Count -eq 0) { throw }
+    $draftId = $drafts.drafts[0].id
+    Write-Host "  -- draft creation failed; reusing existing draft id=$draftId"
 }
 
 # ---------- section B: headless Edge via CDP ----------
@@ -187,6 +215,9 @@ $edge = @(
 if ($null -eq $edge) { throw 'msedge.exe not found' }
 
 $profileDir = Join-Path $env:TEMP ('te-acc-' + [guid]::NewGuid().ToString('N'))
+if (Get-NetTCPConnection -LocalPort 9333 -State Listen -ErrorAction SilentlyContinue) {
+    throw 'Port 9333 is already in use - a previous headless Edge may still be running.'
+}
 $edgeProc = $null
 $ws = $null
 try {
@@ -219,11 +250,18 @@ function Send-Cdp {
     $bytes = [Text.Encoding]::UTF8.GetBytes($msg)
     $script:ws.SendAsync([ArraySegment[byte]]::new($bytes), 'Text', $true, [Threading.CancellationToken]::None).Wait()
     $accum = ''
+    $receives = 0
     do {
         $buf = New-Object byte[] 1048576
         $seg = [ArraySegment[byte]]::new($buf)
         $res = $script:ws.ReceiveAsync($seg, [Threading.CancellationToken]::None)
         $res.Wait()
+        if ($res.Result.MessageType -eq 'Close' -or $res.Result.Count -eq 0) {
+            throw "CDP websocket closed while waiting for response to $Method"
+        }
+        if (++$receives -gt 2000) {
+            throw "No CDP response to $Method after 2000 frames"
+        }
         $accum += [Text.Encoding]::UTF8.GetString($buf, 0, $res.Result.Count)
         if ($res.Result.EndOfMessage) {
             try {
@@ -267,8 +305,8 @@ function Wait-For {
     Check 'catalogue rows rendered' (
         (Invoke-Js "document.querySelectorAll('table[aria-label=`"Watched instruments`"] tbody tr').length" -AwaitPromise $false) -gt 0)
 
-    Check 'session header shows Local development' (
-        (Invoke-Js "(document.querySelector('.te-session')||{innerText:''}).innerText" -AwaitPromise $false) -match 'Local development')
+    Wait-For 'session header resolved' "((document.querySelector('.te-session')||{innerText:''}).innerText||'').indexOf('Local development') >= 0"
+    Check 'session header shows Local development' $true
 
     Check 'selection status starts at 0' (
         (Invoke-Js "document.querySelector('.te-toolbar .te-small').textContent.trim()" -AwaitPromise $false) -eq '0 selected on this page')
@@ -429,16 +467,19 @@ function Wait-For {
 finally {
     if ($null -ne $instrumentId) {
         try {
-            $live = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/watched-instruments?q=$Symbol&page=1&pageSize=10"
-            $mine = $live.items | Where-Object { $_.id -eq $instrumentId } | Select-Object -First 1
-            if ($null -ne $mine) {
-                $cleanupBody = @{ items = @(@{ id = $instrumentId; concurrencyToken = $mine.concurrencyToken }) } | ConvertTo-Json -Depth 5
-                Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/watched-instruments/bulk-delete" `
-                    -ContentType 'application/json' -Body $cleanupBody | Out-Null
+            if (Remove-TestInstrument -Id $instrumentId) {
                 Write-Host "  -- cleanup: deleted test-owned instrument $instrumentId"
             }
         } catch {
             Write-Host "  -- cleanup skipped: $($_.Exception.Message)"
+        }
+    }
+    if ($null -ne $fingerprintId) {
+        try {
+            Invoke-LocalSql -NonQuery 'DELETE FROM WatchedInstruments WHERE Id = @id' @{ id = [Guid]$fingerprintId } | Out-Null
+            Write-Host '  -- cleanup: removed probe row'
+        } catch {
+            Write-Host "  -- probe cleanup skipped: $($_.Exception.Message)"
         }
     }
     try { if ($null -ne $script:ws) { $script:ws.Dispose() } } catch { }
@@ -446,6 +487,7 @@ finally {
     Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
         Where-Object { $_.CommandLine -like "*$profileDir*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    try { Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue } catch { }
 }
 
 Write-Host ''
