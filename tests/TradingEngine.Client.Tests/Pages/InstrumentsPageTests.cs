@@ -321,6 +321,7 @@ public sealed class InstrumentsPageTests
             PageJson(1, 25, 0)));
 
         await WaitForMarkupAsync(cut, "CCC");
+        await WaitForRenderSettleAsync(cut);
 
         Assert.Multiple(() =>
         {
@@ -679,6 +680,29 @@ public sealed class InstrumentsPageTests
         }
 
         Assert.That(handler.RequestCount, Is.GreaterThanOrEqualTo(expected));
+    }
+
+    private static async Task WaitForRenderSettleAsync(
+        IRenderedComponent<InstrumentsPage> cut,
+        int timeoutMilliseconds = 5000)
+    {
+        long deadline = Environment.TickCount64 + timeoutMilliseconds;
+        int stableReads = 0;
+        int lastRenderCount = cut.RenderCount;
+        while (Environment.TickCount64 < deadline)
+        {
+            await Task.Delay(50);
+            await cut.InvokeAsync(() => { });
+            int renderCount = cut.RenderCount;
+            stableReads = renderCount == lastRenderCount ? stableReads + 1 : 0;
+            lastRenderCount = renderCount;
+            if (stableReads >= 3)
+            {
+                return;
+            }
+        }
+
+        Assert.That(stableReads, Is.GreaterThanOrEqualTo(3));
     }
 
     private static async Task WaitForRenderAsync(
