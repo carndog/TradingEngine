@@ -140,9 +140,6 @@ public sealed class DraftEditorPageTests
 
         await cut.InvokeAsync(
             () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
-        await Task.Delay(500);
-        NUnit.Framework.TestContext.WriteLine($"REQ={handler.RequestCount} METHODS={string.Join(',', handler.Methods)}");
-        NUnit.Framework.TestContext.WriteLine(cut.Markup[..Math.Min(cut.Markup.Length, 2000)]);
         cut.WaitForAssertion(
             () => Assert.That(cut.Instance.CreatedDraftId, Is.EqualTo(DraftId)),
             TimeSpan.FromSeconds(2));
@@ -320,5 +317,320 @@ public sealed class DraftEditorPageTests
             TimeSpan.FromSeconds(2));
 
         Assert.That(handler.RequestCount, Is.EqualTo(requestsBefore));
+    }
+
+    [Test]
+    public async Task Save_WhenEditedDuringInFlightCreate_KeepsLaterEditDirty()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, "XTEST"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t0"))));
+        TaskCompletionSource<HttpResponseMessage> createResponse =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        handler.Enqueue((_, _) => createResponse.Task);
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-d2"))));
+
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentId));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("New draft")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Change reason']").Input("late edit"));
+
+        createResponse.SetResult(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.RevisionResponse(
+                "tok-d1", Draft(Definition(2, 90m, 95m, 100m))))));
+        await Task.Delay(200);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("Unsaved changes"));
+            Assert.That(
+                cut.FindAll("button").Any(b => b.TextContent == "Save draft"), Is.True);
+        });
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes")),
+            TimeSpan.FromSeconds(2));
+
+        Assert.That(
+            handler.Methods,
+            Is.EqualTo(new[]
+            {
+                HttpMethod.Get, HttpMethod.Get, HttpMethod.Post, HttpMethod.Put
+            }));
+    }
+
+    [Test]
+    public async Task Save_WhenEditedDuringInFlightUpdate_KeepsLaterEditDirty()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, "XTEST"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.RevisionResponse(
+                "tok-d1", Draft(Definition(2, 90m, 95m, 100m))))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t1"))));
+        TaskCompletionSource<HttpResponseMessage> updateResponse =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        handler.Enqueue((_, _) => updateResponse.Task);
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-d3"))));
+
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(
+            parameters => parameters
+                .Add(component => component.Id, InstrumentId)
+                .Add(component => component.DraftId, DraftId));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Edit draft")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Change reason']").Input("late edit"));
+
+        updateResponse.SetResult(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-d2"))));
+        await Task.Delay(200);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("Unsaved changes"));
+            Assert.That(
+                cut.FindAll("button").Any(b => b.TextContent == "Save draft"), Is.True);
+        });
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes")),
+            TimeSpan.FromSeconds(2));
+
+        Assert.That(
+            handler.Methods,
+            Is.EqualTo(new[]
+            {
+                HttpMethod.Get, HttpMethod.Get, HttpMethod.Get, HttpMethod.Put, HttpMethod.Put
+            }));
+    }
+
+    [Test]
+    public async Task Save_WhenCreateOutcomeUnknown_BlocksRecreateUntilReconciled()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, "XTEST"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t0"))));
+        handler.Enqueue((_, _) => throw new HttpRequestException("connection lost"));
+
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentId));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("New draft")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Check saved drafts")),
+            TimeSpan.FromSeconds(2));
+
+        int requestsBefore = handler.RequestCount;
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("outcome is unknown")),
+            TimeSpan.FromSeconds(2));
+        Assert.That(handler.RequestCount, Is.EqualTo(requestsBefore));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Drafts("tok-d0"))));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Check saved drafts").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("No draft exists")),
+            TimeSpan.FromSeconds(2));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.RevisionResponse(
+                "tok-d1", Draft(Definition(2, 90m, 95m, 100m))))));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Instance.CreatedDraftId, Is.EqualTo(DraftId)),
+            TimeSpan.FromSeconds(2));
+
+        Assert.That(handler.Methods.Last(), Is.EqualTo(HttpMethod.Post));
+    }
+
+    [Test]
+    public async Task Save_WhenCreateOutcomeUnknown_ReconcileAdoptsExistingDraft()
+    {
+        Guid serverDraftId = Guid.Parse("d5000000-0000-0000-0000-0000000000e2");
+        MonitoringRuleRevisionDto serverDraft = new(
+            serverDraftId,
+            "draft",
+            null,
+            DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+            "synthetic-user",
+            false,
+            "kept reason",
+            null,
+            null,
+            null,
+            null,
+            ClientTestData.Definition());
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, "XTEST"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t0"))));
+        handler.Enqueue((_, _) => throw new HttpRequestException("connection lost"));
+
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentId));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("New draft")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Check saved drafts")),
+            TimeSpan.FromSeconds(2));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Drafts("tok-d0", serverDraft))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.RevisionResponse("tok-d2", serverDraft))));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Check saved drafts").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Loaded the existing draft")),
+            TimeSpan.FromSeconds(2));
+        Assert.That(cut.Instance.CreatedDraftId, Is.EqualTo(serverDraftId));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-d3"))));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(handler.Methods.Last(), Is.EqualTo(HttpMethod.Put)),
+            TimeSpan.FromSeconds(2));
+
+        Assert.That(
+            handler.Methods.Count(method => method == HttpMethod.Post), Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task Apply_WhenProposedStartEnteredAfterConfirmOpened_RequiresAcknowledgement()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, "XTEST"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.RevisionResponse(
+                "tok-d1", Draft(Definition(2, 90m, 95m, 100m), "no proposal")))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t1"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-d2"))));
+        MonitoringRuleRevisionDto committed = ClientTestData.Revision(
+            DraftId,
+            kind: "committed",
+            revisionNumber: 2,
+            effectiveFrom: DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-a1", committed))));
+
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(
+            parameters => parameters
+                .Add(component => component.Id, InstrumentId)
+                .Add(component => component.DraftId, DraftId));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Edit draft")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Apply now").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Apply draft now")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Proposed effective from UTC']")
+                .Change("2026-10-06T00:00:00"));
+        cut.WaitForAssertion(
+            () => Assert.That(
+                cut.Markup,
+                Does.Contain("Acknowledge that applying now replaces the proposed start")),
+            TimeSpan.FromSeconds(2));
+
+        int requestsBefore = handler.RequestCount;
+        await cut.InvokeAsync(
+            () => cut.Find("section[aria-label='Apply draft now'] button.te-primary").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("acknowledgement")),
+            TimeSpan.FromSeconds(2));
+        Assert.That(handler.RequestCount, Is.EqualTo(requestsBefore));
+
+        await cut.InvokeAsync(
+            () => cut.Find(
+                "input[aria-label='Acknowledge that applying now replaces the proposed start']")
+                .Change(true));
+        await cut.InvokeAsync(
+            () => cut.Find("section[aria-label='Apply draft now'] button.te-primary").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(
+                handler.Methods,
+                Is.EqualTo(new[]
+                {
+                    HttpMethod.Get, HttpMethod.Get, HttpMethod.Get,
+                    HttpMethod.Put, HttpMethod.Post
+                })),
+            TimeSpan.FromSeconds(2));
+
+        NavigationManager nav = ctx.Services.GetRequiredService<NavigationManager>();
+        Assert.That(nav.Uri, Does.Contain("tab=current"));
     }
 }

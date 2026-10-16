@@ -55,7 +55,7 @@ else
             <label>
                 Proposed start (UTC, optional)
                 <input type="datetime-local" step="0.001" value="@_proposedFrom.Text"
-                       @onchange="args => _proposedFrom.Set(args.Value?.ToString())"
+                       @onchange="OnProposedFromChanged"
                        aria-label="Proposed effective from UTC"
                        aria-invalid="@(_saveError?.Code == ProposedStartPastCode ? "true" : null)">
             </label>
@@ -95,6 +95,19 @@ else
                 <a href="@SignInUrl">Sign in again</a>
             }
         </ErrorNotice>
+
+        @if (_createOutcomeUnknown && IsNew)
+        {
+            <div class="te-alert te-warn" role="status">
+                <p style="margin:0">
+                    The previous save may already have created a draft — the response was lost, so saving again could create a duplicate. Your input is kept.
+                </p>
+                <div class="te-row" style="justify-content:flex-start;gap:12px;margin-top:8px">
+                    <button type="button" @onclick="ReconcileCreateAsync" disabled="@_busy">Check saved drafts</button>
+                    <a href="instruments/@Id?tab=drafts">Open draft list</a>
+                </div>
+            </div>
+        }
 
         @if (_draftConflict.IsOpen)
         {
@@ -168,6 +181,11 @@ else
     private readonly ConflictResolution<MonitoringRuleRevisionResponse> _draftConflict = new();
     private readonly ConflictResolution<MonitoringRuleTimelineResponse> _timelineConflict = new();
     private bool _headingFocusPending = true;
+    private bool _parametersApplied;
+    private Guid _loadedId;
+    private Guid? _loadedDraftId;
+    private Guid? _loadedCopyFrom;
+    private bool _createOutcomeUnknown;
     private readonly CancellationTokenSource _lifetime = new();
 
     [Parameter]
@@ -238,7 +256,20 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        if (_parametersApplied
+            && Id == _loadedId
+            && DraftId == _loadedDraftId
+            && CopyFrom == _loadedCopyFrom)
+        {
+            return;
+        }
+
+        _parametersApplied = true;
+        _loadedId = Id;
+        _loadedDraftId = DraftId;
+        _loadedCopyFrom = CopyFrom;
         _createdDraftId = null;
+        _createOutcomeUnknown = false;
         await LoadAsync();
     }
 
@@ -345,9 +376,10 @@ else
         await Task.WhenAll(revisionTask, timelineTask);
 
         ApiResult<MonitoringRuleRevisionResponse> revision = revisionTask.Result;
-        if (revision.IsFailure)
+        if (revision.IsFailure || revision.Value?.Revision is null)
         {
-            _fatal = revision.Error;
+            _fatal = revision.Error ?? ApiError.Create(
+                0, "response.unexpected", "The draft could not be loaded.", null);
             return;
         }
 
@@ -374,6 +406,16 @@ else
 
     private void OnDefinitionChanged()
     {
+    }
+
+    private void OnProposedFromChanged(ChangeEventArgs args)
+    {
+        _proposedFrom.Set(args.Value?.ToString());
+        if (_pending?.Kind == PendingActionKind.Apply)
+        {
+            _pending.ProposedEffectiveFrom = EditedProposedStart();
+            _pending.ProposalReplacementAcknowledged = false;
+        }
     }
 
     private async Task BeginApply()
@@ -518,9 +560,21 @@ else
             return ApiResult<MonitoringRuleTimelineResponse>.Fail(validationError);
         }
 
+        if (IsNew && _createOutcomeUnknown)
+        {
+            return ApiResult<MonitoringRuleTimelineResponse>.Fail(ApiError.Create(
+                409,
+                "draft.create_outcome_unknown",
+                "The previous save may have created a draft but its outcome is unknown. "
+                + "Check the saved drafts before saving again so the draft is not created twice.",
+                null));
+        }
+
+        DraftBaseline submitted = CaptureBaseline();
+
         if (IsNew)
         {
-            return await CreateDraftCoreAsync(request!);
+            return await CreateDraftCoreAsync(request!, submitted);
         }
 
         ApiResult<MonitoringRuleTimelineResponse> result =
@@ -529,31 +583,130 @@ else
         {
             _token = result.Value!.ConcurrencyToken;
             _timeline = result.Value;
-            ReseedBaseline();
+            AcceptBaseline(submitted);
         }
 
         return result;
     }
 
+    private DraftBaseline CaptureBaseline()
+    {
+        return new DraftBaseline(
+            _definition.Clone(),
+            _reason,
+            _proposedFrom.Resolve().Value,
+            _proposedFrom.Text,
+            _proposedTo.Resolve().Value,
+            _proposedTo.Text);
+    }
+
+    private void AcceptBaseline(DraftBaseline baseline)
+    {
+        _definitionBaseline = baseline.Definition;
+        _reasonBaseline = baseline.Reason;
+        _proposedFrom.AcceptBaseline(
+            baseline.ProposedFrom, _proposedFrom.Text != baseline.ProposedFromText);
+        _proposedTo.AcceptBaseline(
+            baseline.ProposedTo, _proposedTo.Text != baseline.ProposedToText);
+    }
+
+    private sealed record DraftBaseline(
+        DefinitionEditModel Definition,
+        string Reason,
+        DateTimeOffset? ProposedFrom,
+        string ProposedFromText,
+        DateTimeOffset? ProposedTo,
+        string ProposedToText);
+
     private async Task<ApiResult<MonitoringRuleTimelineResponse>> CreateDraftCoreAsync(
-        MonitoringRuleDraftRequest request)
+        MonitoringRuleDraftRequest request,
+        DraftBaseline submitted)
     {
         ApiResult<MonitoringRuleRevisionResponse> created =
             await Api.CreateDraftAsync(Id, request, _token, _lifetime.Token);
         if (created.IsFailure)
         {
+            if (created.Error!.Status == 0 || created.Error.Status >= 500)
+            {
+                _createOutcomeUnknown = true;
+            }
+
             return ApiResult<MonitoringRuleTimelineResponse>.Fail(created.Error!);
         }
 
+        _createOutcomeUnknown = false;
         _token = created.Value!.ConcurrencyToken;
         _draft = created.Value.Revision;
         _createdDraftId = created.Value.Revision.Id;
-        ReseedBaseline();
+        AcceptBaseline(submitted);
 
         return ApiResult<MonitoringRuleTimelineResponse>.Ok(
             _timeline is null
                 ? new MonitoringRuleTimelineResponse(Guid.Empty, Id, _token, null, [])
                 : _timeline with { ConcurrencyToken = _token });
+    }
+
+    private async Task ReconcileCreateAsync()
+    {
+        _busy = true;
+        _notice = null;
+        try
+        {
+            ApiResult<MonitoringRuleDraftsResponse> drafts =
+                await Api.GetDraftsAsync(Id, _lifetime.Token);
+            if (drafts.IsFailure)
+            {
+                _saveError = drafts.Error;
+                return;
+            }
+
+            if (drafts.Value!.Drafts.Count == 0)
+            {
+                _createOutcomeUnknown = false;
+                _saveError = null;
+                _notice = "No draft exists on the server — the earlier save did not complete. "
+                    + "Your input is kept; save again to create it.";
+                return;
+            }
+
+            if (drafts.Value.Drafts.Count > 1)
+            {
+                _notice = "More than one draft exists — open the draft list to review them before saving again.";
+                return;
+            }
+
+            ApiResult<MonitoringRuleRevisionResponse> revision =
+                await Api.GetRevisionAsync(Id, drafts.Value.Drafts[0].Id, _lifetime.Token);
+            if (revision.IsFailure)
+            {
+                _saveError = revision.Error;
+                return;
+            }
+
+            MonitoringRuleRevisionDto? adopted = revision.Value?.Revision;
+            if (adopted is null || adopted.EffectiveFrom is not null || adopted.Kind == "committed")
+            {
+                _notice = "The existing draft is no longer editable — open the draft list to review it.";
+                return;
+            }
+
+            _draft = adopted;
+            _createdDraftId = adopted.Id;
+            _token = revision.Value!.ConcurrencyToken;
+            _createOutcomeUnknown = false;
+            _saveError = null;
+            _definitionBaseline = adopted.Definition is null
+                ? DefinitionEditModel.Empty()
+                : DefinitionEditModel.FromDto(adopted.Definition);
+            _reasonBaseline = adopted.ChangeReason ?? string.Empty;
+            _proposedFrom.AcceptBaseline(adopted.ProposedEffectiveFrom, _proposedFrom.Modified);
+            _proposedTo.AcceptBaseline(adopted.ProposedEffectiveTo, _proposedTo.Modified);
+            _notice = "Loaded the existing draft — your input is kept and will update it on the next save.";
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task<bool> HandleMutationAsync(ApiResult<MonitoringRuleTimelineResponse> result)

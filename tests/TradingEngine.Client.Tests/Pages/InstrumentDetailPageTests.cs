@@ -437,7 +437,8 @@ public sealed class InstrumentDetailPageTests
 
         await cut.InvokeAsync(
             () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
-        await cut.InvokeAsync(() => cut.Instance.BeginApply(draft));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Apply now").Click());
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("Apply draft now")),
             TimeSpan.FromSeconds(2));
@@ -474,7 +475,8 @@ public sealed class InstrumentDetailPageTests
 
         await cut.InvokeAsync(
             () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
-        await cut.InvokeAsync(() => cut.Instance.BeginSchedule(draft));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Schedule").Click());
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("Schedule draft")),
             TimeSpan.FromSeconds(2));
@@ -519,7 +521,8 @@ public sealed class InstrumentDetailPageTests
 
         await cut.InvokeAsync(
             () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
-        await cut.InvokeAsync(() => cut.Instance.BeginDeleteDraft(draft));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Delete").Click());
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("Delete draft")),
             TimeSpan.FromSeconds(2));
