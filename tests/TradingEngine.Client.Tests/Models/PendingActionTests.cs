@@ -1,5 +1,6 @@
 using TradingEngine.Client.Models;
 using TradingEngine.Client.Services;
+using TradingEngine.Client.Tests.Services;
 using TradingEngine.Contracts.MonitoringRules;
 
 namespace TradingEngine.Client.Tests.Models;
@@ -24,7 +25,7 @@ public sealed class PendingActionTests
             null,
             null,
             null,
-            null);
+            ClientTestData.Definition());
     }
 
     [Test]
