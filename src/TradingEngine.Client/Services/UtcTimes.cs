@@ -16,6 +16,11 @@ public static class UtcTimes
         return value.UtcDateTime.ToString("dd MMM yyyy, HH:mm 'UTC'", CultureInfo.InvariantCulture);
     }
 
+    public static string FormatWithSeconds(DateTimeOffset value)
+    {
+        return value.UtcDateTime.ToString("dd MMM yyyy, HH:mm:ss 'UTC'", CultureInfo.InvariantCulture);
+    }
+
     public static string FormatPrecise(DateTimeOffset value)
     {
         return value.UtcDateTime.ToString(

@@ -52,7 +52,7 @@
     </div>
 </section>
 
-<DirtyGuard IsDirty="@_dirty" />
+<DirtyGuard IsDirty="@(() => _dirty)" />
 
 @code {
     private WatchedInstrumentSettingsResponse? _seeded;

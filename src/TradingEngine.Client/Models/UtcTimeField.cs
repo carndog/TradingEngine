@@ -35,6 +35,16 @@ public sealed class UtcTimeField
         Modified = false;
     }
 
+    public void AcceptBaseline(DateTimeOffset? baseline, bool retainModifiedText)
+    {
+        Baseline = baseline;
+        if (retainModifiedText is false)
+        {
+            Text = UtcTimes.ToInputValue(baseline);
+            Modified = false;
+        }
+    }
+
     public void AcceptResolved()
     {
         UtcTimeResolution resolved = Resolve();

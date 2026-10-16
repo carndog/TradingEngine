@@ -6,6 +6,7 @@ public sealed record MonitoringRuleRevisionDto(
     int? RevisionNumber,
     DateTimeOffset CreatedAt,
     string CreatedBy,
+    bool CreatedByCaller,
     string? ChangeReason,
     DateTimeOffset? EffectiveFrom,
     DateTimeOffset? EffectiveTo,

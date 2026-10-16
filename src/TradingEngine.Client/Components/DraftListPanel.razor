@@ -1,3 +1,5 @@
+@inject IUiClock Clock
+
 <section class="te-detail-card" aria-label="Draft revisions">
     <div class="te-row">
         <h3>Draft revisions</h3>
@@ -23,21 +25,26 @@
         <ul class="te-history" style="margin-top:14px">
             @foreach (MonitoringRuleRevisionDto draft in Drafts.Drafts)
             {
-                <li>
+                <li id="revision-@draft.Id" class="@(draft.Id == FocusId ? "te-focus" : null)" tabindex="-1">
                     <div class="te-row">
                         <div>
-                            <strong>Draft</strong>
+                            <strong>@RevisionLabels.DraftTitle(draft)</strong>
+                            @if (draft.Id == FocusId)
+                            {
+                                <span class="te-badge te-current" style="margin-left:8px">Just changed</span>
+                            }
                             <div class="te-small">
-                                Created @UtcTimes.Format(draft.CreatedAt) by @draft.CreatedBy
-                                @if (string.IsNullOrWhiteSpace(draft.ChangeReason) is false)
-                                {
-                                    <text> · @draft.ChangeReason</text>
-                                }
+                                Created @UtcTimes.FormatWithSeconds(draft.CreatedAt) by <span title="@draft.CreatedBy">@ActorPresentation.Describe(draft)</span>
                             </div>
+                            <div class="te-small">@RevisionLabels.DefinitionSummary(draft.Definition)</div>
                             @if (draft.ProposedEffectiveFrom is not null || draft.ProposedEffectiveTo is not null)
                             {
                                 <div class="te-small">
                                     Proposal @UtcTimes.FormatRange(draft.ProposedEffectiveFrom, draft.ProposedEffectiveTo) (nonbinding)
+                                    @if (ProposalIsPast(draft))
+                                    {
+                                        <span class="te-tag te-dirty" style="margin-left:8px">Proposed start has passed</span>
+                                    }
                                 </div>
                             }
                         </div>
@@ -66,6 +73,9 @@
     public Guid InstrumentId { get; set; }
 
     [Parameter]
+    public Guid? FocusId { get; set; }
+
+    [Parameter]
     public string SignInUrl { get; set; } = string.Empty;
 
     [Parameter]
@@ -82,4 +92,9 @@
 
     [Parameter]
     public RenderFragment? ChildContent { get; set; }
+
+    private bool ProposalIsPast(MonitoringRuleRevisionDto draft)
+    {
+        return draft.ProposedEffectiveFrom is not null && draft.ProposedEffectiveFrom.Value < Clock.UtcNow;
+    }
 }

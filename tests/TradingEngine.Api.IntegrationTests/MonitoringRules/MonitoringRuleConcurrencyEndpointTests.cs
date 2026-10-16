@@ -69,7 +69,7 @@ public sealed class MonitoringRuleConcurrencyEndpointTests
             new MonitoringRuleDraftRequest("winner", null, DefinitionDto(110m)),
             sharedToken);
         string winningToken = (await winner.Content
-            .ReadFromJsonAsync<MonitoringRuleTimelineResponse>())!.ConcurrencyToken;
+            .ReadFromJsonAsync<MonitoringRuleRevisionResponse>())!.ConcurrencyToken;
         string before = await _host.SnapshotStateAsync();
 
         HttpResponseMessage loser = await _host.SendAsync(

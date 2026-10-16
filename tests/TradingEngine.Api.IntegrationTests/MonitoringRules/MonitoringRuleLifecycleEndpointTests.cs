@@ -44,8 +44,8 @@ public sealed class MonitoringRuleLifecycleEndpointTests
                 new RevisionPeriodDto(Tuesday, null),
                 DefinitionDto(110m)),
             token);
-        MonitoringRuleTimelineResponse? body = await response.Content
-            .ReadFromJsonAsync<MonitoringRuleTimelineResponse>();
+        MonitoringRuleRevisionResponse? body = await response.Content
+            .ReadFromJsonAsync<MonitoringRuleRevisionResponse>();
         MonitoringRuleDraftsResponse drafts = await _host.GetDraftsAsync();
 
         Assert.Multiple(() =>
@@ -53,8 +53,10 @@ public sealed class MonitoringRuleLifecycleEndpointTests
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(body!.ConcurrencyToken, Is.Not.EqualTo(token));
             Assert.That(body.ConcurrencyToken, Is.EqualTo(_host.Store.CurrentToken));
-            Assert.That(body.Revisions, Has.Count.EqualTo(1));
+            Assert.That(body.Revision.Kind, Is.EqualTo("draft"));
+            Assert.That(body.Revision.ChangeReason, Is.EqualTo("raise support"));
             Assert.That(drafts.Drafts, Has.Count.EqualTo(1));
+            Assert.That(drafts.Drafts[0].Id, Is.EqualTo(body.Revision.Id));
             Assert.That(drafts.Drafts[0].ChangeReason, Is.EqualTo("raise support"));
             Assert.That(drafts.Drafts[0].ProposedEffectiveFrom, Is.EqualTo(TuesdayOffset));
             Assert.That(drafts.Drafts[0].ProposedEffectiveTo, Is.Null);

@@ -75,7 +75,7 @@
     <a href="instruments" style="align-self:center">Cancel</a>
 </div>
 
-<DirtyGuard IsDirty="@Dirty" />
+<DirtyGuard IsDirty="@(() => Dirty)" />
 
 @code {
     private DefinitionEditModel _definition = DefinitionEditModel.Empty();

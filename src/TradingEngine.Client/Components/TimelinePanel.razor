@@ -29,16 +29,20 @@
             @foreach (MonitoringRuleRevisionDto revision in Timeline.Revisions)
             {
                 string status = StatusOf(revision);
-                <li>
+                <li id="revision-@revision.Id" class="@(revision.Id == FocusId ? "te-focus" : null)" tabindex="-1">
                     <div class="te-row">
                         <div>
                             <strong>Revision @RevisionLabel(revision)</strong>
                             <span class="te-badge @StatusClass(status)" style="margin-left:8px">@status</span>
+                            @if (revision.Id == FocusId)
+                            {
+                                <span class="te-badge te-current" style="margin-left:8px">Just changed</span>
+                            }
                             <div class="te-small">
                                 @UtcTimes.FormatRange(revision.EffectiveFrom, revision.EffectiveTo)
                             </div>
                             <div class="te-small">
-                                Created @UtcTimes.Format(revision.CreatedAt) by @revision.CreatedBy
+                                Created @UtcTimes.FormatWithSeconds(revision.CreatedAt) by <span title="@revision.CreatedBy">@ActorPresentation.Describe(revision)</span>
                                 @if (string.IsNullOrWhiteSpace(revision.ChangeReason) is false)
                                 {
                                     <text> · @revision.ChangeReason</text>
@@ -53,6 +57,12 @@
                             </div>
                         }
                     </div>
+                    <details>
+                        <summary class="te-small">View definition (read-only) · @RevisionLabels.DefinitionSummary(revision.Definition)</summary>
+                        <div style="margin-top:10px">
+                            <DefinitionSummary Definition="@revision.Definition" />
+                        </div>
+                    </details>
                 </li>
             }
         </ul>
@@ -69,6 +79,9 @@
 
     [Parameter]
     public Guid InstrumentId { get; set; }
+
+    [Parameter]
+    public Guid? FocusId { get; set; }
 
     [Parameter]
     public string SignInUrl { get; set; } = string.Empty;

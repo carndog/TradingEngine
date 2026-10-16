@@ -12,4 +12,10 @@ internal static class RequestActor
 
         return EasyAuthClientPrincipal.StableIdentifier(context.User) ?? UnverifiedLocalCaller;
     }
+
+    internal static bool IsVerifiedMatch(string actor, string? createdBy)
+    {
+        return actor != UnverifiedLocalCaller
+            && string.Equals(actor, createdBy, StringComparison.Ordinal);
+    }
 }

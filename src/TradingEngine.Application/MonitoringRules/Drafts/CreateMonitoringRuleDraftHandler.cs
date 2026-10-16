@@ -52,7 +52,7 @@ public sealed class CreateMonitoringRuleDraftHandler
             true,
             (rule, captured) => rule
                 .CreateDraft(
-                    Guid.NewGuid(),
+                    command.DraftId,
                     command.Definition,
                     captured,
                     command.CreatedBy,

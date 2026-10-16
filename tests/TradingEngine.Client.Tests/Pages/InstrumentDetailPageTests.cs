@@ -409,6 +409,138 @@ public sealed class InstrumentDetailPageTests
     }
 
     [Test]
+    public async Task Apply_Confirm_ShowsOutcomeNoticeAndFocusForCommittedRevision()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleRevisionDto draft = ClientTestData.Revision(
+            Guid.NewGuid(), changeReason: "widen bands");
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-1"), ClientTestData.Drafts("tok-1", draft));
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+
+        MonitoringRuleRevisionDto committed = ClientTestData.Revision(
+            draft.Id,
+            kind: "committed",
+            revisionNumber: 3,
+            effectiveFrom: clock.UtcNow);
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-2", committed))));
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-2", committed), ClientTestData.Drafts("tok-2"));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Apply now").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Apply draft now")),
+            TimeSpan.FromSeconds(2));
+        await cut.InvokeAsync(
+            () => cut.Find("section[aria-label='Apply draft now'] button.te-primary").Click());
+
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Instance.Notice, Does.Contain("applied")),
+            TimeSpan.FromSeconds(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Instance.Notice, Does.Contain("Revision 3"));
+            Assert.That(cut.Instance.Notice, Does.Contain("earliest coverage period"));
+            Assert.That(cut.Instance.FocusId, Is.EqualTo(draft.Id));
+            Assert.That(cut.Instance.ActivePending, Is.Null);
+            Assert.That(handler.Methods.Count(m => m == HttpMethod.Post), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task Schedule_WithPastStart_ShowsErrorWithoutPosting()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleRevisionDto draft = ClientTestData.Revision(Guid.NewGuid());
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-1"), ClientTestData.Drafts("tok-1", draft));
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Schedule").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Schedule draft")),
+            TimeSpan.FromSeconds(2));
+        await cut.InvokeAsync(
+            () => cut.Find("input[aria-label='Effective from UTC']")
+                .Change("2020-01-01T00:00:00"));
+        int requestsBefore = handler.RequestCount;
+
+        await cut.InvokeAsync(
+            () => cut.Find("section[aria-label='Schedule draft'] button.te-primary").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("already in the past")),
+            TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handler.RequestCount, Is.EqualTo(requestsBefore));
+            Assert.That(cut.Instance.ActivePending, Is.Not.Null);
+        });
+    }
+
+    [Test]
+    public async Task DeleteDraft_Confirm_ShowsDeletionNotice()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleRevisionDto draft = ClientTestData.Revision(Guid.NewGuid());
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-1"), ClientTestData.Drafts("tok-1", draft));
+        using BunitContext ctx = CreateContext(handler, clock);
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-2"))));
+        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+            ClientTestData.Timeline("tok-2"), ClientTestData.Drafts("tok-2"));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Drafts").Click());
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Delete").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Delete draft")),
+            TimeSpan.FromSeconds(2));
+        await cut.InvokeAsync(
+            () => cut.Find("section[aria-label='Delete draft'] button.te-primary").Click());
+
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Instance.Notice, Does.Contain("Draft deleted")),
+            TimeSpan.FromSeconds(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Instance.Notice, Does.Contain("No committed revision changed"));
+            Assert.That(cut.Instance.FocusId, Is.Null);
+            Assert.That(handler.Methods.Count(m => m == HttpMethod.Delete), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
     public void PendingConfirm_WithoutTimeline_ShowsNoticeInsteadOfThrowing()
     {
         ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));

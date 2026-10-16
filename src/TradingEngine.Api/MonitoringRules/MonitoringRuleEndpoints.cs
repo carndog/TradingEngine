@@ -52,7 +52,7 @@ internal static class MonitoringRuleEndpoints
 
         ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
-        return TypedResults.Ok(ToTimelineResponse(snapshot.Value));
+        return TypedResults.Ok(ToTimelineResponse(snapshot.Value, RequestActor.Resolve(context)));
     }
 
     private static async Task<IResult> GetRevisionAsync(
@@ -81,7 +81,7 @@ internal static class MonitoringRuleEndpoints
 
         return TypedResults.Ok(new MonitoringRuleRevisionResponse(
             ConcurrencyTokens.FormatToken(snapshot.Value.ConcurrencyToken),
-            ToDto(revision)));
+            ToDto(revision, RequestActor.Resolve(context))));
     }
 
     private static async Task<IResult> GetApplicableAsync(
@@ -109,7 +109,7 @@ internal static class MonitoringRuleEndpoints
 
         return TypedResults.Ok(new MonitoringRuleRevisionResponse(
             ConcurrencyTokens.FormatToken(resolved.Value.Snapshot.ConcurrencyToken),
-            ToDto(resolved.Value.Revision)));
+            ToDto(resolved.Value.Revision, RequestActor.Resolve(context))));
     }
 
     private static async Task<IResult> GetDraftsAsync(
@@ -128,7 +128,7 @@ internal static class MonitoringRuleEndpoints
 
         ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
-        return TypedResults.Ok(ToDraftsResponse(snapshot.Value));
+        return TypedResults.Ok(ToDraftsResponse(snapshot.Value, RequestActor.Resolve(context)));
     }
 
     private static async Task<IResult> CreateDraftAsync(
@@ -166,9 +166,11 @@ internal static class MonitoringRuleEndpoints
             return ApiProblemDetails.Problem(tokenError);
         }
 
+        Guid draftId = Guid.NewGuid();
         Result<MonitoringRuleSnapshot> snapshot = await handler.HandleAsync(
             new CreateMonitoringRuleDraft(
                 instrumentId,
+                draftId,
                 definition.Value,
                 request.ChangeReason,
                 proposal,
@@ -176,7 +178,7 @@ internal static class MonitoringRuleEndpoints
                 RequestActor.Resolve(context)),
             cancellationToken);
 
-        return CommitResponse(context, snapshot);
+        return CreatedDraftResponse(context, snapshot, draftId);
     }
 
     private static async Task<IResult> EditDraftAsync(
@@ -388,6 +390,29 @@ internal static class MonitoringRuleEndpoints
         return CommitResponse(context, snapshot);
     }
 
+    private static IResult CreatedDraftResponse(
+        HttpContext context,
+        Result<MonitoringRuleSnapshot> snapshot,
+        Guid draftId)
+    {
+        if (snapshot.IsFailure)
+        {
+            return ApiProblemDetails.Problem(snapshot.Error);
+        }
+
+        Revision<ChartAnalysisDefinition>? created = snapshot.Value.Rule.FindRevision(draftId);
+        if (created is null)
+        {
+            return ApiProblemDetails.Problem(RevisionErrors.NotFound);
+        }
+
+        ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
+
+        return TypedResults.Ok(new MonitoringRuleRevisionResponse(
+            ConcurrencyTokens.FormatToken(snapshot.Value.ConcurrencyToken),
+            ToDto(created, RequestActor.Resolve(context))));
+    }
+
     private static IResult CommitResponse(
         HttpContext context,
         Result<MonitoringRuleSnapshot> snapshot)
@@ -399,7 +424,7 @@ internal static class MonitoringRuleEndpoints
 
         ConcurrencyTokens.SetConcurrencyHeaders(context, snapshot.Value.ConcurrencyToken);
 
-        return TypedResults.Ok(ToTimelineResponse(snapshot.Value));
+        return TypedResults.Ok(ToTimelineResponse(snapshot.Value, RequestActor.Resolve(context)));
     }
 
     private static Result<ChartAnalysisDefinition> ToDefinition(
@@ -434,28 +459,31 @@ internal static class MonitoringRuleEndpoints
     }
 
     private static MonitoringRuleTimelineResponse ToTimelineResponse(
-        MonitoringRuleSnapshot snapshot)
+        MonitoringRuleSnapshot snapshot,
+        string actor)
     {
         return new MonitoringRuleTimelineResponse(
             snapshot.Rule.Id,
             snapshot.Rule.WatchedInstrumentId,
             ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken),
             ToOffset(snapshot.Rule.CoverageOrigin),
-            snapshot.Rule.Revisions.Select(ToDto).ToArray());
+            snapshot.Rule.Revisions.Select(revision => ToDto(revision, actor)).ToArray());
     }
 
     private static MonitoringRuleDraftsResponse ToDraftsResponse(
-        MonitoringRuleSnapshot snapshot)
+        MonitoringRuleSnapshot snapshot,
+        string actor)
     {
         return new MonitoringRuleDraftsResponse(
             snapshot.Rule.Id,
             snapshot.Rule.WatchedInstrumentId,
             ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken),
-            snapshot.Rule.Drafts.Select(ToDto).ToArray());
+            snapshot.Rule.Drafts.Select(draft => ToDto(draft, actor)).ToArray());
     }
 
     private static MonitoringRuleRevisionDto ToDto(
-        Revision<ChartAnalysisDefinition> revision)
+        Revision<ChartAnalysisDefinition> revision,
+        string actor)
     {
         return new MonitoringRuleRevisionDto(
             revision.Id,
@@ -463,6 +491,7 @@ internal static class MonitoringRuleEndpoints
             revision.RevisionNumber,
             new DateTimeOffset(revision.CreatedAt.ToDateTimeUtc()),
             revision.CreatedBy,
+            RequestActor.IsVerifiedMatch(actor, revision.CreatedBy),
             revision.ChangeReason,
             ToOffset(revision.EffectivePeriod?.EffectiveFrom),
             ToOffset(revision.EffectivePeriod?.EffectiveTo),

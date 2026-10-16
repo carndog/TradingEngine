@@ -5,6 +5,7 @@ namespace TradingEngine.Application.MonitoringRules.Drafts;
 
 public sealed record CreateMonitoringRuleDraft(
     Guid InstrumentId,
+    Guid DraftId,
     ChartAnalysisDefinition Definition,
     string? ChangeReason,
     RevisionProposal? Proposal,

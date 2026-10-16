@@ -1,3 +1,5 @@
+@inject IUiClock Clock
+
 @if (Action is not null)
 {
     @if (Action.Kind == PendingActionKind.Apply)
@@ -9,7 +11,20 @@
                       Error="@Error"
                       OnConfirm="OnConfirm"
                       OnCancel="OnCancel">
-            <p>This draft becomes the current configuration immediately.</p>
+            <p><strong>@RevisionLabels.DraftTitle(Action.Revision)</strong> — created @UtcTimes.FormatWithSeconds(Action.Revision.CreatedAt) · @RevisionLabels.DefinitionSummary(Action.Revision.Definition)</p>
+            <p>Applying commits this draft starting at the server's current UTC time, not at any proposed date. @CurrentBoundaryText</p>
+            @if (Action.RequiresProposalAcknowledgement)
+            {
+                <div class="te-alert te-warn" role="status">
+                    <div>This draft proposes to start at <strong>@UtcTimes.Format(Action.ProposedEffectiveFrom!.Value)</strong>@(ProposalIsPast ? " (already in the past)" : string.Empty). Applying now replaces that timing intent: the revision starts at the server's current time instead, and the proposal is not used.</div>
+                    <label style="display:flex;gap:8px;align-items:center;margin-top:8px">
+                        <input type="checkbox" checked="@Action.ProposalReplacementAcknowledged"
+                               @onchange="OnAcknowledgementChanged"
+                               aria-label="Acknowledge that applying now replaces the proposed start">
+                        I understand the proposed start will not be used. To keep it, cancel and edit the draft instead.
+                    </label>
+                </div>
+            }
             <label style="max-width:260px">
                 Effective until (UTC, optional)
                 <input type="datetime-local" step="0.001" value="@Action.To?.Text"
@@ -20,6 +35,7 @@
             {
                 <p class="te-note">Stored value @Action.To.BaselinePreciseLabel — leaving the field untouched keeps it exactly.</p>
             }
+            <p class="te-note">@BlankEndText</p>
         </ConfirmPanel>
     }
     else if (Action.Kind == PendingActionKind.Schedule)
@@ -31,7 +47,12 @@
                       Error="@Error"
                       OnConfirm="OnConfirm"
                       OnCancel="OnCancel">
-            <p>The draft becomes effective at the start time. Start must be at or after the current UTC time. Leave the start unchanged to use the draft's proposed start.</p>
+            <p><strong>@RevisionLabels.DraftTitle(Action.Revision)</strong> — created @UtcTimes.FormatWithSeconds(Action.Revision.CreatedAt) · @RevisionLabels.DefinitionSummary(Action.Revision.Definition)</p>
+            <p>The draft becomes effective at the start time you confirm here. The server re-checks that start against its own clock when committing and rejects a past start without changing the timeline. Leave the start unchanged to use the draft's proposed start.</p>
+            @if (ProposalIsPast)
+            {
+                <p class="te-alert te-warn" role="status">The proposed start @UtcTimes.Format(Action.ProposedEffectiveFrom!.Value) has already passed — enter a future start.</p>
+            }
             <div class="te-fields te-two">
                 <label>
                     Effective from (UTC)
@@ -53,6 +74,7 @@
                     — leaving a field untouched keeps its stored value exactly.
                 </p>
             }
+            <p class="te-note">A blank Effective until commits open-ended from the start time and removes every scheduled revision that it covers. With an end set, the definition that would have applied at that end is preserved afterwards.</p>
         </ConfirmPanel>
     }
     else if (Action.Kind == PendingActionKind.DeleteDraft)
@@ -64,6 +86,7 @@
                       Error="@Error"
                       OnConfirm="OnConfirm"
                       OnCancel="OnCancel">
+            <p><strong>@RevisionLabels.DraftTitle(Action.Revision)</strong> — created @UtcTimes.FormatWithSeconds(Action.Revision.CreatedAt).</p>
             <p>Removes this draft permanently. Committed revisions are unchanged.</p>
         </ConfirmPanel>
     }
@@ -76,7 +99,8 @@
                       Error="@Error"
                       OnConfirm="OnConfirm"
                       OnCancel="OnCancel">
-            <p>Removes this scheduled revision. Neighbouring coverage boundaries are adjusted automatically.</p>
+            <p><strong>@RevisionLabels.RevisionTitle(Action.Revision)</strong> — @UtcTimes.FormatRange(Action.Revision.EffectiveFrom, Action.Revision.EffectiveTo).</p>
+            <p>Removes this scheduled revision. The preceding revision extends to cover the removed period.</p>
         </ConfirmPanel>
     }
 }
@@ -99,6 +123,67 @@
 
     [Parameter]
     public EventCallback OnInputChanged { get; set; }
+
+    [Parameter]
+    public MonitoringRuleTimelineResponse? Timeline { get; set; }
+
+    private bool ProposalIsPast =>
+        Action?.ProposedEffectiveFrom is not null && Action.ProposedEffectiveFrom.Value < Clock.UtcNow;
+
+    private string CurrentBoundaryText
+    {
+        get
+        {
+            if (Timeline is null)
+            {
+                return "The revision that is current at that moment ends there and this draft takes over.";
+            }
+
+            DateTimeOffset now = Clock.UtcNow;
+            MonitoringRuleRevisionDto? current = Timeline.Revisions.FirstOrDefault(revision =>
+                revision.EffectiveFrom is not null
+                && revision.EffectiveFrom <= now
+                && (revision.EffectiveTo is null || revision.EffectiveTo > now));
+            int scheduled = Timeline.Revisions.Count(revision =>
+                revision.EffectiveFrom is not null && revision.EffectiveFrom > now);
+
+            string currentText = current is null
+                ? "No revision is current right now, so this draft begins coverage from the moment it is applied."
+                : $"{RevisionLabels.RevisionTitle(current)} (current, {UtcTimes.FormatRange(current.EffectiveFrom, current.EffectiveTo)}) will end at that moment and this draft takes over.";
+            string scheduledText = scheduled == 0
+                ? string.Empty
+                : $" {scheduled} scheduled revision{(scheduled == 1 ? string.Empty : "s")} currently follow{(scheduled == 1 ? "s" : string.Empty)} the current one.";
+
+            return currentText + scheduledText;
+        }
+    }
+
+    private string BlankEndText
+    {
+        get
+        {
+            int scheduled = Timeline is null
+                ? 0
+                : Timeline.Revisions.Count(revision =>
+                    revision.EffectiveFrom is not null && revision.EffectiveFrom > Clock.UtcNow);
+            string removal = scheduled == 0
+                ? "removes any scheduled revision it covers"
+                : $"removes the {scheduled} scheduled revision{(scheduled == 1 ? string.Empty : "s")} shown on the timeline";
+
+            return $"A blank Effective until commits this draft open-ended: it stays current until something replaces it and {removal}. "
+                + "With an end set, the definition that would have applied at that end is preserved afterwards.";
+        }
+    }
+
+    private async Task OnAcknowledgementChanged(ChangeEventArgs args)
+    {
+        if (Action is not null)
+        {
+            Action.ProposalReplacementAcknowledged = args.Value is true;
+        }
+
+        await OnInputChanged.InvokeAsync();
+    }
 
     private async Task OnFromChanged(ChangeEventArgs args)
     {
