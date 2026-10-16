@@ -45,6 +45,20 @@ public sealed class DraftEditorPageTests
             []);
     }
 
+    private static MonitoringRuleDefinitionDto DefaultSubmittedDefinition()
+    {
+        return new MonitoringRuleDefinitionDto(
+            2,
+            [new ChartZoneDto(
+                string.Empty,
+                0m,
+                0m,
+                0m,
+                [new ChartConditionDto("buy-zone", string.Empty),
+                 new ChartConditionDto("support-loss", string.Empty)])],
+            []);
+    }
+
     private static MonitoringRuleRevisionDto Draft(
         MonitoringRuleDefinitionDto definition,
         string? reason = null,
@@ -499,15 +513,15 @@ public sealed class DraftEditorPageTests
             serverDraftId,
             "draft",
             null,
-            DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-05T09:00:00Z"),
             "synthetic-user",
-            false,
-            "kept reason",
+            true,
             null,
             null,
             null,
             null,
-            ClientTestData.Definition());
+            null,
+            DefaultSubmittedDefinition());
         StubHttpMessageHandler handler = new();
         handler.Enqueue(StubHttpMessageHandler.Json(
             HttpStatusCode.OK,
@@ -554,6 +568,74 @@ public sealed class DraftEditorPageTests
 
         Assert.That(
             handler.Methods.Count(method => method == HttpMethod.Post), Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task Save_WhenCreateOutcomeUnknownAndDraftIsUnrelated_DoesNotAdoptOrOverwrite()
+    {
+        MonitoringRuleRevisionDto unrelatedDraft = new(
+            Guid.Parse("d5000000-0000-0000-0000-0000000000e3"),
+            "draft",
+            null,
+            DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+            "synthetic-user",
+            true,
+            "unrelated draft",
+            null,
+            null,
+            null,
+            null,
+            ClientTestData.Definition());
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, "XTEST"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t0"))));
+        handler.Enqueue((_, _) => throw new HttpRequestException("connection lost"));
+
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentId));
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("New draft")),
+            TimeSpan.FromSeconds(2));
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Check saved drafts")),
+            TimeSpan.FromSeconds(2));
+
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Drafts("tok-d0", unrelatedDraft))));
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Check saved drafts").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("could not be confirmed")),
+            TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                handler.Methods,
+                Is.EqualTo(new[]
+                {
+                    HttpMethod.Get, HttpMethod.Get, HttpMethod.Post, HttpMethod.Get
+                }));
+            Assert.That(cut.Instance.CreatedDraftId, Is.Null);
+        });
+
+        await cut.InvokeAsync(
+            () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("outcome is unknown")),
+            TimeSpan.FromSeconds(2));
+
+        Assert.That(
+            handler.Methods.Count(method => method == HttpMethod.Put), Is.EqualTo(0));
     }
 
     [Test]

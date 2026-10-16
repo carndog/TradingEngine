@@ -186,6 +186,7 @@ else
     private Guid? _loadedDraftId;
     private Guid? _loadedCopyFrom;
     private bool _createOutcomeUnknown;
+    private PendingCreate? _pendingCreate;
     private readonly CancellationTokenSource _lifetime = new();
 
     [Parameter]
@@ -270,6 +271,7 @@ else
         _loadedCopyFrom = CopyFrom;
         _createdDraftId = null;
         _createOutcomeUnknown = false;
+        _pendingCreate = null;
         await LoadAsync();
     }
 
@@ -618,10 +620,19 @@ else
         DateTimeOffset? ProposedTo,
         string ProposedToText);
 
+    private sealed record PendingCreate(
+        MonitoringRuleDraftRequest Request,
+        DateTimeOffset? ProposedFrom,
+        DateTimeOffset? ProposedTo,
+        DateTimeOffset AttemptedAt);
+
     private async Task<ApiResult<MonitoringRuleTimelineResponse>> CreateDraftCoreAsync(
         MonitoringRuleDraftRequest request,
         DraftBaseline submitted)
     {
+        _pendingCreate = new PendingCreate(
+            request, submitted.ProposedFrom, submitted.ProposedTo, Clock.UtcNow);
+
         ApiResult<MonitoringRuleRevisionResponse> created =
             await Api.CreateDraftAsync(Id, request, _token, _lifetime.Token);
         if (created.IsFailure)
@@ -630,11 +641,16 @@ else
             {
                 _createOutcomeUnknown = true;
             }
+            else
+            {
+                _pendingCreate = null;
+            }
 
             return ApiResult<MonitoringRuleTimelineResponse>.Fail(created.Error!);
         }
 
         _createOutcomeUnknown = false;
+        _pendingCreate = null;
         _token = created.Value!.ConcurrencyToken;
         _draft = created.Value.Revision;
         _createdDraftId = created.Value.Revision.Id;
@@ -660,23 +676,37 @@ else
                 return;
             }
 
-            if (drafts.Value!.Drafts.Count == 0)
+            IReadOnlyList<MonitoringRuleRevisionDto> existing = drafts.Value!.Drafts;
+            if (existing.Count == 0)
             {
                 _createOutcomeUnknown = false;
+                _pendingCreate = null;
                 _saveError = null;
                 _notice = "No draft exists on the server — the earlier save did not complete. "
                     + "Your input is kept; save again to create it.";
                 return;
             }
 
-            if (drafts.Value.Drafts.Count > 1)
+            List<MonitoringRuleRevisionDto> matches = existing.Where(IsPendingCreateMatch).ToList();
+            if (matches.Count == 0)
             {
-                _notice = "More than one draft exists — open the draft list to review them before saving again.";
+                _notice = existing.Count == 1
+                    ? "A draft exists on the server but could not be confirmed as the one your save "
+                        + "created — open the draft list to review it before saving again."
+                    : "Drafts exist on the server but none could be confirmed as the one your save "
+                        + "created — open the draft list to review them before saving again.";
+                return;
+            }
+
+            if (matches.Count > 1)
+            {
+                _notice = "More than one draft could be the one your save created — "
+                    + "open the draft list to review them before saving again.";
                 return;
             }
 
             ApiResult<MonitoringRuleRevisionResponse> revision =
-                await Api.GetRevisionAsync(Id, drafts.Value.Drafts[0].Id, _lifetime.Token);
+                await Api.GetRevisionAsync(Id, matches[0].Id, _lifetime.Token);
             if (revision.IsFailure)
             {
                 _saveError = revision.Error;
@@ -694,6 +724,7 @@ else
             _createdDraftId = adopted.Id;
             _token = revision.Value!.ConcurrencyToken;
             _createOutcomeUnknown = false;
+            _pendingCreate = null;
             _saveError = null;
             _definitionBaseline = adopted.Definition is null
                 ? DefinitionEditModel.Empty()
@@ -707,6 +738,70 @@ else
         {
             _busy = false;
         }
+    }
+
+    private bool IsPendingCreateMatch(MonitoringRuleRevisionDto draft)
+    {
+        PendingCreate? pending = _pendingCreate;
+        if (pending is null
+            || draft.CreatedByCaller is false
+            || draft.CreatedAt < pending.AttemptedAt)
+        {
+            return false;
+        }
+
+        return draft.ChangeReason == pending.Request.ChangeReason
+            && draft.ProposedEffectiveFrom == pending.ProposedFrom
+            && draft.ProposedEffectiveTo == pending.ProposedTo
+            && draft.Definition is not null
+            && pending.Request.Definition is not null
+            && SameDefinition(draft.Definition, pending.Request.Definition);
+    }
+
+    private static bool SameDefinition(
+        MonitoringRuleDefinitionDto returned,
+        MonitoringRuleDefinitionDto submitted)
+    {
+        return returned.PriceScale == submitted.PriceScale
+            && SameZones(returned.SupportZones, submitted.SupportZones)
+            && SameZones(returned.ResistanceZones, submitted.ResistanceZones);
+    }
+
+    private static bool SameZones(
+        IReadOnlyList<ChartZoneDto>? returned,
+        IReadOnlyList<ChartZoneDto>? submitted)
+    {
+        if (returned is null || submitted is null)
+        {
+            return returned is null && submitted is null;
+        }
+
+        return returned.Count == submitted.Count
+            && returned.Zip(submitted).All(pair => SameZone(pair.First, pair.Second));
+    }
+
+    private static bool SameZone(ChartZoneDto returned, ChartZoneDto submitted)
+    {
+        return (returned.Id ?? string.Empty) == (submitted.Id ?? string.Empty)
+            && returned.Lower == submitted.Lower
+            && returned.Level == submitted.Level
+            && returned.Upper == submitted.Upper
+            && SameConditions(returned.Conditions, submitted.Conditions);
+    }
+
+    private static bool SameConditions(
+        IReadOnlyList<ChartConditionDto>? returned,
+        IReadOnlyList<ChartConditionDto>? submitted)
+    {
+        if (returned is null || submitted is null)
+        {
+            return returned is null && submitted is null;
+        }
+
+        return returned.Count == submitted.Count
+            && returned.Zip(submitted).All(pair =>
+                (pair.First.Type ?? string.Empty) == (pair.Second.Type ?? string.Empty)
+                && (pair.First.ActionId ?? string.Empty) == (pair.Second.ActionId ?? string.Empty));
     }
 
     private async Task<bool> HandleMutationAsync(ApiResult<MonitoringRuleTimelineResponse> result)
