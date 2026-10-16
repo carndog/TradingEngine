@@ -140,6 +140,9 @@ public sealed class DraftEditorPageTests
 
         await cut.InvokeAsync(
             () => cut.FindAll("button").Single(b => b.TextContent == "Save draft").Click());
+        await Task.Delay(500);
+        NUnit.Framework.TestContext.WriteLine($"REQ={handler.RequestCount} METHODS={string.Join(',', handler.Methods)}");
+        NUnit.Framework.TestContext.WriteLine(cut.Markup[..Math.Min(cut.Markup.Length, 2000)]);
         cut.WaitForAssertion(
             () => Assert.That(cut.Instance.CreatedDraftId, Is.EqualTo(DraftId)),
             TimeSpan.FromSeconds(2));
