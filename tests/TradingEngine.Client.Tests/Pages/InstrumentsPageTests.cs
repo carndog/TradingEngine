@@ -311,10 +311,10 @@ public sealed class InstrumentsPageTests
             () => Assert.That(cut.Markup, Does.Contain("AAA")),
             TimeSpan.FromSeconds(5));
 
-        cut.Find("input[type='search']").Input("AA");
+        await cut.InvokeAsync(() => cut.Find("input[type='search']").Input("AA"));
         await WaitForRequestCountAsync(cut, handler, 2);
 
-        cut.Find("input[type='search']").Input("AA ");
+        await cut.InvokeAsync(() => cut.Find("input[type='search']").Input("AA "));
         await WaitForRequestCountAsync(cut, handler, 3);
 
         gated.SetResult(StubHttpMessageHandler.Json(HttpStatusCode.OK,
@@ -328,7 +328,7 @@ public sealed class InstrumentsPageTests
             Assert.That(RowCheckbox(cut, ThirdId).HasAttribute("disabled"), Is.False);
         });
 
-        RowCheckbox(cut, ThirdId).Change(true);
+        await cut.InvokeAsync(() => RowCheckbox(cut, ThirdId).Change(true));
         cut.WaitForAssertion(
             () => Assert.That(cut.Markup, Does.Contain("1 selected on this page")),
             TimeSpan.FromSeconds(5));
