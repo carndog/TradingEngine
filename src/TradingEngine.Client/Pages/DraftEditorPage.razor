@@ -2,6 +2,7 @@
 @page "/instruments/{Id:guid}/drafts/{DraftId:guid}"
 @inject TradingEngineApiClient Api
 @inject NavigationManager Navigation
+@inject IUiClock Clock
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -27,6 +28,10 @@ else
 {
     <h2 tabindex="-1">@(IsNew ? "New draft" : "Edit draft")</h2>
     <p class="te-sub">@_instrumentLabel</p>
+    @if (_draft is not null)
+    {
+        <p class="te-sub">@RevisionLabels.DraftTitle(_draft) · created @UtcTimes.FormatWithSeconds(_draft.CreatedAt) by @ActorPresentation.Describe(_draft)</p>
+    }
 
     <div class="te-editor">
         <div class="te-editor-head">
@@ -51,8 +56,15 @@ else
                 Proposed start (UTC, optional)
                 <input type="datetime-local" step="0.001" value="@_proposedFrom.Text"
                        @onchange="args => _proposedFrom.Set(args.Value?.ToString())"
-                       aria-label="Proposed effective from UTC">
+                       aria-label="Proposed effective from UTC"
+                       aria-invalid="@(_saveError?.Code == ProposedStartPastCode ? "true" : null)">
             </label>
+            @if (StoredProposalIsPast)
+            {
+                <p class="te-alert te-warn" role="status" style="margin-top:0">
+                    The stored proposed start @UtcTimes.Format(_proposedFrom.Baseline!.Value) has already passed. It is kept as recorded intent; enter a future start or clear it before scheduling.
+                </p>
+            }
             <label>
                 Proposed end (UTC, optional)
                 <input type="datetime-local" step="0.001" value="@_proposedTo.Text"
@@ -124,17 +136,22 @@ else
     <PendingActionPanel Action="@_pending"
                         Busy="@_busy"
                         Error="@_pendingError"
+                        Timeline="@_timeline"
                         OnConfirm="ConfirmPendingAsync"
                         OnCancel="CancelPendingAsync"
                         OnInputChanged="OnPendingInputChanged" />
 }
 
-<DirtyGuard IsDirty="@AnyDirty" />
+<DirtyGuard IsDirty="@(() => AnyDirty)" />
 
 @code {
+    private const string ProposedStartPastCode = "draft.proposed_start_past";
+
     private DefinitionEditModel _definition = DefinitionEditModel.Empty();
     private DefinitionEditModel _definitionBaseline = DefinitionEditModel.Empty();
     private MonitoringRuleRevisionDto? _draft;
+    private MonitoringRuleTimelineResponse? _timeline;
+    private Guid? _createdDraftId;
     private ApiError? _fatal;
     private ApiError? _saveError;
     private ApiError? _pendingError;
@@ -162,9 +179,18 @@ else
     [SupplyParameterFromQuery(Name = "from")]
     public Guid? CopyFrom { get; set; }
 
-    private bool IsNew => DraftId is null;
+    private Guid? SavedDraftId => DraftId ?? _createdDraftId;
+
+    private bool IsNew => SavedDraftId is null;
+
+    internal Guid? CreatedDraftId => _createdDraftId;
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
+
+    private bool StoredProposalIsPast =>
+        _proposedFrom.Modified is false
+        && _proposedFrom.Baseline is not null
+        && _proposedFrom.Baseline.Value < Clock.UtcNow;
 
     private bool Dirty =>
         _definition.SameContent(_definitionBaseline) is false
@@ -212,6 +238,7 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        _createdDraftId = null;
         await LoadAsync();
     }
 
@@ -278,6 +305,7 @@ else
             return;
         }
 
+        _timeline = timeline.Value;
         _token = timeline.Value!.ConcurrencyToken;
         _definition = DefinitionEditModel.Empty();
         _reason = string.Empty;
@@ -310,13 +338,20 @@ else
 
     private async Task LoadExistingDraftAsync()
     {
-        ApiResult<MonitoringRuleRevisionResponse> revision =
-            await Api.GetRevisionAsync(Id, DraftId!.Value, _lifetime.Token);
+        Task<ApiResult<MonitoringRuleRevisionResponse>> revisionTask =
+            Api.GetRevisionAsync(Id, SavedDraftId!.Value, _lifetime.Token);
+        Task<ApiResult<MonitoringRuleTimelineResponse>> timelineTask =
+            Api.GetTimelineAsync(Id, _lifetime.Token);
+        await Task.WhenAll(revisionTask, timelineTask);
+
+        ApiResult<MonitoringRuleRevisionResponse> revision = revisionTask.Result;
         if (revision.IsFailure)
         {
             _fatal = revision.Error;
             return;
         }
+
+        _timeline = timelineTask.Result.Value;
 
         MonitoringRuleRevisionDto draft = revision.Value!.Revision;
         if (draft.EffectiveFrom is not null || draft.Kind == "committed")
@@ -350,10 +385,19 @@ else
 
         _pending = new PendingAction(PendingActionKind.Apply, _draft!, _token)
         {
-            To = new UtcTimeField(_draft!.ProposedEffectiveTo)
+            To = new UtcTimeField(_draft!.ProposedEffectiveTo),
+            ProposedEffectiveFrom = EditedProposedStart()
         };
         _pendingError = null;
         _notice = null;
+    }
+
+    private DateTimeOffset? EditedProposedStart()
+    {
+        UtcTimeResolution resolved = _proposedFrom.Resolve();
+        return resolved.Kind == UtcTimeResolutionKind.Invalid
+            ? _draft?.ProposedEffectiveFrom
+            : resolved.Value;
     }
 
     private async Task BeginSchedule()
@@ -427,6 +471,12 @@ else
             return fromError;
         }
 
+        ApiError? pastError = RejectNewlyEnteredPastProposedStart();
+        if (pastError is not null)
+        {
+            return pastError;
+        }
+
         ApiError? toError = _proposedTo.RequestOptional(out string? toIso);
         if (toError is not null)
         {
@@ -440,6 +490,26 @@ else
         return null;
     }
 
+    private ApiError? RejectNewlyEnteredPastProposedStart()
+    {
+        UtcTimeResolution resolved = _proposedFrom.Resolve();
+        if (resolved.Kind != UtcTimeResolutionKind.Valid || resolved.Value is null)
+        {
+            return null;
+        }
+
+        DateTimeOffset now = Clock.UtcNow;
+        if (resolved.Value.Value >= now)
+        {
+            return null;
+        }
+
+        return ApiError.Create(400, ProposedStartPastCode,
+            $"Proposed start {UtcTimes.Format(resolved.Value.Value)} is in the past (now {UtcTimes.Format(now)}). "
+            + "Enter a future start or clear the field. Your input has been kept and nothing was saved.",
+            null);
+    }
+
     private async Task<ApiResult<MonitoringRuleTimelineResponse>> SaveCoreAsync()
     {
         ApiError? validationError = BuildDraftRequest(out MonitoringRuleDraftRequest? request);
@@ -448,17 +518,42 @@ else
             return ApiResult<MonitoringRuleTimelineResponse>.Fail(validationError);
         }
 
-        ApiResult<MonitoringRuleTimelineResponse> result = IsNew
-            ? await Api.CreateDraftAsync(Id, request!, _token, _lifetime.Token)
-            : await Api.UpdateDraftAsync(Id, DraftId!.Value, request!, _token, _lifetime.Token);
+        if (IsNew)
+        {
+            return await CreateDraftCoreAsync(request!);
+        }
 
+        ApiResult<MonitoringRuleTimelineResponse> result =
+            await Api.UpdateDraftAsync(Id, SavedDraftId!.Value, request!, _token, _lifetime.Token);
         if (result.IsSuccess)
         {
             _token = result.Value!.ConcurrencyToken;
+            _timeline = result.Value;
             ReseedBaseline();
         }
 
         return result;
+    }
+
+    private async Task<ApiResult<MonitoringRuleTimelineResponse>> CreateDraftCoreAsync(
+        MonitoringRuleDraftRequest request)
+    {
+        ApiResult<MonitoringRuleRevisionResponse> created =
+            await Api.CreateDraftAsync(Id, request, _token, _lifetime.Token);
+        if (created.IsFailure)
+        {
+            return ApiResult<MonitoringRuleTimelineResponse>.Fail(created.Error!);
+        }
+
+        _token = created.Value!.ConcurrencyToken;
+        _draft = created.Value.Revision;
+        _createdDraftId = created.Value.Revision.Id;
+        ReseedBaseline();
+
+        return ApiResult<MonitoringRuleTimelineResponse>.Ok(
+            _timeline is null
+                ? new MonitoringRuleTimelineResponse(Guid.Empty, Id, _token, null, [])
+                : _timeline with { ConcurrencyToken = _token });
     }
 
     private async Task<bool> HandleMutationAsync(ApiResult<MonitoringRuleTimelineResponse> result)
@@ -484,6 +579,7 @@ else
     {
         _busy = true;
         _notice = null;
+        _saveError = null;
         ApiResult<MonitoringRuleTimelineResponse> result;
         try
         {
@@ -496,7 +592,7 @@ else
 
         if (await HandleMutationAsync(result))
         {
-            Navigation.NavigateTo($"instruments/{Id}?tab=drafts");
+            Navigation.NavigateTo($"instruments/{Id}?tab=drafts&focus={SavedDraftId}");
         }
     }
 
@@ -513,7 +609,8 @@ else
 
         try
         {
-            ApiError? validationError = ResolvePendingInputs(out string? fromIso, out string? toIso);
+            ApiError? validationError = _pending.ResolveInputs(
+                Clock.UtcNow, out string? fromIso, out string? toIso);
             if (validationError is not null)
             {
                 _pendingError = validationError;
@@ -529,12 +626,13 @@ else
                 }
             }
 
+            Guid draftId = SavedDraftId!.Value;
             ApiResult<MonitoringRuleTimelineResponse> result;
             if (_pending.Kind == PendingActionKind.Apply)
             {
                 result = await Api.ApplyDraftAsync(
                     Id,
-                    DraftId!.Value,
+                    draftId,
                     new ApplyMonitoringRuleRequest(toIso),
                     _token,
                     _lifetime.Token);
@@ -543,14 +641,14 @@ else
             {
                 result = await Api.ScheduleDraftAsync(
                     Id,
-                    DraftId!.Value,
+                    draftId,
                     new ScheduleMonitoringRuleRequest(fromIso, toIso),
                     _token,
                     _lifetime.Token);
             }
             else
             {
-                result = await Api.DeleteDraftAsync(Id, DraftId!.Value, _token, _lifetime.Token);
+                result = await Api.DeleteDraftAsync(Id, draftId, _token, _lifetime.Token);
             }
 
             if (await HandleMutationAsync(result))
@@ -560,41 +658,18 @@ else
                     : _pending.Kind == PendingActionKind.Schedule
                         ? "timeline"
                         : "drafts";
+                string focus = _pending.Kind == PendingActionKind.DeleteDraft
+                    ? string.Empty
+                    : $"&focus={draftId}";
                 _pending = null;
                 _pendingError = null;
-                Navigation.NavigateTo($"instruments/{Id}?tab={tab}");
+                Navigation.NavigateTo($"instruments/{Id}?tab={tab}{focus}");
             }
         }
         finally
         {
             _busy = false;
         }
-    }
-
-    private ApiError? ResolvePendingInputs(out string? effectiveFromIso, out string? effectiveToIso)
-    {
-        effectiveFromIso = null;
-        effectiveToIso = null;
-
-        if (_pending!.Kind == PendingActionKind.Schedule)
-        {
-            ApiError? fromError = _pending.From!.RequestRequired(out effectiveFromIso);
-            if (fromError is not null)
-            {
-                return fromError;
-            }
-        }
-
-        if (_pending.Kind is PendingActionKind.Apply or PendingActionKind.Schedule)
-        {
-            ApiError? toError = _pending.To!.RequestOptional(out effectiveToIso);
-            if (toError is not null)
-            {
-                return toError;
-            }
-        }
-
-        return null;
     }
 
     private async Task OpenConflictAsync()
@@ -616,7 +691,7 @@ else
         }
 
         ApiResult<MonitoringRuleRevisionResponse> latest =
-            await Api.GetRevisionAsync(Id, DraftId!.Value, _lifetime.Token);
+            await Api.GetRevisionAsync(Id, SavedDraftId!.Value, _lifetime.Token);
         if (latest.IsSuccess)
         {
             _draftConflict.Open(latest.Value!);
@@ -631,6 +706,7 @@ else
     {
         MonitoringRuleTimelineResponse latest = _timelineConflict.Take();
         _token = latest.ConcurrencyToken;
+        _timeline = latest;
         _definition = DefinitionEditModel.Empty();
         _definition.AddSupportZone();
         _reason = string.Empty;
@@ -644,6 +720,7 @@ else
     {
         MonitoringRuleTimelineResponse latest = _timelineConflict.Take();
         _token = latest.ConcurrencyToken;
+        _timeline = latest;
         if (_pending is not null)
         {
             await ConfirmPendingAsync();

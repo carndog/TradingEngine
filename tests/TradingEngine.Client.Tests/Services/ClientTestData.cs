@@ -36,14 +36,18 @@ internal static class ClientTestData
         DateTimeOffset? effectiveTo = null,
         DateTimeOffset? proposedFrom = null,
         DateTimeOffset? proposedTo = null,
-        string? changeReason = null)
+        string? changeReason = null,
+        bool createdByCaller = false,
+        DateTimeOffset? createdAt = null,
+        string createdBy = "synthetic-user")
     {
         return new MonitoringRuleRevisionDto(
             id,
             kind,
             revisionNumber,
-            DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
-            "synthetic-user",
+            createdAt ?? DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
+            createdBy,
+            createdByCaller,
             changeReason,
             effectiveFrom,
             effectiveTo,

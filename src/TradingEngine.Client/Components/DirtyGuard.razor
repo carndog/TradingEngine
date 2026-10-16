@@ -1,15 +1,15 @@
 @inject IJSRuntime JS
 
 <NavigationLock OnBeforeInternalNavigation="GuardNavigation"
-                ConfirmExternalNavigation="@IsDirty" />
+                ConfirmExternalNavigation="@IsDirty()" />
 
 @code {
-    [Parameter]
-    public bool IsDirty { get; set; }
+    [Parameter, EditorRequired]
+    public Func<bool> IsDirty { get; set; } = () => false;
 
     private async Task GuardNavigation(LocationChangingContext context)
     {
-        if (IsDirty)
+        if (IsDirty())
         {
             bool confirmed = await JS.InvokeAsync<bool>(
                 "confirm",

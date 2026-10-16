@@ -82,6 +82,7 @@ else
         <DraftListPanel Drafts="@_drafts"
                         Error="@_draftsError"
                         InstrumentId="@Id"
+                        FocusId="@_focusId"
                         SignInUrl="@SignInUrl"
                         OnRetry="ReloadAllAsync"
                         OnApply="BeginApply"
@@ -90,6 +91,7 @@ else
             <PendingActionPanel Action="@_pending"
                                 Busy="@_pendingBusy"
                                 Error="@_pendingError"
+                                Timeline="@_timeline"
                                 OnConfirm="ConfirmPendingAsync"
                                 OnCancel="CancelPendingAsync"
                                 OnInputChanged="OnPendingInputChanged" />
@@ -101,12 +103,14 @@ else
         <TimelinePanel Timeline="@_timeline"
                        Error="@_timelineError"
                        InstrumentId="@Id"
+                       FocusId="@_focusId"
                        SignInUrl="@SignInUrl"
                        OnRetry="ReloadAllAsync"
                        OnRemove="BeginRemoveRevision">
             <PendingActionPanel Action="@_pending"
                                 Busy="@_pendingBusy"
                                 Error="@_pendingError"
+                                Timeline="@_timeline"
                                 OnConfirm="ConfirmPendingAsync"
                                 OnCancel="CancelPendingAsync"
                                 OnInputChanged="OnPendingInputChanged" />
@@ -123,7 +127,7 @@ else
     }
 }
 
-<DirtyGuard IsDirty="@(_pending?.HasInput == true)" />
+<DirtyGuard IsDirty="@(() => _pending?.HasInput == true)" />
 
 @code {
     private WatchedInstrumentSettingsResponse? _settings;
@@ -148,6 +152,9 @@ else
     private bool _refreshFaulted;
     private ApiError? _refreshError;
     private bool _headingFocusPending;
+    private bool _revisionFocusPending;
+    private Guid? _focusId;
+    private PendingActionKind? _lastPendingKind;
     private readonly CancellationTokenSource _lifetime = new();
 
     internal TimeSpan RefreshInterval { get; set; } = TimeSpan.FromSeconds(20);
@@ -160,11 +167,16 @@ else
 
     internal string? Notice => _notice;
 
+    internal Guid? FocusId => _focusId;
+
     [Parameter]
     public Guid Id { get; set; }
 
     [SupplyParameterFromQuery(Name = "tab")]
     public string? TabQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "focus")]
+    public Guid? FocusQuery { get; set; }
 
     private string SignInUrl => AuthLinks.SignInUrl(Navigation);
 
@@ -202,6 +214,11 @@ else
     protected override async Task OnParametersSetAsync()
     {
         _tab = TabQuery is "drafts" or "timeline" or "settings" ? TabQuery : "current";
+        if (FocusQuery is not null && FocusQuery.Value != _focusId)
+        {
+            _focusId = FocusQuery.Value;
+            _revisionFocusPending = true;
+        }
 
         if (Id != _loadedId)
         {
@@ -232,6 +249,30 @@ else
             _headingFocusPending = false;
             await JS.InvokeVoidAsync("teFocus", "h2");
         }
+
+        if (_revisionFocusPending && _fatal is null && FocusTargetIsRendered())
+        {
+            _revisionFocusPending = false;
+            string selector = _tab == "drafts" || _tab == "timeline"
+                ? $"#revision-{_focusId}"
+                : "h2";
+            await JS.InvokeVoidAsync("teFocus", selector);
+        }
+    }
+
+    private bool FocusTargetIsRendered()
+    {
+        if (_focusId is null)
+        {
+            return false;
+        }
+
+        return _tab switch
+        {
+            "drafts" => _drafts?.Drafts.Any(draft => draft.Id == _focusId) == true,
+            "timeline" => _timeline?.Revisions.Any(revision => revision.Id == _focusId) == true,
+            _ => _settings is not null,
+        };
     }
 
     private async Task ReloadAllAsync()
@@ -438,35 +479,6 @@ else
         return true;
     }
 
-    private ApiError? ResolvePendingInputs(
-        PendingAction action,
-        out string? effectiveFromIso,
-        out string? effectiveToIso)
-    {
-        effectiveFromIso = null;
-        effectiveToIso = null;
-
-        if (action.Kind == PendingActionKind.Schedule)
-        {
-            ApiError? fromError = action.From!.RequestRequired(out effectiveFromIso);
-            if (fromError is not null)
-            {
-                return fromError;
-            }
-        }
-
-        if (action.Kind is PendingActionKind.Apply or PendingActionKind.Schedule)
-        {
-            ApiError? toError = action.To!.RequestOptional(out effectiveToIso);
-            if (toError is not null)
-            {
-                return toError;
-            }
-        }
-
-        return null;
-    }
-
     private async Task ConfirmPendingAsync()
     {
         if (_pending is null)
@@ -474,14 +486,16 @@ else
             return;
         }
 
-        ApiError? validationError = ResolvePendingInputs(
-            _pending, out string? effectiveFromIso, out string? effectiveToIso);
+        ApiError? validationError = _pending.ResolveInputs(
+            Clock.UtcNow, out string? effectiveFromIso, out string? effectiveToIso);
         if (validationError is not null)
         {
             _pendingError = validationError;
             return;
         }
 
+        _lastPendingKind = _pending.Kind;
+        _focusId = _pending.Revision.Id;
         _pendingBusy = true;
         _pendingError = null;
         _pendingConflict.Take();
@@ -533,7 +547,7 @@ else
         {
             _pending = null;
             await ReloadAllAsync();
-            _notice = "Timeline updated.";
+            AnnounceMutationOutcome();
         }
         else if (result.Error!.IsPreconditionFailed)
         {
@@ -543,6 +557,56 @@ else
         {
             _pendingError = result.Error;
         }
+    }
+
+    private void AnnounceMutationOutcome()
+    {
+        if (_lastPendingKind is null)
+        {
+            _notice = "Timeline updated.";
+            return;
+        }
+
+        if (_lastPendingKind == PendingActionKind.DeleteDraft)
+        {
+            _notice = "Draft deleted. No committed revision changed.";
+            _focusId = null;
+            _revisionFocusPending = false;
+            return;
+        }
+
+        if (_lastPendingKind == PendingActionKind.RemoveRevision)
+        {
+            _notice = "Scheduled revision removed. The preceding revision now covers its period.";
+            _focusId = null;
+            _revisionFocusPending = false;
+            return;
+        }
+
+        MonitoringRuleRevisionDto? committed = _timeline?.Revisions
+            .SingleOrDefault(revision => revision.Id == _focusId);
+        if (committed is null)
+        {
+            _notice = "Timeline updated. The committed revision is no longer visible in the latest timeline — review the Timeline tab.";
+            _revisionFocusPending = false;
+            return;
+        }
+
+        _revisionFocusPending = true;
+
+        MonitoringRuleRevisionDto? predecessor = _timeline?.Revisions
+            .SingleOrDefault(revision =>
+                revision.Id != committed.Id
+                && committed.EffectiveFrom is not null
+                && revision.EffectiveTo == committed.EffectiveFrom);
+        string predecessorText = predecessor is null
+            ? "It is the earliest coverage period."
+            : $"{RevisionLabels.RevisionTitle(predecessor)} now ends at its start ({UtcTimes.Format(predecessor.EffectiveTo)}).";
+        string verb = _lastPendingKind == PendingActionKind.Apply ? "applied" : "scheduled";
+
+        _notice = $"{RevisionLabels.RevisionTitle(committed)} {verb} — effective "
+            + $"{UtcTimes.FormatRange(committed.EffectiveFrom, committed.EffectiveTo)}. "
+            + predecessorText;
     }
 
     private async Task OpenPendingConflictAsync()

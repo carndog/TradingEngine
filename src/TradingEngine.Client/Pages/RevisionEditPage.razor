@@ -103,7 +103,7 @@ else
     </section>
 }
 
-<DirtyGuard IsDirty="@Dirty" />
+<DirtyGuard IsDirty="@(() => Dirty)" />
 
 @code {
     private DefinitionEditModel _definition = DefinitionEditModel.Empty();

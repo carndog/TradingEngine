@@ -173,13 +173,13 @@ public sealed class TradingEngineApiClient
             cancellationToken);
     }
 
-    public Task<ApiResult<MonitoringRuleTimelineResponse>> CreateDraftAsync(
+    public Task<ApiResult<MonitoringRuleRevisionResponse>> CreateDraftAsync(
         Guid instrumentId,
         MonitoringRuleDraftRequest request,
         string concurrencyToken,
         CancellationToken cancellationToken = default)
     {
-        return SendAsync<MonitoringRuleTimelineResponse>(
+        return SendAsync<MonitoringRuleRevisionResponse>(
             HttpMethod.Post,
             $"api/watched-instruments/{instrumentId}/monitoring-rule/drafts",
             request,

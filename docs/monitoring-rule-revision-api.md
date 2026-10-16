@@ -29,7 +29,7 @@ Every mutating endpoint requires the current concurrency token in an `If-Match` 
 | `GET .../monitoring-rule/drafts` | All drafts | `200` drafts response |
 | `GET .../monitoring-rule/revisions/{revisionId}` | One revision or draft by id | `200` revision response |
 | `GET .../monitoring-rule/revisions/applicable?at={instant}` | Revision effective at `at`; defaults to server now when omitted | `200` revision response |
-| `POST .../monitoring-rule/drafts` | Create a draft | `200` timeline response |
+| `POST .../monitoring-rule/drafts` | Create a draft | `200` revision response identifying the created draft |
 | `PUT .../monitoring-rule/drafts/{draftId}` | Replace a draft's definition, reason and proposal | `200` timeline response |
 | `DELETE .../monitoring-rule/drafts/{draftId}` | Discard a draft | `200` timeline response |
 | `POST .../monitoring-rule/drafts/{draftId}/apply` | Commit a draft from server now; `effectiveTo` bounds it | `200` timeline response |
@@ -94,7 +94,7 @@ Malformed or missing required timestamps return `400` `monitoring_rule.instant_i
 
 ### Response shapes
 
-Timeline response (`monitoring-rule` and every successful write):
+Timeline response (`monitoring-rule` and every successful write except `POST /drafts`, which returns a revision response for the created draft so a client can address it by `id` afterwards instead of creating it again):
 
 ```json
 {

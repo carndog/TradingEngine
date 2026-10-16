@@ -563,6 +563,15 @@ a {
     gap: 8px;
 }
 
+.te-history li.te-focus {
+    border-color: var(--te-blue);
+    box-shadow: 0 0 0 2px var(--te-blue);
+}
+
+.te-history li:focus {
+    outline: none;
+}
+
 .te-confirm {
     background: var(--te-panel);
     border: 1px solid var(--te-border);

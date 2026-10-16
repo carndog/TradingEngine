@@ -168,11 +168,11 @@ internal sealed class MonitoringRuleApiHost : IDisposable
             new MonitoringRuleDraftRequest(changeReason, proposedPeriod, DefinitionDto(level)),
             token);
         Assert.That(response.IsSuccessStatusCode, Is.True);
-        MonitoringRuleDraftsResponse drafts = await GetDraftsAsync();
-        MonitoringRuleRevisionDto draft = drafts.Drafts.Single(candidate =>
-            candidate.Definition.SupportZones![0].Level == level);
+        MonitoringRuleRevisionResponse? created = await response.Content
+            .ReadFromJsonAsync<MonitoringRuleRevisionResponse>();
+        Assert.That(created, Is.Not.Null);
 
-        return (draft.Id, drafts.ConcurrencyToken);
+        return (created!.Revision.Id, created.ConcurrencyToken);
     }
 
     public Task<HttpResponseMessage> SendAsync(
