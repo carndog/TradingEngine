@@ -7,6 +7,7 @@ using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.Session;
 using TradingEngine.Api.WatchedInstruments;
 using TradingEngine.Infrastructure;
+using TradingEngine.Infrastructure.MarketData;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -29,7 +30,8 @@ builder.Services
     .AddSystemClock()
     .AddWatchedInstruments()
     .AddMonitoringRules()
-    .AddTradingEngineInfrastructure(connectionString);
+    .AddTradingEngineInfrastructure(connectionString)
+    .AddEtoroMarketData(builder.Configuration);
 
 WebApplication app = builder.Build();
 
