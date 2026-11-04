@@ -17,7 +17,8 @@ public static class MarketDataServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         services.AddOptions<EToroMarketDataOptions>()
-            .Bind(configuration.GetSection(EToroMarketDataOptions.SectionName));
+            .Bind(configuration.GetSection(EToroMarketDataOptions.SectionName))
+            .PostConfigure(options => options.NormalizeMappings());
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton<ProviderRateGate>();

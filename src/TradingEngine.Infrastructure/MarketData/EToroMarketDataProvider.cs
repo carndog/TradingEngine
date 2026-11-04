@@ -64,6 +64,12 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         ArgumentNullException.ThrowIfNull(instrument);
         RequireCredentials();
 
+        Error? currencyError = CheckQuoteCurrency(instrument);
+        if (currencyError is not null)
+        {
+            return currencyError;
+        }
+
         Instant deadline = _clock.GetCurrentInstant()
             .Plus(Duration.FromTimeSpan(MaxExecutionTime()));
 
@@ -101,35 +107,73 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 .WithExtension("symbol", instrument.Symbol);
         }
 
-        string relativeUri = string.Create(
-            CultureInfo.InvariantCulture,
-            $"{SearchPath}?internalSymbolFull={Uri.EscapeDataString(instrument.Symbol)}&fields={SearchFields}");
-        EToroProviderResponse response = await SendWithBoundedRetriesAsync(
-            relativeUri,
-            deadline,
-            cancellationToken);
+        List<EToroSearchItem> items = [];
+        HashSet<long> observedIds = [];
+        int totalItems = int.MaxValue;
 
-        if (response.StatusCode == HttpStatusCode.OK)
+        for (int page = 1; page <= _options.MaxSearchPages; page++)
         {
-            return ResolveFromSearch(instrument, response, mappings);
+            EToroProviderResponse response = await SendWithBoundedRetriesAsync(
+                SearchUri(instrument.Symbol, page),
+                deadline,
+                cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                return Throttled(response);
+            }
+
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                throw ProviderFailure("search instruments", response);
+            }
+
+            EToroSearchResponse pageResult =
+                Deserialize<EToroSearchResponse>(response.Body, "search");
+            List<EToroSearchItem> pageItems = pageResult.Items ?? [];
+            totalItems = pageResult.TotalItems;
+
+            int newObserved = 0;
+            foreach (EToroSearchItem item in pageItems)
+            {
+                if (item.InstrumentId.HasValue
+                    && observedIds.Add(item.InstrumentId.Value))
+                {
+                    newObserved++;
+                }
+            }
+
+            items.AddRange(pageItems);
+
+            if (observedIds.Count >= totalItems)
+            {
+                break;
+            }
+
+            if (pageItems.Count == 0 || newObserved == 0)
+            {
+                break;
+            }
         }
 
-        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+        if (observedIds.Count < totalItems)
         {
-            return Throttled(response);
+            return MarketDataErrors.SearchPaginationIncomplete
+                .WithExtension("exchange", instrument.Exchange)
+                .WithExtension("symbol", instrument.Symbol)
+                .WithExtension("totalItems", totalItems)
+                .WithExtension("distinctItemsReceived", observedIds.Count);
         }
 
-        throw ProviderFailure("search instruments", response);
+        return ResolveFromSearch(instrument, items, mappings);
     }
 
     private Result<long> ResolveFromSearch(
         MarketInstrumentIdentity instrument,
-        EToroProviderResponse response,
+        List<EToroSearchItem> items,
         string[] mappings)
     {
-        EToroSearchResponse page = Deserialize<EToroSearchResponse>(response.Body, "search");
-
-        long[] matches = (page.Items ?? [])
+        long[] matches = items
             .Where(item => string.Equals(
                 item.InternalSymbolFull,
                 instrument.Symbol,
@@ -251,6 +295,13 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 };
             }
 
+            if (DeadlineExceeded(deadline))
+            {
+                throw new TimeoutException(
+                    $"The eToro request '{relativeUri}' did not start within the " +
+                    "permitted execution budget.");
+            }
+
             string requestId = Guid.NewGuid().ToString("D");
             try
             {
@@ -290,7 +341,9 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                     throw;
                 }
 
-                if (attempt >= _options.MaxRetryAttempts || DeadlineExceeded(deadline))
+                if (attempt >= _options.MaxRetryAttempts
+                    || DeadlineExceeded(deadline)
+                    || DeadlineExceededAfter(deadline, RetryBackoff(attempt)))
                 {
                     throw new TimeoutException(
                         $"The eToro request '{relativeUri}' timed out after " +
@@ -302,7 +355,9 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             }
             catch (HttpRequestException exception)
             {
-                if (attempt >= _options.MaxRetryAttempts || DeadlineExceeded(deadline))
+                if (attempt >= _options.MaxRetryAttempts
+                    || DeadlineExceeded(deadline)
+                    || DeadlineExceededAfter(deadline, RetryBackoff(attempt)))
                 {
                     throw new EToroMarketDataException(
                         $"The eToro request '{relativeUri}' failed after " +
@@ -313,6 +368,43 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 await Task.Delay(RetryBackoff(attempt), _timeProvider, cancellationToken);
             }
         }
+    }
+
+    private static string SearchUri(string symbol, int page)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{SearchPath}?internalSymbolFull={Uri.EscapeDataString(symbol)}" +
+            $"&fields={SearchFields}&pageNumber={page}");
+    }
+
+    private Error? CheckQuoteCurrency(MarketInstrumentIdentity instrument)
+    {
+        if (_options.QuoteCurrencyMap.TryGetValue(
+                instrument.Exchange,
+                out Dictionary<string, string>? symbols) is false
+            || symbols.TryGetValue(instrument.Symbol, out string? nativeCurrency) is false
+            || string.IsNullOrWhiteSpace(nativeCurrency))
+        {
+            return MarketDataErrors.QuoteCurrencyUnconfigured
+                .WithExtension("exchange", instrument.Exchange)
+                .WithExtension("symbol", instrument.Symbol)
+                .WithExtension("requestedCurrency", instrument.QuoteCurrency);
+        }
+
+        if (string.Equals(
+                nativeCurrency,
+                instrument.QuoteCurrency,
+                StringComparison.OrdinalIgnoreCase) is false)
+        {
+            return MarketDataErrors.QuoteCurrencyConflict
+                .WithExtension("exchange", instrument.Exchange)
+                .WithExtension("symbol", instrument.Symbol)
+                .WithExtension("requestedCurrency", instrument.QuoteCurrency)
+                .WithExtension("providerCurrency", nativeCurrency);
+        }
+
+        return null;
     }
 
     private HttpRequestMessage CreateRequest(string relativeUri, string requestId)

@@ -18,6 +18,25 @@ public sealed class EToroMarketDataOptions
 
     public int ResolutionCacheSeconds { get; set; } = 86400;
 
+    public int MaxSearchPages { get; set; } = 5;
+
     public Dictionary<string, string[]> ExchangeMap { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, Dictionary<string, string>> QuoteCurrencyMap { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public void NormalizeMappings()
+    {
+        ExchangeMap = new Dictionary<string, string[]>(
+            ExchangeMap,
+            StringComparer.OrdinalIgnoreCase);
+        QuoteCurrencyMap = new Dictionary<string, Dictionary<string, string>>(
+            QuoteCurrencyMap.ToDictionary(
+                pair => pair.Key,
+                pair => new Dictionary<string, string>(
+                    pair.Value,
+                    StringComparer.OrdinalIgnoreCase)),
+            StringComparer.OrdinalIgnoreCase);
+    }
 }

@@ -38,6 +38,14 @@ public sealed class SmokeRunnerTests
             ExchangeMap = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
                 ["XTEST"] = ["Test Exchange"]
+            },
+            QuoteCurrencyMap = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["XTEST"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["DEMO"] = "USD"
+                }
             }
         };
     }

@@ -23,7 +23,28 @@ public sealed class ProviderRateGate
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        await _semaphore.WaitAsync(cancellationToken);
+        if (await _semaphore.WaitAsync(TimeSpan.Zero, cancellationToken) is false)
+        {
+            TimeSpan budget = RemainingFor(deadline);
+            if (budget <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            using CancellationTokenSource budgetScope = new(budget, _timeProvider);
+            using CancellationTokenSource linked = CancellationTokenSource
+                .CreateLinkedTokenSource(cancellationToken, budgetScope.Token);
+            try
+            {
+                await _semaphore.WaitAsync(linked.Token);
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested is false)
+            {
+                return false;
+            }
+        }
+
         try
         {
             Queue<Instant> requests = RequestsFor(policy.Name);
@@ -34,6 +55,11 @@ public sealed class ProviderRateGate
                     && requests.Peek().Plus(Duration.FromTimeSpan(policy.Window)) <= now)
                 {
                     requests.Dequeue();
+                }
+
+                if (now >= deadline)
+                {
+                    return false;
                 }
 
                 if (requests.Count < policy.Limit)
@@ -56,6 +82,12 @@ public sealed class ProviderRateGate
         {
             _semaphore.Release();
         }
+    }
+
+    private TimeSpan RemainingFor(Instant deadline)
+    {
+        TimeSpan remaining = (deadline - _clock.GetCurrentInstant()).ToTimeSpan();
+        return remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
     }
 
     private Queue<Instant> RequestsFor(string policyName)

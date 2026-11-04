@@ -39,6 +39,18 @@ public sealed class EToroMarketDataProviderTests
             {
                 ["XTEST"] = ["Test Exchange"],
                 ["XID"] = ["7"]
+            },
+            QuoteCurrencyMap = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["XTEST"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["DEMO"] = "USD"
+                },
+                ["XID"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["DEMO"] = "USD"
+                }
             }
         };
     }
@@ -435,20 +447,13 @@ public sealed class EToroMarketDataProviderTests
     [Test]
     public void GetCurrentQuoteAsync_WhenAttemptsTimeOut_ThrowsTimeoutException()
     {
-        _options.RequestTimeoutSeconds = 0;
         _options.MaxRetryAttempts = 1;
         ScriptedHttpMessageHandler handler = new();
         handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
-        handler.Enqueue(async (_, cancellationToken) =>
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        });
-        handler.Enqueue(async (_, cancellationToken) =>
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        });
+        handler.Enqueue((_, _) => Task.FromException<HttpResponseMessage>(
+            new TaskCanceledException("attempt timed out")));
+        handler.Enqueue((_, _) => Task.FromException<HttpResponseMessage>(
+            new TaskCanceledException("attempt timed out")));
         IMarketDataProvider provider = CreateProvider(handler);
 
         Assert.Multiple(() =>
@@ -522,6 +527,263 @@ public sealed class EToroMarketDataProviderTests
                 handler.Requests[2].RequestUri!.ToString(),
                 Does.Contain("/api/v2/market-data/rates"));
             Assert.That(second.Value.Bid, Is.EqualTo(10.7m));
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenQuoteCurrencyUnconfigured_ReturnsUnconfigured()
+    {
+        _options.QuoteCurrencyMap = new Dictionary<string, Dictionary<string, string>>(
+            StringComparer.OrdinalIgnoreCase);
+        ScriptedHttpMessageHandler handler = new();
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.quote_currency_unconfigured"));
+            Assert.That(handler.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenQuoteCurrencyConflicts_ReturnsConflict()
+    {
+        MarketInstrumentIdentity wrongCurrency = new("XTEST", "DEMO", "EUR");
+        ScriptedHttpMessageHandler handler = new();
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            wrongCurrency,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.quote_currency_conflict"));
+            Assert.That(
+                result.Error.Extensions?["providerCurrency"],
+                Is.EqualTo("USD"));
+            Assert.That(
+                result.Error.Extensions?["requestedCurrency"],
+                Is.EqualTo("EUR"));
+            Assert.That(handler.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WithCachedResolution_StillValidatesCurrency()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
+        IMarketDataProvider provider = CreateProvider(handler);
+        Result<MarketQuote> first = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Result<MarketQuote> second = await provider.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO", "EUR"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.IsSuccess, Is.True);
+            Assert.That(second.IsFailure, Is.True);
+            Assert.That(
+                second.Error.Code,
+                Is.EqualTo("market_data.quote_currency_conflict"));
+            Assert.That(handler.Requests, Has.Count.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void GetCurrentQuoteAsync_WhenTimeoutBackoffExceedsBudget_ThrowsTimeout()
+    {
+        _options.MaxExecutionTimeSeconds = 1;
+        ScriptedHttpMessageHandler handler = new();
+        handler.Enqueue((_, _) =>
+        {
+            _clock.Advance(Duration.FromMilliseconds(990));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")))
+            });
+        });
+        handler.Enqueue((_, _) => Task.FromException<HttpResponseMessage>(
+            new TaskCanceledException("attempt timed out")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                async () => await provider.GetCurrentQuoteAsync(
+                    Instrument,
+                    CancellationToken.None),
+                Throws.TypeOf<TimeoutException>());
+            Assert.That(_timeProvider.DelayRequests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void GetCurrentQuoteAsync_WhenNetworkBackoffExceedsBudget_ThrowsProviderException()
+    {
+        _options.MaxExecutionTimeSeconds = 1;
+        ScriptedHttpMessageHandler handler = new();
+        handler.Enqueue((_, _) =>
+        {
+            _clock.Advance(Duration.FromMilliseconds(990));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")))
+            });
+        });
+        handler.Enqueue((_, _) => Task.FromException<HttpResponseMessage>(
+            new HttpRequestException("network failure")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                async () => await provider.GetCurrentQuoteAsync(
+                    Instrument,
+                    CancellationToken.None),
+                Throws.TypeOf<EToroMarketDataException>());
+            Assert.That(_timeProvider.DelayRequests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenMatchIsOnLaterPage_ReturnsQuote()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            1,
+            26,
+            EToroPayloads.SearchFillers(9000, 25)));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            2,
+            26,
+            (4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(result.Value.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(handler.Requests, Has.Count.EqualTo(3));
+            Assert.That(
+                handler.Requests[0].RequestUri!.ToString(),
+                Does.Contain("pageNumber=1"));
+            Assert.That(
+                handler.Requests[1].RequestUri!.ToString(),
+                Does.Contain("pageNumber=2"));
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenCandidatesDifferAcrossPages_ReturnsAmbiguous()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            1,
+            2,
+            (4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            2,
+            2,
+            (4243, "DEMO", 5, "Test Exchange")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.instrument_mapping_ambiguous"));
+            Assert.That(handler.Requests, Has.Count.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenPaginationRepeats_ReturnsIncomplete()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            1,
+            50,
+            EToroPayloads.SearchFillers(9000, 25)));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            2,
+            50,
+            EToroPayloads.SearchFillers(9000, 25)));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.search_pagination_incomplete"));
+            Assert.That(result.Error.Extensions?["totalItems"], Is.EqualTo(50));
+            Assert.That(
+                result.Error.Extensions?["distinctItemsReceived"],
+                Is.EqualTo(25));
+            Assert.That(handler.Requests, Has.Count.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenPagesExceedBound_ReturnsIncomplete()
+    {
+        _options.MaxSearchPages = 2;
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            1,
+            75,
+            EToroPayloads.SearchFillers(9000, 25)));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            2,
+            75,
+            EToroPayloads.SearchFillers(9100, 25)));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.search_pagination_incomplete"));
+            Assert.That(handler.Requests, Has.Count.EqualTo(2));
         });
     }
 

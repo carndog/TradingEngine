@@ -57,7 +57,9 @@ Section `EToro:MarketData` (`EToroMarketDataOptions`):
 | `MaxExecutionTimeSeconds` | 15 | Whole-call deadline covering retries and pacing. |
 | `MaxRetryAttempts` | 2 | Retries after the first attempt on transient failures. |
 | `ResolutionCacheSeconds` | 86400 | TTL for the resolved exchange+symbol+currency to `instrumentId` mapping. |
+| `MaxSearchPages` | 5 | Upper bound on instrument-search pages read per resolution. |
 | `ExchangeMap` | `{}` | Per-exchange allow-lists used to disambiguate search results (below). |
+| `QuoteCurrencyMap` | `{}` | Per-exchange+symbol map of the provider listing's native quote currency/unit (below). |
 
 Set credentials through user-secrets or environment variables:
 
@@ -87,13 +89,35 @@ Resolution is explicit and verified, never guessed:
 - Zero surviving candidates → `market_data.instrument_mapping_unresolved`.
 - More than one surviving candidate → `market_data.instrument_mapping_ambiguous` (candidate IDs are attached as an error extension).
 
+Search results are paginated (`pageNumber` query parameter). The adapter keeps fetching pages — inside the same quota and execution budget — until the distinct `instrumentId` count reaches `totalItems`, bounded by `MaxSearchPages`. A page returning no items or no new instrument IDs while `totalItems` remains uncovered, or exhaustion of the page bound, is a non-progressing/incomplete result → `market_data.search_pagination_incomplete`. A unique match is declared and cached only after completeness is established.
+
 Resolved IDs are cached in-memory for `ResolutionCacheSeconds` (eToro IDs are documented as immutable). Positive results only; failures are not cached.
+
+### Quote-currency verification
+
+Provider responses carry no quote-currency field, so the listing's native currency/unit is established through explicit configuration rather than inferred from symbol suffixes:
+
+```json
+"QuoteCurrencyMap": {
+  "XNAS": { "MSFT": "USD" },
+  "XLON": { "LLOY": "GBX" },
+  "ETORO": { "BTC": "USD" }
+}
+```
+
+Every request — including ones served by the resolution cache — is checked before any provider call:
+
+- No `QuoteCurrencyMap` entry for `exchange` + `symbol` → `market_data.quote_currency_unconfigured`.
+- Configured native currency differs from the requested `QuoteCurrency` → `market_data.quote_currency_conflict` (`requestedCurrency`/`providerCurrency` attached as error extensions).
+
+Only when the configured native currency equals the requested one does the call proceed; the `MarketQuote` currency label then describes the provider's actual listing units. No FX conversion is ever performed — a conflicting request fails rather than relabel prices.
 
 ### Unresolved mapping assumptions
 
-- **Quote currency is not verified.** Neither the search nor the rates payload carries a quote-currency field. eToro symbol suffixes encode listing variants (e.g. `MSFT.EUR`), so `internalSymbolFull` exact-matching is the effective currency disambiguator. A symbol that exists in two currency listings under identical `internalSymbolFull` would need a manual `ExchangeMap`/symbol adjustment.
+- **Quote currency is not provided by the API.** Neither the search nor the rates payload carries a quote-currency field, so correctness depends entirely on `QuoteCurrencyMap` being configured accurately — see **Quote-currency verification** above. eToro symbol suffixes encode listing variants (e.g. `MSFT.EUR`), so `internalSymbolFull` exact-matching plus the configured native currency are the effective currency disambiguator.
 - **`internalExchangeName` values are undocumented.** Names must be observed (e.g. by calling `/market-data/search` or `/market-data/exchanges` with a real key) before configuring `ExchangeMap`. Numeric matching against `internalExchangeId`/`exchangeID` is supported as the more stable alternative.
 - **`exchangeID` vs `internalExchangeId`** semantics are not documented; numeric map entries match either field.
+- **Search pagination semantics are partially documented.** `pageNumber`/`pageSize` parameters and the `page`/`pageSize`/`totalItems` response fields are documented, but whether `totalItems` counts filtered or unfiltered results, and whether pages are stable across requests, is not. The adapter treats a page that adds no new `instrumentId`s while `totalItems` is uncovered as non-progressing and fails rather than guessing.
 
 ## Rate limits, retries and sampling
 
@@ -130,6 +154,7 @@ Configuration comes from environment variables only — no secrets file, nothing
 $env:EToro__MarketData__ApiKey = "<api-key>"
 $env:EToro__MarketData__UserKey = "<user-key>"
 $env:EToro__MarketData__ExchangeMap__XNAS__0 = "<observed internal exchange name>"
+$env:EToro__MarketData__QuoteCurrencyMap__XNAS__MSFT = "USD"
 dotnet run --project tools/TradingEngine.MarketDataSmoke -- XNAS MSFT USD
 ```
 
@@ -137,10 +162,11 @@ dotnet run --project tools/TradingEngine.MarketDataSmoke -- XNAS MSFT USD
 EToro__MarketData__ApiKey=<api-key> \
 EToro__MarketData__UserKey=<user-key> \
 EToro__MarketData__ExchangeMap__XNAS__0="<observed internal exchange name>" \
+EToro__MarketData__QuoteCurrencyMap__XNAS__MSFT=USD \
 dotnet run --project tools/TradingEngine.MarketDataSmoke -- XNAS MSFT USD
 ```
 
-Arguments are `exchange symbol quoteCurrency` in the repository's own identity terms; `exchange` must have an `ExchangeMap` entry or the run ends with `market_data.exchange_mapping_unconfigured`. Missing credentials exit before any request is sent.
+Arguments are `exchange symbol quoteCurrency` in the repository's own identity terms. `exchange` must have an `ExchangeMap` entry or the run ends with `market_data.exchange_mapping_unconfigured`, and `exchange`+`symbol` must have a `QuoteCurrencyMap` entry matching the requested currency or it ends with `market_data.quote_currency_unconfigured`/`market_data.quote_currency_conflict` — both before any request is sent. Missing credentials exit before any request is sent.
 
 Output prints `SUCCESS` with the requested identity, `Provider`, `ProviderInstrumentId`, `Bid`/`Ask`, `Timeliness`, `ProviderObservedAt` vs `RetrievedAt` and `ProviderRequestId`; or `FAILURE` with the `market_data.*` error code, description and error extensions (or the exception type for credential/transport failures). Exit codes: `0` quote retrieved, `1` provider error, `2` usage or configuration problem. Credential values are never printed; do not paste real output payloads into source control.
 
@@ -151,4 +177,4 @@ Before trusting a new `ExchangeMap` entry, verify the resolved listing manually:
 - `Timeliness` of `delayed` means the credential's entitlement receives delayed quotes for that instrument — the value itself is still usable but stale.
 - All caveats under **Unresolved mapping assumptions** apply — quote currency is never provider-verified, `internalExchangeName` values are undocumented, and `exchangeID` vs `internalExchangeId` semantics are unclear.
 
-> **Live verification status: outstanding.** No eToro credentials were available when this runner was added; it has only been exercised against controlled HTTP doubles (`SmokeRunnerTests`). A successful real connection to `public-api.etoro.com` has **not** been tested or claimed — that verification remains to be done once a read-only API key and a test environment exist.
+> **Live verification status.** A manual smoke run of an earlier revision of this branch (commit `fb59138`, before the review fixes) was performed locally by Jason with read-only credentials: the search and rates calls returned HTTP 200 and the runner printed `SUCCESS` for the queried instrument. That run validated the request/response plumbing and authentication shape against the real `public-api.etoro.com`, but it does **not** cover the subsequently added pagination, quote-currency verification or deadline-enforcement changes, and no Azure-hosted or deployment-context verification has been performed.
