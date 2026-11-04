@@ -47,8 +47,8 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenProviderReturnsQuote_MapsFieldsAndProvenance()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
-        handler.EnqueueResponse(HttpStatusCode.OK, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
             (4242, "123.456789012345678", "124.000000000000001", "2026-10-30T14:31:12Z", "realtime")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -79,8 +79,8 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_Always_SendsRequiredProviderHeaders()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
-        handler.EnqueueResponse(HttpStatusCode.OK, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
             (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -157,7 +157,7 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenSymbolHasNoExactMatch_ReturnsUnresolved()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
             (4242, "DEMO.EXT", 5, "Test Exchange"),
             (4243, "OTHER", 5, "Test Exchange")));
         IMarketDataProvider provider = CreateProvider(handler);
@@ -180,7 +180,7 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenCandidatesSkipExchange_ReturnsUnresolved()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
             (4242, "DEMO", 9, "Other Exchange")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -201,7 +201,7 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenMultipleCandidatesMatch_ReturnsAmbiguous()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
             (4242, "DEMO", 5, "Test Exchange"),
             (4243, "DEMO", 5, "Test Exchange")));
         IMarketDataProvider provider = CreateProvider(handler);
@@ -224,8 +224,8 @@ public sealed class EToroMarketDataProviderTests
     {
         MarketInstrumentIdentity byId = new("XID", "DEMO", "USD");
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 7, "Venue Seven")));
-        handler.EnqueueResponse(HttpStatusCode.OK, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 7, "Venue Seven")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
             (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -244,8 +244,8 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenRateEntryMissing_ReturnsPriceUnavailable()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
-        handler.EnqueueResponse(HttpStatusCode.PartialContent, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.PartialContent, EToroPayloads.RatesBody(
             (9999, "1.0", "1.1", "2026-10-30T14:31:12Z", "realtime")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -264,7 +264,7 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenRatesEndpointNotFound_ReturnsPriceUnavailable()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.EnqueueResponse(HttpStatusCode.NotFound, string.Empty);
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -283,7 +283,7 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenPricesAreNull_PreservesMissingValues()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.EnqueueResponse(HttpStatusCode.OK, """
             {"results":[{"instrumentId":4242,"bid":null,"ask":null,"date":null,"quoteType":"delayed"}]}
             """);
@@ -320,7 +320,7 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_WhenThrottledOnce_RetriesAfterProviderDelay()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.Enqueue((_, _) =>
         {
             HttpResponseMessage throttled = new(HttpStatusCode.TooManyRequests);
@@ -328,7 +328,7 @@ public sealed class EToroMarketDataProviderTests
             throttled.Headers.TryAddWithoutValidation("RateLimit-Remaining", "0");
             return Task.FromResult(throttled);
         });
-        handler.EnqueueResponse(HttpStatusCode.OK, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
             (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -350,7 +350,7 @@ public sealed class EToroMarketDataProviderTests
     {
         _options.MaxRetryAttempts = 1;
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.Enqueue((_, _) =>
         {
             HttpResponseMessage throttled = new(HttpStatusCode.TooManyRequests);
@@ -385,7 +385,7 @@ public sealed class EToroMarketDataProviderTests
     {
         _options.MaxExecutionTimeSeconds = 10;
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.Enqueue((_, _) =>
         {
             HttpResponseMessage throttled = new(HttpStatusCode.TooManyRequests);
@@ -411,7 +411,7 @@ public sealed class EToroMarketDataProviderTests
     public void GetCurrentQuoteAsync_WhenServerErrorsExceedRetries_ThrowsProviderException()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.EnqueueResponse(HttpStatusCode.InternalServerError, string.Empty);
         handler.EnqueueResponse(HttpStatusCode.InternalServerError, string.Empty);
         handler.EnqueueResponse(HttpStatusCode.InternalServerError, string.Empty);
@@ -438,7 +438,7 @@ public sealed class EToroMarketDataProviderTests
         _options.RequestTimeoutSeconds = 0;
         _options.MaxRetryAttempts = 1;
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.Enqueue(async (_, cancellationToken) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -467,7 +467,7 @@ public sealed class EToroMarketDataProviderTests
     public void GetCurrentQuoteAsync_WhenCallerCancels_PropagatesCancellation()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.Enqueue(async (_, cancellationToken) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -486,7 +486,7 @@ public sealed class EToroMarketDataProviderTests
     public void GetCurrentQuoteAsync_WhenRatesBodyMalformed_ThrowsInvalidData()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
         handler.EnqueueResponse(HttpStatusCode.OK, "this-is-not-json");
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -499,10 +499,10 @@ public sealed class EToroMarketDataProviderTests
     public async Task GetCurrentQuoteAsync_OnSecondCall_ReusesResolvedInstrumentId()
     {
         ScriptedHttpMessageHandler handler = new();
-        handler.EnqueueResponse(HttpStatusCode.OK, SearchBody((4242, "DEMO", 5, "Test Exchange")));
-        handler.EnqueueResponse(HttpStatusCode.OK, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((4242, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
             (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
-        handler.EnqueueResponse(HttpStatusCode.OK, RatesBody(
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
             (4242, "10.7", "10.8", "2026-10-30T14:32:12Z", "realtime")));
         IMarketDataProvider provider = CreateProvider(handler);
 
@@ -540,32 +540,4 @@ public sealed class EToroMarketDataProviderTests
             NullLogger<EToroMarketDataProvider>.Instance);
     }
 
-    private static string SearchBody(params (long Id, string Symbol, int ExchangeId, string Exchange)[] items)
-    {
-        string entries = string.Join(
-            ",",
-            items.Select(item => "{" +
-                $"\"instrumentId\":{item.Id}," +
-                $"\"internalSymbolFull\":\"{item.Symbol}\"," +
-                $"\"internalExchangeId\":{item.ExchangeId}," +
-                $"\"internalExchangeName\":\"{item.Exchange}\"," +
-                $"\"exchangeID\":{item.ExchangeId}" +
-                "}"));
-        return $"{{\"page\":1,\"pageSize\":25,\"totalItems\":{items.Length},\"items\":[{entries}]}}";
-    }
-
-    private static string RatesBody(
-        params (long Id, string Bid, string Ask, string Date, string QuoteType)[] rates)
-    {
-        string entries = string.Join(
-            ",",
-            rates.Select(rate => "{" +
-                $"\"instrumentId\":{rate.Id}," +
-                $"\"bid\":{rate.Bid}," +
-                $"\"ask\":{rate.Ask}," +
-                $"\"date\":\"{rate.Date}\"," +
-                $"\"quoteType\":\"{rate.QuoteType}\"" +
-                "}"));
-        return $"{{\"results\":[{entries}]}}";
-    }
 }

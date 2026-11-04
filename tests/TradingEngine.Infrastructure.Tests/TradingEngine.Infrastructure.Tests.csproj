@@ -18,5 +18,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/TradingEngine.Domain/TradingEngine.Domain.csproj" />
     <ProjectReference Include="../../src/TradingEngine.Infrastructure/TradingEngine.Infrastructure.csproj" />
+    <ProjectReference Include="../../tools/TradingEngine.MarketDataSmoke/TradingEngine.MarketDataSmoke.csproj" />
   </ItemGroup>
 </Project>

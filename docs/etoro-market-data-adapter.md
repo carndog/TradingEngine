@@ -119,3 +119,36 @@ Every attempt gets a fresh `x-request-id` GUID; the successful attempt's ID is c
 ## Testing
 
 `TradingEngine.Infrastructure.Tests/MarketData` covers mapping precision, missing/malformed fields, unconfigured/unresolved/ambiguous mappings, 206/404, auth failure, 429 honouring of `Retry-After`, bounded retries, per-attempt timeout, caller cancellation, cache behaviour, gate windowing, sampling-policy arithmetic and real-DI resolution — all through a scripted `HttpMessageHandler`, `FakeClock` and a recording `TimeProvider` without network access, real sleeps or credentials.
+
+## Local smoke test
+
+`tools/TradingEngine.MarketDataSmoke` is a manually invoked console runner. It builds the production `AddEtoroMarketData` registration, resolves the real `IMarketDataProvider` (typed `HttpClient`, real `ProviderRateGate`/`EToroInstrumentIdCache`/system clock) and issues one quote request — search + rates `GET`s only. No database access, no order endpoints, nothing written to disk. It is part of the solution build but is **not** a test project: `dotnet test` and CI never execute it, and there is no way for it to run unattended.
+
+Configuration comes from environment variables only — no secrets file, nothing committed:
+
+```powershell
+$env:EToro__MarketData__ApiKey = "<api-key>"
+$env:EToro__MarketData__UserKey = "<user-key>"
+$env:EToro__MarketData__ExchangeMap__XNAS__0 = "<observed internal exchange name>"
+dotnet run --project tools/TradingEngine.MarketDataSmoke -- XNAS MSFT USD
+```
+
+```bash
+EToro__MarketData__ApiKey=<api-key> \
+EToro__MarketData__UserKey=<user-key> \
+EToro__MarketData__ExchangeMap__XNAS__0="<observed internal exchange name>" \
+dotnet run --project tools/TradingEngine.MarketDataSmoke -- XNAS MSFT USD
+```
+
+Arguments are `exchange symbol quoteCurrency` in the repository's own identity terms; `exchange` must have an `ExchangeMap` entry or the run ends with `market_data.exchange_mapping_unconfigured`. Missing credentials exit before any request is sent.
+
+Output prints `SUCCESS` with the requested identity, `Provider`, `ProviderInstrumentId`, `Bid`/`Ask`, `Timeliness`, `ProviderObservedAt` vs `RetrievedAt` and `ProviderRequestId`; or `FAILURE` with the `market_data.*` error code, description and error extensions (or the exception type for credential/transport failures). Exit codes: `0` quote retrieved, `1` provider error, `2` usage or configuration problem. Credential values are never printed; do not paste real output payloads into source control.
+
+Before trusting a new `ExchangeMap` entry, verify the resolved listing manually:
+
+- `ProviderInstrumentId` should identify the intended **listing** — `internalSymbolFull` suffixes encode listing/currency variants (e.g. `MSFT.EUR`), so cross-check the symbol on eToro's portal or a manual `search` call.
+- `Bid`/`Ask` are provider-native doubles in the instrument's **quote currency**; the API does not state the currency, so confirm it against eToro's UI for the instrument.
+- `Timeliness` of `delayed` means the credential's entitlement receives delayed quotes for that instrument — the value itself is still usable but stale.
+- All caveats under **Unresolved mapping assumptions** apply — quote currency is never provider-verified, `internalExchangeName` values are undocumented, and `exchangeID` vs `internalExchangeId` semantics are unclear.
+
+> **Live verification status: outstanding.** No eToro credentials were available when this runner was added; it has only been exercised against controlled HTTP doubles (`SmokeRunnerTests`). A successful real connection to `public-api.etoro.com` has **not** been tested or claimed — that verification remains to be done once a read-only API key and a test environment exist.
