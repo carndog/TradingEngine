@@ -60,13 +60,30 @@ Every processed instrument produces exactly one `PriceCollectionAttempts` row wi
 | `SkippedMarketClosed` | Exchange session closed — no provider call was made |
 | `SkippedDuplicate` | Another invocation already persisted this slot (unique index) |
 | `Throttled` | Provider returned `market_data.provider_throttled` (rate gate or 429) |
+| `PriceUnavailable` | Provider returned a quote with neither bid nor ask after the bounded retry |
 | `Failed` | Any other failure; `ErrorCode` carries `price_collection.*` or `market_data.*` |
 
-Each attempt also records `WatchedInstrumentId`, `ScheduledFor`, `AttemptedAt`, `RecordedAt`, the run's `InvocationId`, and where applicable `Provider`/`ProviderRequestId`. Attempt history is append-only — repeats add new attempt rows; observations stay unique per slot.
+Each attempt also records `WatchedInstrumentId`, `ScheduledFor`, `AttemptedAt`, `RecordedAt`, the run's `InvocationId`, and where applicable `Provider`/`ProviderRequestId`.
+
+Attempts are append-only, but retry semantics are defined **per scheduled slot**: the latest stored attempt per instrument is read once per run, and a repeat poll inside the same slot does not write again when nothing changed. `SkippedMarketClosed` and `exchange_session_unconfigured` record once per slot, `Throttled` and `PriceUnavailable` additionally suppress the provider call entirely inside the same slot (one bounded retry sequence per slot), while `Failed` provider/storage attempts are retried on the next poll and append as they occur. The next eligible slot always collects fresh.
+
+`Failed` `ErrorCode` values:
+
+| Code | Meaning |
+| --- | --- |
+| `price_collection.exchange_session_unconfigured` | No session entry for the instrument's exchange |
+| `price_collection.provider_timeout` | Provider call timed out inside the run budget |
+| `price_collection.provider_error` | Provider call threw unexpectedly |
+| `price_collection.deadline_exceeded` | Run budget elapsed before or during the instrument's work |
+| `price_collection.unsupported_quote` | Quote value cannot be persisted without loss (for example a scale finer than `decimal(38,18)`) |
+| `price_collection.storage_error` | The persistence write itself failed |
+| `market_data.*` | Provider-reported failure, preserved verbatim |
+
+The observation and its `Observed` attempt are inserted in one transaction: if either write fails, neither survives, so there is never an observation without its audit row or an audit row without its observation. A unique-index collision on `(WatchedInstrumentId, ScheduledFor)` is the expected overlap signal — it rolls back both rows, is recorded separately as `SkippedDuplicate`, and is never reported as a provider or storage failure.
 
 ### Bounded execution and cancellation
 
-`MaxExecutionTimeSeconds` bounds the whole run: the deadline is checked before each instrument and again after session evaluation, and a linked `CancellationTokenSource.CancelAfter` token is passed to the provider so an in-flight call cannot overrun the bound. Hitting the deadline records `Failed`/`price_collection.deadline_exceeded` for the current instrument and stops the run (`DeadlineReached` on the result). Caller cancellation propagates `OperationCanceledException` unchanged — the host's `stoppingToken` on shutdown cancels promptly.
+`MaxExecutionTimeSeconds` is one budget for the whole run: a `CancellationTokenSource` armed on the injected `TimeProvider` is created **before the first SQL read** and the linked token is carried through the instrument read, the dedup lookups, every provider call and the observation write. A stalled read or write cannot outlive the budget — cancellation inside it returns a run with `DeadlineReached` (before the instrument loop) or records `Failed`/`price_collection.deadline_exceeded` for the in-flight instrument and stops. Attempt rows are written on the caller's own token so the audit record still lands after the budget fires. Caller cancellation propagates `OperationCanceledException` unchanged — the host's `stoppingToken` on shutdown cancels promptly.
 
 ## Persistence
 
@@ -95,7 +112,8 @@ Section `PriceCollection` (`PriceCollectionOptions`):
 | --- | --- | --- |
 | `Enabled` | `false` | Kill switch. When false the collector registers nothing — no policies, handler or hosted service — and the API behaves exactly as before; collector config is not even validated. |
 | `PollIntervalSeconds` | `15` | `PeriodicTimer` cadence between runs. |
-| `MaxExecutionTimeSeconds` | `60` | Per-run deadline and linked-token bound. |
+| `MaxExecutionTimeSeconds` | `60` | Single run budget armed on `TimeProvider`, spanning reads, provider calls and the observation write. |
+| `UnavailableRetryAttempts` | `1` | Extra provider calls within the same run when a quote has neither bid nor ask. `0` records `PriceUnavailable` after the first call; the retry outcome per slot is then suppressed until the next slot. |
 | `SamplingPolicy` | `per-instrument` | `per-instrument` or `provider-budget-clamped`. |
 | `ProviderRateLimit` | `120` | Requests-per-window used by the clamped policy. Must match the provider group budget (eToro: 120/60 s). |
 | `ProviderWindowSeconds` | `60` | Window length used by the clamped policy. |
@@ -129,10 +147,25 @@ Session definition shape:
 
 **Enable:**
 
-1. Set `enablePriceCollection = true` in `infra/environments/dev.bicepparam`, or deploy with `--parameters enablePriceCollection=true`. The module emits the `PriceCollection__Enabled=true` app setting.
-2. Ensure `PriceCollection:ExchangeSessions` covers every monitored instrument's `Exchange`. The defaults in `appsettings.json` ship `XNYS`; extend them through `appsettings.json` or app settings (`PriceCollection__ExchangeSessions__XLON__TimeZone` etc.).
-3. Register/keep eToro credentials and `ConnectionStrings__TradingEngine` as documented in [eToro market-data adapter](etoro-market-data-adapter.md) and [Azure SQL development database](azure-sql-development-database.md) — the collector reuses that exact provider registration, rate gate and retry behaviour.
-4. Confirm monitored instruments are `MonitoringState = 'Monitored'` with a `SamplingIntervalSeconds` cadence.
+1. Configure the deployment secrets below (they keep the private settings in place across redeployments).
+2. Set `enablePriceCollection = true` in `infra/environments/dev.bicepparam`, or deploy with `--parameters enablePriceCollection=true`. The module emits the `PriceCollection__Enabled=true` app setting.
+3. Confirm monitored instruments are `MonitoringState = 'Monitored'` with a `SamplingIntervalSeconds` cadence.
+
+### Deployment-time settings
+
+The `appsettings` deployment **replaces the whole app-settings collection** on every infrastructure deploy — any `EToro__*` or `PriceCollection__ExchangeSessions__*` value set out of band would be removed by the next redeployment. These settings therefore live in GitHub environment secrets on `development` (and `development-infrastructure-preview`), passed as Bicep parameters so they are part of the declared desired state:
+
+| GitHub environment secret | Bicep parameter | Emitted app settings |
+| --- | --- | --- |
+| `ETORO_MARKET_DATA_API_KEY` | `etoroMarketDataApiKey` (`@secure`) | `EToro__MarketData__ApiKey` |
+| `ETORO_MARKET_DATA_USER_KEY` | `etoroMarketDataUserKey` (`@secure`) | `EToro__MarketData__UserKey` |
+| `ETORO_MARKET_DATA_EXCHANGE_MAP` | `marketDataExchangeMap` (JSON object) | `EToro__MarketData__ExchangeMap__{exchange}` |
+| `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` | `marketDataQuoteCurrencyMap` (JSON object) | `EToro__MarketData__QuoteCurrencyMap__{currency}` |
+| `PRICE_COLLECTION_EXCHANGE_SESSIONS` | `priceCollectionExchangeSessions` (JSON object) | `PriceCollection__ExchangeSessions__{exchange}__…` |
+
+The map/session secrets hold JSON objects flattened by the template — for example `ETORO_MARKET_DATA_EXCHANGE_MAP={"XNAS":["<provider exchange name>"]}` (string arrays, matching `EToro:MarketData:ExchangeMap`), `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP={"XNAS":{"MSFT":"USD"}}` (exchange → symbol → native currency, matching `EToro:MarketData:QuoteCurrencyMap`), and `PRICE_COLLECTION_EXCHANGE_SESSIONS={"XNAS":{"timeZone":"America/New_York","alwaysOpen":false,"windows":[{"days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"open":"09:30","close":"16:00"}]}}`. Keys must match the `Exchange` values on `WatchedInstruments`.
+
+**Secure XNAS configuration:** create the five secrets on the GitHub `development` environment (values come from the private deployment context, never committed). `ETORO_MARKET_DATA_API_KEY`/`USER_KEY` are the read-only market-data credentials; `ETORO_MARKET_DATA_EXCHANGE_MAP` maps `XNAS` to the provider exchange name(s) discovered through the search endpoint; `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` maps each XNAS symbol to its native listing currency; `PRICE_COLLECTION_EXCHANGE_SESSIONS` carries the XNAS regular session (America/New_York 09:30–16:00 weekdays). Once the secrets exist, every `Deploy development infrastructure` run — including what-if previews — keeps the settings in place; removing a secret removes the setting on the next deploy, by design.
 
 **Apply the migration** — additive `20261105194347_PriceCollection`. Migrations never run at app startup; the runtime identity holds only `db_datareader`/`db_datawriter`. Apply it under the migration identity as documented in the [Azure SQL operations runbook](azure-sql-operations-runbook.md): **Actions → Migrate development database → Run workflow** from `main` after merge, which builds `efbundle` and applies it over `Authentication=Active Directory Default` (OIDC). Locally, `dotnet ef database update --project src/TradingEngine.Infrastructure --startup-project src/TradingEngine.Api` targets whatever `ConnectionStrings__TradingEngine` points to (LocalDB by default). The migration idempotency check means re-running is a no-op once applied.
 
@@ -176,8 +209,8 @@ The hosted service logs one `Information` line per run: `InvocationId` plus obse
 
 ## Testing
 
-- `tests/TradingEngine.Application.Tests/PriceCollection` drives `CollectDuePricesHandler` with a `FakeClock`, stub provider and capturing store: due vs disabled instruments, both sampling policies, market-closed/unconfigured sessions, throttling, deadline exhaustion, cancellation, repeat delivery and overlapping invocations. `WeeklyScheduleMarketSessionPolicyTests` covers open/close boundaries, overnight windows and the spring-forward/fall-back transitions.
-- `tests/TradingEngine.Infrastructure.IntegrationTests/Persistence/PriceCollectionPersistenceTests.cs` runs against real SQL Server via Testcontainers: `decimal(38,18)` precision round-trip, one-sided quotes, nullable `ProviderObservedAt`, unique-slot dedup, two successive slots, check-constraint and FK enforcement.
+- `tests/TradingEngine.Application.Tests/PriceCollection` drives `CollectDuePricesHandler` with a `FakeClock`, a manual `TimeProvider`, stub provider and capturing store: due vs disabled instruments, both sampling policies, market-closed/unconfigured sessions, throttling and same-slot throttle backoff, both-null quotes retried then `PriceUnavailable`, one-sided quotes, same-slot outcome dedup with next-slot recovery, stalled reads/writes bounded by the fake-time budget, storage failures isolated per instrument, cancellation, repeat delivery and overlapping invocations. `WeeklyScheduleMarketSessionPolicyTests` covers open/close boundaries, overnight windows and the spring-forward/fall-back transitions.
+- `tests/TradingEngine.Infrastructure.IntegrationTests/Persistence/PriceCollectionPersistenceTests.cs` runs against real SQL Server via Testcontainers: `decimal(38,18)` precision round-trip, one-sided quotes, nullable `ProviderObservedAt`, unique-slot dedup, two successive slots, atomic observation+attempt rollback under a forced audit-write failure, concurrent writers racing the same slot (one observation, one `Observed`, one `SkippedDuplicate`, then the losing context collecting another instrument), quotes with scale finer than 18 rejected without rounding, latest-attempt lookup, check-constraint and FK enforcement.
 
 ## Out of scope
 

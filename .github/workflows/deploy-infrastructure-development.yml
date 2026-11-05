@@ -51,6 +51,11 @@ jobs:
       AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
       AZURE_ENTRA_AUTH_CLIENT_ID: ${{ secrets.AZURE_ENTRA_AUTH_CLIENT_ID }}
       AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS: ${{ secrets.AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS }}
+      ETORO_MARKET_DATA_API_KEY: ${{ secrets.ETORO_MARKET_DATA_API_KEY }}
+      ETORO_MARKET_DATA_USER_KEY: ${{ secrets.ETORO_MARKET_DATA_USER_KEY }}
+      ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
+      ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
+      PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -87,6 +92,12 @@ jobs:
 
       - name: Run subscription what-if (merge preview, SQL enabled)
         run: |
+          extra_params=()
+          if [ -n "$ETORO_MARKET_DATA_API_KEY" ]; then extra_params+=(--parameters "etoroMarketDataApiKey=$ETORO_MARKET_DATA_API_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_USER_KEY" ]; then extra_params+=(--parameters "etoroMarketDataUserKey=$ETORO_MARKET_DATA_USER_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
+          if [ -n "$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP" ]; then extra_params+=(--parameters "marketDataQuoteCurrencyMap=$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP"); fi
+          if [ -n "$PRICE_COLLECTION_EXCHANGE_SESSIONS" ]; then extra_params+=(--parameters "priceCollectionExchangeSessions=$PRICE_COLLECTION_EXCHANGE_SESSIONS"); fi
           az deployment sub what-if \
             --name "$DEPLOYMENT_NAME" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
@@ -99,6 +110,7 @@ jobs:
             --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
             --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
             --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" \
+            "${extra_params[@]}" \
             --no-pretty-print \
             --output json > what-if.json
 
@@ -171,6 +183,11 @@ jobs:
       AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
       AZURE_ENTRA_AUTH_CLIENT_ID: ${{ secrets.AZURE_ENTRA_AUTH_CLIENT_ID }}
       AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS: ${{ secrets.AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS }}
+      ETORO_MARKET_DATA_API_KEY: ${{ secrets.ETORO_MARKET_DATA_API_KEY }}
+      ETORO_MARKET_DATA_USER_KEY: ${{ secrets.ETORO_MARKET_DATA_USER_KEY }}
+      ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
+      ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
+      PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -207,6 +224,12 @@ jobs:
 
       - name: Deploy subscription-scope Bicep
         run: |
+          extra_params=()
+          if [ -n "$ETORO_MARKET_DATA_API_KEY" ]; then extra_params+=(--parameters "etoroMarketDataApiKey=$ETORO_MARKET_DATA_API_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_USER_KEY" ]; then extra_params+=(--parameters "etoroMarketDataUserKey=$ETORO_MARKET_DATA_USER_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
+          if [ -n "$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP" ]; then extra_params+=(--parameters "marketDataQuoteCurrencyMap=$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP"); fi
+          if [ -n "$PRICE_COLLECTION_EXCHANGE_SESSIONS" ]; then extra_params+=(--parameters "priceCollectionExchangeSessions=$PRICE_COLLECTION_EXCHANGE_SESSIONS"); fi
           az deployment sub create \
             --name "$DEPLOYMENT_NAME" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
@@ -218,7 +241,8 @@ jobs:
             --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE" \
             --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
             --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
-            --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS"
+            --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" \
+            "${extra_params[@]}"
 
       - name: Write deployment summary
         run: |

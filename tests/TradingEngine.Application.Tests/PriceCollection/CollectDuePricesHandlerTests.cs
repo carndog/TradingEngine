@@ -606,7 +606,7 @@ public sealed class CollectDuePricesHandlerTests
     }
 
     [Test]
-    public async Task HandleAsync_WhenExecutionBudgetIsZero_RecordsDeadlineFailure()
+    public async Task HandleAsync_WhenExecutionBudgetIsZero_ReturnsDeadlineWithoutProviderCalls()
     {
         CollectDuePricesHandler handler = CreateHandler(
             OpenSessions(),
@@ -620,11 +620,9 @@ public sealed class CollectDuePricesHandlerTests
         Assert.Multiple(() =>
         {
             Assert.That(result.DeadlineReached, Is.True);
-            Assert.That(result.Items[0].Outcome, Is.EqualTo(PriceCollectionOutcome.Failed));
-            Assert.That(
-                result.Items[0].ErrorCode,
-                Is.EqualTo(PriceCollectionErrors.DeadlineExceeded.Code));
+            Assert.That(result.Items, Is.Empty);
             Assert.That(_marketData.Requests, Is.Empty);
+            Assert.That(_store.Attempts, Is.Empty);
         });
     }
 
@@ -648,10 +646,389 @@ public sealed class CollectDuePricesHandlerTests
         });
     }
 
+    [Test]
+    public async Task HandleAsync_WhenMarketClosedTwiceForSameSlot_RecordsSingleMarketClosedAttempt()
+    {
+        _clock = new FakeClock(ClosedNow);
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult first = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+        _store.LatestAttempts[InstrumentId] = _store.Attempts[0];
+        PriceCollectionRunResult second = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                first.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.SkippedMarketClosed));
+            Assert.That(
+                second.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.SkippedMarketClosed));
+            Assert.That(_store.Attempts, Has.Count.EqualTo(1));
+            Assert.That(_marketData.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenMarketClosedInNextSlot_RecordsSecondSlotAttempt()
+    {
+        _clock = new FakeClock(ClosedNow);
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        await handler.HandleAsync(new CollectDuePrices(), CancellationToken.None);
+        _store.LatestAttempts[InstrumentId] = _store.Attempts[0];
+        _clock.Advance(Duration.FromSeconds(60));
+        PriceCollectionRunResult second = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                second.Items[0].ScheduledFor,
+                Is.EqualTo(ClosedSlot.Plus(Duration.FromSeconds(60))));
+            Assert.That(_store.Attempts, Has.Count.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenLatestAttemptThrottledForSlot_SkipsWithoutProviderCall()
+    {
+        _store.LatestAttempts[InstrumentId] = new PriceCollectionAttempt(
+            InstrumentId,
+            CurrentSlot,
+            PriceCollectionOutcome.Throttled,
+            MarketDataErrors.ProviderThrottled.Code,
+            null,
+            "throttled-request",
+            Guid.NewGuid(),
+            Now,
+            Now);
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Throttled));
+            Assert.That(
+                result.Items[0].ErrorCode,
+                Is.EqualTo(MarketDataErrors.ProviderThrottled.Code));
+            Assert.That(
+                result.Items[0].ProviderRequestId,
+                Is.EqualTo("throttled-request"));
+            Assert.That(_marketData.Requests, Is.Empty);
+            Assert.That(_store.Attempts, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenLatestAttemptThrottledForEarlierSlot_CollectsNormally()
+    {
+        _store.LatestAttempts[InstrumentId] = new PriceCollectionAttempt(
+            InstrumentId,
+            CurrentSlot.Minus(Duration.FromSeconds(60)),
+            PriceCollectionOutcome.Throttled,
+            MarketDataErrors.ProviderThrottled.Code,
+            null,
+            "throttled-request",
+            Guid.NewGuid(),
+            Now,
+            Now);
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+            Assert.That(_marketData.Requests, Has.Count.EqualTo(1));
+            Assert.That(_store.Observations, Has.Count.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenQuoteHasNeitherBidNorAsk_RetriesThenRecordsPriceUnavailable()
+    {
+        _marketData.Bid = null;
+        _marketData.Ask = null;
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(_marketData.Requests, Has.Count.EqualTo(2));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.PriceUnavailable));
+            Assert.That(
+                result.Items[0].ErrorCode,
+                Is.EqualTo(PriceCollectionErrors.PriceUnavailable.Code));
+            Assert.That(
+                result.Items[0].ProviderRequestId,
+                Is.EqualTo("synthetic-request-2"));
+            Assert.That(_store.Observations, Is.Empty);
+            Assert.That(_store.Attempts, Has.Count.EqualTo(1));
+            Assert.That(
+                _store.Attempts[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.PriceUnavailable));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenUnavailableRetriesDisabled_RecordsPriceUnavailableAfterSingleCall()
+    {
+        _marketData.Bid = null;
+        _marketData.Ask = null;
+        CollectDuePricesHandler handler = CreateHandler(
+            OpenSessions(),
+            options: new PriceCollectionOptions { UnavailableRetryAttempts = 0 });
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(_marketData.Requests, Has.Count.EqualTo(1));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.PriceUnavailable));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenRetrySuppliesQuote_RecordsObservation()
+    {
+        int calls = 0;
+        _marketData.Responder = (instrument, _) =>
+        {
+            calls++;
+            return Task.FromResult<Result<MarketQuote>>(new MarketQuote(
+                instrument,
+                "eToro",
+                4242,
+                calls == 1 ? null : 5m,
+                null,
+                null,
+                Now,
+                MarketQuoteTimeliness.Realtime,
+                $"synthetic-request-{calls}"));
+        };
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(_marketData.Requests, Has.Count.EqualTo(2));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+            Assert.That(_store.Observations, Has.Count.EqualTo(1));
+            Assert.That(_store.Observations[0].Bid, Is.EqualTo(5m));
+            Assert.That(_store.Observations[0].Ask, Is.Null);
+            Assert.That(
+                _store.Observations[0].ProviderRequestId,
+                Is.EqualTo("synthetic-request-2"));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenLatestAttemptPriceUnavailableForSlot_SkipsWithoutProviderCall()
+    {
+        _store.LatestAttempts[InstrumentId] = new PriceCollectionAttempt(
+            InstrumentId,
+            CurrentSlot,
+            PriceCollectionOutcome.PriceUnavailable,
+            PriceCollectionErrors.PriceUnavailable.Code,
+            "eToro",
+            "unavailable-request",
+            Guid.NewGuid(),
+            Now,
+            Now);
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.PriceUnavailable));
+            Assert.That(
+                result.Items[0].ProviderRequestId,
+                Is.EqualTo("unavailable-request"));
+            Assert.That(_marketData.Requests, Is.Empty);
+            Assert.That(_store.Attempts, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenReadStallsPastDeadline_ReturnsDeadlineWithoutItems()
+    {
+        ManualTimeProvider timeProvider = new();
+        _source.Gate = token => Task.Delay(Timeout.InfiniteTimeSpan, token);
+        CollectDuePricesHandler handler = CreateHandler(
+            OpenSessions(),
+            timeProvider: timeProvider);
+
+        Task<PriceCollectionRunResult> run = handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+        timeProvider.Advance(TimeSpan.FromSeconds(61));
+        PriceCollectionRunResult result = await run;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.DeadlineReached, Is.True);
+            Assert.That(result.Items, Is.Empty);
+            Assert.That(_marketData.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenObservationWriteStallsPastDeadline_RecordsDeadlineFailure()
+    {
+        ManualTimeProvider timeProvider = new();
+        _store.ObservationGate = token => Task.Delay(Timeout.InfiniteTimeSpan, token);
+        CollectDuePricesHandler handler = CreateHandler(
+            OpenSessions(),
+            timeProvider: timeProvider);
+
+        Task<PriceCollectionRunResult> run = handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+        timeProvider.Advance(TimeSpan.FromSeconds(61));
+        PriceCollectionRunResult result = await run;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items, Has.Count.EqualTo(1));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Failed));
+            Assert.That(
+                result.Items[0].ErrorCode,
+                Is.EqualTo(PriceCollectionErrors.DeadlineExceeded.Code));
+            Assert.That(_store.Observations, Is.Empty);
+            Assert.That(_store.Attempts, Has.Count.EqualTo(1));
+            Assert.That(
+                _store.Attempts[0].ErrorCode,
+                Is.EqualTo(PriceCollectionErrors.DeadlineExceeded.Code));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenObservationStoreFails_RecordsStorageFailureAndContinues()
+    {
+        _source.Instruments.Add(SecondInstrument);
+        int writes = 0;
+        _store.ObservationGate = _ =>
+        {
+            writes++;
+            if (writes == 1)
+            {
+                throw new PriceObservationStorageException(
+                    "synthetic storage failure",
+                    new InvalidOperationException());
+            }
+
+            return Task.CompletedTask;
+        };
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items, Has.Count.EqualTo(2));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Failed));
+            Assert.That(
+                result.Items[0].ErrorCode,
+                Is.EqualTo(PriceCollectionErrors.StorageError.Code));
+            Assert.That(
+                result.Items[1].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+            Assert.That(_store.Observations, Has.Count.EqualTo(1));
+            Assert.That(
+                _store.Attempts.Select(attempt => attempt.Outcome).ToArray(),
+                Is.EqualTo(new[]
+                {
+                    PriceCollectionOutcome.Failed,
+                    PriceCollectionOutcome.Observed
+                }));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenAttemptWriteFails_RunContinuesToNextInstrument()
+    {
+        _source.Instruments.Add(SecondInstrument);
+        int attemptWrites = 0;
+        _store.AttemptGate = _ =>
+        {
+            attemptWrites++;
+            if (attemptWrites == 1)
+            {
+                throw new PriceObservationStorageException(
+                    "synthetic storage failure",
+                    new InvalidOperationException());
+            }
+
+            return Task.CompletedTask;
+        };
+        _marketData.Bid = null;
+        _marketData.Ask = null;
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+
+        PriceCollectionRunResult result = await handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items, Has.Count.EqualTo(2));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Failed));
+            Assert.That(
+                result.Items[0].ErrorCode,
+                Is.EqualTo(PriceCollectionErrors.StorageError.Code));
+            Assert.That(
+                result.Items[1].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.PriceUnavailable));
+        });
+    }
+
     private CollectDuePricesHandler CreateHandler(
         IMarketSessionPolicy sessionPolicy,
         ISamplingPolicy? samplingPolicy = null,
-        PriceCollectionOptions? options = null)
+        PriceCollectionOptions? options = null,
+        TimeProvider? timeProvider = null)
     {
         return new CollectDuePricesHandler(
             _source,
@@ -660,6 +1037,7 @@ public sealed class CollectDuePricesHandlerTests
             samplingPolicy ?? new PerInstrumentSamplingPolicy(),
             sessionPolicy,
             _clock,
+            timeProvider ?? TimeProvider.System,
             options ?? new PriceCollectionOptions());
     }
 

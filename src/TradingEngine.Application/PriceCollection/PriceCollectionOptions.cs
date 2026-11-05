@@ -10,6 +10,8 @@ public sealed class PriceCollectionOptions
 
     public int MaxExecutionTimeSeconds { get; set; } = 60;
 
+    public int UnavailableRetryAttempts { get; set; } = 1;
+
     public string SamplingPolicy { get; set; } = SamplingPolicyNames.PerInstrument;
 
     public int ProviderRateLimit { get; set; } = 120;

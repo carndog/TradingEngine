@@ -6,5 +6,6 @@ public enum PriceCollectionOutcome
     SkippedMarketClosed = 2,
     SkippedDuplicate = 3,
     Throttled = 4,
-    Failed = 5
+    Failed = 5,
+    PriceUnavailable = 6
 }

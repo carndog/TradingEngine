@@ -63,7 +63,7 @@ internal sealed class PriceCollectionAttemptRowConfiguration
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_PriceCollectionAttempts_Outcome",
             "[Outcome] IN ('Observed', 'SkippedMarketClosed', 'SkippedDuplicate', " +
-            "'Throttled', 'Failed')"));
+            "'Throttled', 'Failed', 'PriceUnavailable')"));
 
         builder.HasOne(row => row.Instrument)
             .WithMany()

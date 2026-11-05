@@ -9,8 +9,13 @@ public interface IPriceObservationStore
         IReadOnlyCollection<Guid> instrumentIds,
         CancellationToken cancellationToken);
 
-    Task<bool> TryRecordObservationAsync(
+    Task<IReadOnlyDictionary<Guid, PriceCollectionAttempt>> GetLatestAttemptsAsync(
+        IReadOnlyCollection<Guid> instrumentIds,
+        CancellationToken cancellationToken);
+
+    Task<bool> TryRecordObservationAndAttemptAsync(
         ScheduledPriceObservation observation,
+        PriceCollectionAttempt attempt,
         CancellationToken cancellationToken);
 
     Task RecordAttemptAsync(

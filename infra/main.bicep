@@ -54,6 +54,23 @@ param logAnalyticsDailyDataCapGb string = '0.1'
 @description('Enable the timer-triggered price collection hosted service inside the API. Disabled by default; enabling is a deliberate issue-9 decision and also requires exchange session app settings.')
 param enablePriceCollection bool = false
 
+@description('eToro market-data API key applied as the EToro__MarketData__ApiKey app setting. Supplied at deploy time from environment secrets; never commit a live value.')
+@secure()
+param etoroMarketDataApiKey string = ''
+
+@description('eToro market-data user key applied as the EToro__MarketData__UserKey app setting. Supplied at deploy time from environment secrets; never commit a live value.')
+@secure()
+param etoroMarketDataUserKey string = ''
+
+@description('Map of instrument exchange identifier to the provider exchange names accepted for it, flattened into indexed EToro__MarketData__ExchangeMap__* app settings. Supplied as a JSON object of string arrays at deploy time; an empty object emits no settings.')
+param marketDataExchangeMap object = {}
+
+@description('Map of instrument exchange identifier and symbol to the provider native currency, flattened into EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol} app settings. Supplied as a JSON object of objects at deploy time; an empty object emits no settings.')
+param marketDataQuoteCurrencyMap object = {}
+
+@description('Exchange session definitions keyed by exchange identifier, flattened into PriceCollection__ExchangeSessions__* app settings. Each value supports timeZone, alwaysOpen and windows[{days[], open, close}]. Supplied as a JSON object at deploy time; an empty object emits no settings.')
+param priceCollectionExchangeSessions object = {}
+
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'
 var appServicePlanName = 'asp-${namingPrefix}-${environmentName}'
 var webAppName = 'app-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
@@ -93,6 +110,11 @@ module appService 'modules/app-service.bicep' = {
     easyAuthIdentityName: easyAuthIdentityName
     applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
     priceCollectionEnabled: enablePriceCollection
+    etoroMarketDataApiKey: etoroMarketDataApiKey
+    etoroMarketDataUserKey: etoroMarketDataUserKey
+    marketDataExchangeMap: marketDataExchangeMap
+    marketDataQuoteCurrencyMap: marketDataQuoteCurrencyMap
+    priceCollectionExchangeSessions: priceCollectionExchangeSessions
     tags: tags
   }
   dependsOn: [

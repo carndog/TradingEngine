@@ -29,7 +29,7 @@ public partial class PriceCollection : Migration
             constraints: table =>
             {
                 table.PrimaryKey("PK_PriceCollectionAttempts", x => x.Id);
-                table.CheckConstraint("CK_PriceCollectionAttempts_Outcome", "[Outcome] IN ('Observed', 'SkippedMarketClosed', 'SkippedDuplicate', 'Throttled', 'Failed')");
+                table.CheckConstraint("CK_PriceCollectionAttempts_Outcome", "[Outcome] IN ('Observed', 'SkippedMarketClosed', 'SkippedDuplicate', 'Throttled', 'Failed', 'PriceUnavailable')");
                 table.ForeignKey(
                     name: "FK_PriceCollectionAttempts_WatchedInstruments_WatchedInstrumentId",
                     column: x => x.WatchedInstrumentId,

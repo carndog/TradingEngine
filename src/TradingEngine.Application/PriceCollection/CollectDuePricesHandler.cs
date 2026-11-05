@@ -16,6 +16,7 @@ public sealed class CollectDuePricesHandler
     private readonly ISamplingPolicy _samplingPolicy;
     private readonly IMarketSessionPolicy _sessionPolicy;
     private readonly IClock _clock;
+    private readonly TimeProvider _timeProvider;
     private readonly PriceCollectionOptions _options;
 
     public CollectDuePricesHandler(
@@ -25,6 +26,7 @@ public sealed class CollectDuePricesHandler
         ISamplingPolicy samplingPolicy,
         IMarketSessionPolicy sessionPolicy,
         IClock clock,
+        TimeProvider timeProvider,
         PriceCollectionOptions options)
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
@@ -35,6 +37,7 @@ public sealed class CollectDuePricesHandler
         _sessionPolicy = sessionPolicy
             ?? throw new ArgumentNullException(nameof(sessionPolicy));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
@@ -51,8 +54,25 @@ public sealed class CollectDuePricesHandler
         Instant deadline = startedAt.Plus(
             Duration.FromSeconds(_options.MaxExecutionTimeSeconds));
 
-        IReadOnlyList<MonitoredInstrument> instruments =
-            await _source.ListMonitoredAsync(cancellationToken);
+        using CancellationTokenSource budgetTimeout = new(
+            TimeSpan.FromSeconds(_options.MaxExecutionTimeSeconds),
+            _timeProvider);
+        using CancellationTokenSource budgetScope =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                budgetTimeout.Token);
+        CancellationToken budgetToken = budgetScope.Token;
+
+        IReadOnlyList<MonitoredInstrument> instruments;
+        try
+        {
+            instruments = await _source.ListMonitoredAsync(budgetToken);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested is false)
+        {
+            return DeadlineResult(invocationId, startedAt, []);
+        }
 
         List<PriceCollectionItemResult> items = [];
         if (instruments.Count == 0)
@@ -68,14 +88,24 @@ public sealed class CollectDuePricesHandler
         Guid[] instrumentIds = instruments
             .Select(instrument => instrument.Id)
             .ToArray();
-        IReadOnlyDictionary<Guid, Instant> latestSlots =
-            await _store.GetLatestScheduledForAsync(instrumentIds, cancellationToken);
+        IReadOnlyDictionary<Guid, Instant> latestSlots;
+        IReadOnlyDictionary<Guid, PriceCollectionAttempt> latestAttempts;
+        try
+        {
+            latestSlots = await _store.GetLatestScheduledForAsync(
+                instrumentIds,
+                budgetToken);
+            latestAttempts = await _store.GetLatestAttemptsAsync(
+                instrumentIds,
+                budgetToken);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested is false)
+        {
+            return DeadlineResult(invocationId, startedAt, items);
+        }
 
         bool deadlineReached = false;
-        using CancellationTokenSource deadlineScope =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadlineScope.CancelAfter(TimeSpan.FromSeconds(_options.MaxExecutionTimeSeconds));
-
         foreach (MonitoredInstrument instrument in instruments)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -90,13 +120,29 @@ public sealed class CollectDuePricesHandler
                 continue;
             }
 
-            PriceCollectionItemResult item = await CollectInstrumentAsync(
-                instrument,
-                scheduledFor,
-                invocationId,
-                deadline,
-                deadlineScope.Token,
-                cancellationToken);
+            latestAttempts.TryGetValue(instrument.Id, out PriceCollectionAttempt? latestAttempt);
+
+            PriceCollectionItemResult item;
+            try
+            {
+                item = await CollectInstrumentAsync(
+                    instrument,
+                    scheduledFor,
+                    latestAttempt,
+                    invocationId,
+                    deadline,
+                    budgetToken,
+                    cancellationToken);
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested is false)
+            {
+                item = await TryRecordStorageFailureAsync(
+                    instrument,
+                    scheduledFor,
+                    invocationId,
+                    cancellationToken);
+            }
+
             items.Add(item);
 
             if (item.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code
@@ -115,12 +161,26 @@ public sealed class CollectDuePricesHandler
             items);
     }
 
+    private PriceCollectionRunResult DeadlineResult(
+        Guid invocationId,
+        Instant startedAt,
+        List<PriceCollectionItemResult> items)
+    {
+        return new PriceCollectionRunResult(
+            invocationId,
+            startedAt,
+            _clock.GetCurrentInstant(),
+            true,
+            items);
+    }
+
     private async Task<PriceCollectionItemResult> CollectInstrumentAsync(
         MonitoredInstrument instrument,
         Instant scheduledFor,
+        PriceCollectionAttempt? latestAttempt,
         Guid invocationId,
         Instant deadline,
-        CancellationToken runToken,
+        CancellationToken budgetToken,
         CancellationToken cancellationToken)
     {
         Instant attemptedAt = _clock.GetCurrentInstant();
@@ -139,13 +199,27 @@ public sealed class CollectDuePricesHandler
                 cancellationToken);
         }
 
+        if (latestAttempt is not null
+            && latestAttempt.ScheduledFor == scheduledFor
+            && latestAttempt.Outcome is PriceCollectionOutcome.Throttled
+                or PriceCollectionOutcome.PriceUnavailable)
+        {
+            return new PriceCollectionItemResult(
+                instrument.Id,
+                scheduledFor,
+                latestAttempt.Outcome,
+                latestAttempt.ErrorCode,
+                latestAttempt.ProviderRequestId);
+        }
+
         ExchangeSessionStatus session =
             _sessionPolicy.GetStatus(instrument.Exchange, attemptedAt);
         if (session == ExchangeSessionStatus.Unconfigured)
         {
-            return await RecordAttemptAsync(
+            return await RecordOutcomeAsync(
                 instrument,
                 scheduledFor,
+                latestAttempt,
                 attemptedAt,
                 invocationId,
                 PriceCollectionOutcome.Failed,
@@ -157,9 +231,10 @@ public sealed class CollectDuePricesHandler
 
         if (session == ExchangeSessionStatus.Closed)
         {
-            return await RecordAttemptAsync(
+            return await RecordOutcomeAsync(
                 instrument,
                 scheduledFor,
+                latestAttempt,
                 attemptedAt,
                 invocationId,
                 PriceCollectionOutcome.SkippedMarketClosed,
@@ -188,58 +263,143 @@ public sealed class CollectDuePricesHandler
             instrument.Symbol,
             instrument.QuoteCurrency);
 
-        try
+        MarketQuote? quote = null;
+        for (int providerAttempt = 0;
+            providerAttempt <= _options.UnavailableRetryAttempts;
+            providerAttempt++)
         {
-            Result<MarketQuote> quote = await _marketData.GetCurrentQuoteAsync(
-                identity,
-                runToken);
-
-            if (quote.IsFailure)
+            Result<MarketQuote> result;
+            try
+            {
+                result = await _marketData.GetCurrentQuoteAsync(
+                    identity,
+                    budgetToken);
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested is false)
             {
                 return await RecordAttemptAsync(
                     instrument,
                     scheduledFor,
                     attemptedAt,
                     invocationId,
-                    quote.Error.Code == MarketDataErrors.ProviderThrottled.Code
-                        ? PriceCollectionOutcome.Throttled
-                        : PriceCollectionOutcome.Failed,
-                    quote.Error.Code,
+                    PriceCollectionOutcome.Failed,
+                    PriceCollectionErrors.DeadlineExceeded.Code,
+                    null,
+                    null,
+                    cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                return await RecordAttemptAsync(
+                    instrument,
+                    scheduledFor,
+                    attemptedAt,
+                    invocationId,
+                    PriceCollectionOutcome.Failed,
+                    PriceCollectionErrors.ProviderTimeout.Code,
+                    null,
+                    null,
+                    cancellationToken);
+            }
+            catch (Exception)
+            {
+                return await RecordAttemptAsync(
+                    instrument,
+                    scheduledFor,
+                    attemptedAt,
+                    invocationId,
+                    PriceCollectionOutcome.Failed,
+                    PriceCollectionErrors.ProviderError.Code,
                     null,
                     null,
                     cancellationToken);
             }
 
-            MarketQuote value = quote.Value;
-            ScheduledPriceObservation observation = new(
-                instrument.Id,
-                scheduledFor,
-                value.Provider,
-                value.ProviderInstrumentId,
-                value.Bid,
-                value.Ask,
-                identity.QuoteCurrency,
-                value.ProviderObservedAt,
-                value.RetrievedAt,
-                value.Timeliness,
-                value.ProviderRequestId,
-                invocationId);
-            bool recorded = await _store.TryRecordObservationAsync(
-                observation,
-                cancellationToken);
+            if (result.IsFailure)
+            {
+                return await RecordAttemptAsync(
+                    instrument,
+                    scheduledFor,
+                    attemptedAt,
+                    invocationId,
+                    result.Error.Code == MarketDataErrors.ProviderThrottled.Code
+                        ? PriceCollectionOutcome.Throttled
+                        : PriceCollectionOutcome.Failed,
+                    result.Error.Code,
+                    null,
+                    null,
+                    cancellationToken);
+            }
 
-            return await RecordAttemptAsync(
-                instrument,
-                scheduledFor,
-                attemptedAt,
-                invocationId,
-                recorded
-                    ? PriceCollectionOutcome.Observed
-                    : PriceCollectionOutcome.SkippedDuplicate,
-                null,
-                value.Provider,
-                value.ProviderRequestId,
-                cancellationToken);
+            quote = result.Value;
+            if (quote.Bid is not null || quote.Ask is not null)
+            {
+                return await RecordObservationAsync(
+                    instrument,
+                    scheduledFor,
+                    attemptedAt,
+                    invocationId,
+                    identity,
+                    quote,
+                    budgetToken,
+                    cancellationToken);
+            }
+        }
+
+        return await RecordAttemptAsync(
+            instrument,
+            scheduledFor,
+            attemptedAt,
+            invocationId,
+            PriceCollectionOutcome.PriceUnavailable,
+            PriceCollectionErrors.PriceUnavailable.Code,
+            quote?.Provider,
+            quote?.ProviderRequestId,
+            cancellationToken);
+    }
+
+    private async Task<PriceCollectionItemResult> RecordObservationAsync(
+        MonitoredInstrument instrument,
+        Instant scheduledFor,
+        Instant attemptedAt,
+        Guid invocationId,
+        MarketInstrumentIdentity identity,
+        MarketQuote value,
+        CancellationToken budgetToken,
+        CancellationToken cancellationToken)
+    {
+        ScheduledPriceObservation observation = new(
+            instrument.Id,
+            scheduledFor,
+            value.Provider,
+            value.ProviderInstrumentId,
+            value.Bid,
+            value.Ask,
+            identity.QuoteCurrency,
+            value.ProviderObservedAt,
+            value.RetrievedAt,
+            value.Timeliness,
+            value.ProviderRequestId,
+            invocationId);
+        PriceCollectionAttempt observedAttempt = new(
+            instrument.Id,
+            scheduledFor,
+            PriceCollectionOutcome.Observed,
+            null,
+            value.Provider,
+            value.ProviderRequestId,
+            invocationId,
+            attemptedAt,
+            _clock.GetCurrentInstant());
+
+        bool recorded;
+        try
+        {
+            recorded = await _store.TryRecordObservationAndAttemptAsync(
+                observation,
+                observedAttempt,
+                budgetToken);
         }
         catch (OperationCanceledException) when (
             cancellationToken.IsCancellationRequested is false)
@@ -255,7 +415,8 @@ public sealed class CollectDuePricesHandler
                 null,
                 cancellationToken);
         }
-        catch (TimeoutException)
+        catch (Exception exception) when (
+            exception is InvalidDataException or ArgumentOutOfRangeException)
         {
             return await RecordAttemptAsync(
                 instrument,
@@ -263,23 +424,111 @@ public sealed class CollectDuePricesHandler
                 attemptedAt,
                 invocationId,
                 PriceCollectionOutcome.Failed,
-                PriceCollectionErrors.ProviderTimeout.Code,
+                PriceCollectionErrors.UnsupportedQuote.Code,
+                value.Provider,
+                value.ProviderRequestId,
+                cancellationToken);
+        }
+        catch (PriceObservationStorageException)
+        {
+            return await RecordAttemptAsync(
+                instrument,
+                scheduledFor,
+                attemptedAt,
+                invocationId,
+                PriceCollectionOutcome.Failed,
+                PriceCollectionErrors.StorageError.Code,
+                value.Provider,
+                value.ProviderRequestId,
+                cancellationToken);
+        }
+
+        if (recorded is false)
+        {
+            return await RecordAttemptAsync(
+                instrument,
+                scheduledFor,
+                attemptedAt,
+                invocationId,
+                PriceCollectionOutcome.SkippedDuplicate,
+                null,
+                value.Provider,
+                value.ProviderRequestId,
+                cancellationToken);
+        }
+
+        return new PriceCollectionItemResult(
+            instrument.Id,
+            scheduledFor,
+            PriceCollectionOutcome.Observed,
+            null,
+            value.ProviderRequestId);
+    }
+
+    private async Task<PriceCollectionItemResult> RecordOutcomeAsync(
+        MonitoredInstrument instrument,
+        Instant scheduledFor,
+        PriceCollectionAttempt? latestAttempt,
+        Instant attemptedAt,
+        Guid invocationId,
+        PriceCollectionOutcome outcome,
+        string? errorCode,
+        string? provider,
+        string? providerRequestId,
+        CancellationToken cancellationToken)
+    {
+        if (latestAttempt is not null
+            && latestAttempt.ScheduledFor == scheduledFor
+            && latestAttempt.Outcome == outcome
+            && latestAttempt.ErrorCode == errorCode)
+        {
+            return new PriceCollectionItemResult(
+                instrument.Id,
+                scheduledFor,
+                outcome,
+                errorCode,
+                providerRequestId);
+        }
+
+        return await RecordAttemptAsync(
+            instrument,
+            scheduledFor,
+            attemptedAt,
+            invocationId,
+            outcome,
+            errorCode,
+            provider,
+            providerRequestId,
+            cancellationToken);
+    }
+
+    private async Task<PriceCollectionItemResult> TryRecordStorageFailureAsync(
+        MonitoredInstrument instrument,
+        Instant scheduledFor,
+        Guid invocationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RecordAttemptAsync(
+                instrument,
+                scheduledFor,
+                _clock.GetCurrentInstant(),
+                invocationId,
+                PriceCollectionOutcome.Failed,
+                PriceCollectionErrors.StorageError.Code,
                 null,
                 null,
                 cancellationToken);
         }
-        catch (Exception)
+        catch (Exception) when (cancellationToken.IsCancellationRequested is false)
         {
-            return await RecordAttemptAsync(
-                instrument,
+            return new PriceCollectionItemResult(
+                instrument.Id,
                 scheduledFor,
-                attemptedAt,
-                invocationId,
                 PriceCollectionOutcome.Failed,
-                PriceCollectionErrors.ProviderError.Code,
-                null,
-                null,
-                cancellationToken);
+                PriceCollectionErrors.StorageError.Code,
+                null);
         }
     }
 

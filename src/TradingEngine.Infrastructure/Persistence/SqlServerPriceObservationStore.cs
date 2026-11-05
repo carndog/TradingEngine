@@ -9,6 +9,8 @@ namespace TradingEngine.Infrastructure.Persistence;
 
 public sealed class SqlServerPriceObservationStore : IPriceObservationStore
 {
+    private const int MaximumNativeScale = 18;
+
     private readonly TradingEngineDbContext _context;
 
     public SqlServerPriceObservationStore(TradingEngineDbContext context)
@@ -39,17 +41,53 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
         return latest.ToDictionary(pair => pair.Key, pair => pair.Value);
     }
 
-    public async Task<bool> TryRecordObservationAsync(
+    public async Task<IReadOnlyDictionary<Guid, PriceCollectionAttempt>> GetLatestAttemptsAsync(
+        IReadOnlyCollection<Guid> instrumentIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(instrumentIds);
+
+        if (instrumentIds.Count == 0)
+        {
+            return new Dictionary<Guid, PriceCollectionAttempt>();
+        }
+
+        List<PriceCollectionAttemptRow> rows = await _context.PriceCollectionAttempts
+            .AsNoTracking()
+            .Where(row =>
+                instrumentIds.Contains(row.WatchedInstrumentId)
+                && _context.PriceCollectionAttempts
+                    .Where(candidate =>
+                        candidate.WatchedInstrumentId == row.WatchedInstrumentId)
+                    .Max(candidate => (Instant?)candidate.RecordedAt) == row.RecordedAt)
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(row => row.WatchedInstrumentId)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(row => row.ScheduledFor)
+                    .Select(MapAttempt)
+                    .First());
+    }
+
+    public async Task<bool> TryRecordObservationAndAttemptAsync(
         ScheduledPriceObservation observation,
+        PriceCollectionAttempt attempt,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(observation);
+        ArgumentNullException.ThrowIfNull(attempt);
 
         if (Enum.IsDefined(observation.Timeliness) is false)
         {
             throw new InvalidDataException(
                 $"The quote timeliness '{observation.Timeliness}' is not a defined value.");
         }
+
+        RequirePersistableScale(observation.Bid, nameof(observation.Bid));
+        RequirePersistableScale(observation.Ask, nameof(observation.Ask));
 
         _context.PriceObservations.Add(new PriceObservationRow
         {
@@ -72,6 +110,7 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
             ProviderRequestId = observation.ProviderRequestId,
             InvocationId = observation.InvocationId
         });
+        _context.PriceCollectionAttempts.Add(MapAttemptRow(attempt));
 
         try
         {
@@ -80,7 +119,15 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception))
         {
+            _context.ChangeTracker.Clear();
             return false;
+        }
+        catch (DbUpdateException exception)
+        {
+            _context.ChangeTracker.Clear();
+            throw new PriceObservationStorageException(
+                "Persisting the observation and its collection attempt failed.",
+                exception);
         }
     }
 
@@ -90,13 +137,30 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
     {
         ArgumentNullException.ThrowIfNull(attempt);
 
+        _context.PriceCollectionAttempts.Add(MapAttemptRow(attempt));
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+        {
+            _context.ChangeTracker.Clear();
+            throw new PriceObservationStorageException(
+                "Persisting the collection attempt failed.",
+                exception);
+        }
+    }
+
+    private static PriceCollectionAttemptRow MapAttemptRow(PriceCollectionAttempt attempt)
+    {
         if (Enum.IsDefined(attempt.Outcome) is false)
         {
             throw new InvalidDataException(
                 $"The collection outcome '{attempt.Outcome}' is not a defined value.");
         }
 
-        _context.PriceCollectionAttempts.Add(new PriceCollectionAttemptRow
+        return new PriceCollectionAttemptRow
         {
             WatchedInstrumentId = attempt.InstrumentId,
             ScheduledFor = PersistedInstant.Require(
@@ -113,9 +177,37 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
             RecordedAt = PersistedInstant.Require(
                 attempt.RecordedAt,
                 nameof(attempt))
-        });
+        };
+    }
 
-        await _context.SaveChangesAsync(cancellationToken);
+    private static PriceCollectionAttempt MapAttempt(PriceCollectionAttemptRow row)
+    {
+        return new PriceCollectionAttempt(
+            row.WatchedInstrumentId,
+            row.ScheduledFor,
+            Enum.Parse<PriceCollectionOutcome>(row.Outcome),
+            row.ErrorCode,
+            row.Provider,
+            row.ProviderRequestId,
+            row.InvocationId,
+            row.AttemptedAt,
+            row.RecordedAt);
+    }
+
+    private static void RequirePersistableScale(decimal? value, string parameterName)
+    {
+        if (value is null)
+        {
+            return;
+        }
+
+        int scale = (decimal.GetBits(value.Value)[3] >> 16) & 0xFF;
+        if (scale > MaximumNativeScale)
+        {
+            throw new InvalidDataException(
+                $"The {parameterName} value has scale {scale}, finer than " +
+                $"decimal(38,{MaximumNativeScale}) can store without rounding.");
+        }
     }
 
     private static bool IsUniqueViolation(DbUpdateException exception)

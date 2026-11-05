@@ -57,6 +57,7 @@ internal static class PriceCollectionServiceCollectionExtensions
                 provider.GetRequiredService<ISamplingPolicy>(),
                 provider.GetRequiredService<IMarketSessionPolicy>(),
                 provider.GetRequiredService<IClock>(),
+                provider.GetRequiredService<TimeProvider>(),
                 provider.GetRequiredService<PriceCollectionOptions>()));
 
         services.TryAddSingleton(TimeProvider.System);

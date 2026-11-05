@@ -76,6 +76,7 @@ internal sealed class PriceCollectionHostedService : BackgroundService
         int marketClosed = 0;
         int duplicates = 0;
         int throttled = 0;
+        int priceUnavailable = 0;
         int failed = 0;
 
         foreach (PriceCollectionItemResult item in result.Items)
@@ -94,6 +95,9 @@ internal sealed class PriceCollectionHostedService : BackgroundService
                 case PriceCollectionOutcome.Throttled:
                     throttled++;
                     break;
+                case PriceCollectionOutcome.PriceUnavailable:
+                    priceUnavailable++;
+                    break;
                 default:
                     failed++;
                     break;
@@ -103,12 +107,14 @@ internal sealed class PriceCollectionHostedService : BackgroundService
         _logger.LogInformation(
             "Price collection run {InvocationId} completed: {Observed} observed, " +
             "{MarketClosed} market-closed, {Duplicates} duplicate, {Throttled} throttled, " +
-            "{Failed} failed; deadlineReached={DeadlineReached}.",
+            "{PriceUnavailable} price-unavailable, {Failed} failed; " +
+            "deadlineReached={DeadlineReached}.",
             result.InvocationId,
             observed,
             marketClosed,
             duplicates,
             throttled,
+            priceUnavailable,
             failed,
             result.DeadlineReached);
     }

@@ -31,6 +31,15 @@ param logAnalyticsDailyDataCapGb = '0.1'
 // monitored instruments have been reviewed; see docs/price-collection.md.
 param enablePriceCollection = false
 
+// The eToro market-data keys, the exchange/quote-currency maps and the exchange
+// session definitions are intentionally absent: they are supplied at deploy
+// time from GitHub environment secrets (etoroMarketDataApiKey,
+// etoroMarketDataUserKey, marketDataExchangeMap, marketDataQuoteCurrencyMap and
+// priceCollectionExchangeSessions) and must never be committed to this
+// repository. The appsettings deployment replaces the whole app-settings
+// collection, so these parameters are what keep the values in place across
+// infrastructure redeployments.
+
 param tags = {
   project: 'trading-engine'
   environment: 'dev'

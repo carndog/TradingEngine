@@ -173,7 +173,7 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
 
                     b.ToTable("PriceCollectionAttempts", null, t =>
                         {
-                            t.HasCheckConstraint("CK_PriceCollectionAttempts_Outcome", "[Outcome] IN ('Observed', 'SkippedMarketClosed', 'SkippedDuplicate', 'Throttled', 'Failed')");
+                            t.HasCheckConstraint("CK_PriceCollectionAttempts_Outcome", "[Outcome] IN ('Observed', 'SkippedMarketClosed', 'SkippedDuplicate', 'Throttled', 'Failed', 'PriceUnavailable')");
                         });
                 });
 

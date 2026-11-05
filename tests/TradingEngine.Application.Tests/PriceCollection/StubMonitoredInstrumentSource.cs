@@ -9,11 +9,18 @@ internal sealed class StubMonitoredInstrumentSource : IMonitoredInstrumentSource
 
     public int CallCount { get; private set; }
 
-    public Task<IReadOnlyList<MonitoredInstrument>> ListMonitoredAsync(
+    public Func<CancellationToken, Task>? Gate { get; set; }
+
+    public async Task<IReadOnlyList<MonitoredInstrument>> ListMonitoredAsync(
         CancellationToken cancellationToken)
     {
+        if (Gate is not null)
+        {
+            await Gate(cancellationToken);
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         CallCount++;
-        return Task.FromResult<IReadOnlyList<MonitoredInstrument>>(Instruments);
+        return Instruments;
     }
 }
