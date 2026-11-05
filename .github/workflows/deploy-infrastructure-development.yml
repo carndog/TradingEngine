@@ -157,7 +157,10 @@ jobs:
                     (.[] | delta_rows)
                   end),
                   ""
-              ' what-if.json
+              ' what-if.json \
+                | sed -E \
+                    -e 's/EToro__MarketData__[A-Za-z0-9_.-]+/EToro__MarketData__&lt;redacted&gt;/g' \
+                    -e 's/PriceCollection__ExchangeSessions__[A-Za-z0-9_.-]+/PriceCollection__ExchangeSessions__&lt;redacted&gt;/g'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -242,7 +245,8 @@ jobs:
             --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
             --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
             --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" \
-            "${extra_params[@]}"
+            "${extra_params[@]}" \
+            --output none
 
       - name: Write deployment summary
         run: |

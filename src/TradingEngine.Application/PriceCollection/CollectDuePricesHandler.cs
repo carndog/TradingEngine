@@ -140,6 +140,7 @@ public sealed class CollectDuePricesHandler
                     instrument,
                     scheduledFor,
                     invocationId,
+                    budgetToken,
                     cancellationToken);
             }
 
@@ -196,6 +197,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.DeadlineExceeded.Code,
                 null,
                 null,
+                budgetToken,
                 cancellationToken);
         }
 
@@ -226,6 +228,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.ExchangeSessionUnconfigured.Code,
                 null,
                 null,
+                budgetToken,
                 cancellationToken);
         }
 
@@ -241,6 +244,7 @@ public sealed class CollectDuePricesHandler
                 null,
                 null,
                 null,
+                budgetToken,
                 cancellationToken);
         }
 
@@ -255,6 +259,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.DeadlineExceeded.Code,
                 null,
                 null,
+                budgetToken,
                 cancellationToken);
         }
 
@@ -287,6 +292,7 @@ public sealed class CollectDuePricesHandler
                     PriceCollectionErrors.DeadlineExceeded.Code,
                     null,
                     null,
+                    budgetToken,
                     cancellationToken);
             }
             catch (TimeoutException)
@@ -300,6 +306,7 @@ public sealed class CollectDuePricesHandler
                     PriceCollectionErrors.ProviderTimeout.Code,
                     null,
                     null,
+                    budgetToken,
                     cancellationToken);
             }
             catch (Exception)
@@ -313,6 +320,7 @@ public sealed class CollectDuePricesHandler
                     PriceCollectionErrors.ProviderError.Code,
                     null,
                     null,
+                    budgetToken,
                     cancellationToken);
             }
 
@@ -329,6 +337,7 @@ public sealed class CollectDuePricesHandler
                     result.Error.Code,
                     null,
                     null,
+                    budgetToken,
                     cancellationToken);
             }
 
@@ -356,6 +365,7 @@ public sealed class CollectDuePricesHandler
             PriceCollectionErrors.PriceUnavailable.Code,
             quote?.Provider,
             quote?.ProviderRequestId,
+            budgetToken,
             cancellationToken);
     }
 
@@ -413,6 +423,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.DeadlineExceeded.Code,
                 null,
                 null,
+                budgetToken,
                 cancellationToken);
         }
         catch (Exception exception) when (
@@ -427,6 +438,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.UnsupportedQuote.Code,
                 value.Provider,
                 value.ProviderRequestId,
+                budgetToken,
                 cancellationToken);
         }
         catch (PriceObservationStorageException)
@@ -440,6 +452,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.StorageError.Code,
                 value.Provider,
                 value.ProviderRequestId,
+                budgetToken,
                 cancellationToken);
         }
 
@@ -454,6 +467,7 @@ public sealed class CollectDuePricesHandler
                 null,
                 value.Provider,
                 value.ProviderRequestId,
+                budgetToken,
                 cancellationToken);
         }
 
@@ -475,6 +489,7 @@ public sealed class CollectDuePricesHandler
         string? errorCode,
         string? provider,
         string? providerRequestId,
+        CancellationToken budgetToken,
         CancellationToken cancellationToken)
     {
         if (latestAttempt is not null
@@ -499,6 +514,7 @@ public sealed class CollectDuePricesHandler
             errorCode,
             provider,
             providerRequestId,
+            budgetToken,
             cancellationToken);
     }
 
@@ -506,6 +522,7 @@ public sealed class CollectDuePricesHandler
         MonitoredInstrument instrument,
         Instant scheduledFor,
         Guid invocationId,
+        CancellationToken budgetToken,
         CancellationToken cancellationToken)
     {
         try
@@ -519,6 +536,7 @@ public sealed class CollectDuePricesHandler
                 PriceCollectionErrors.StorageError.Code,
                 null,
                 null,
+                budgetToken,
                 cancellationToken);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested is false)
@@ -541,8 +559,19 @@ public sealed class CollectDuePricesHandler
         string? errorCode,
         string? provider,
         string? providerRequestId,
+        CancellationToken budgetToken,
         CancellationToken cancellationToken)
     {
+        if (budgetToken.IsCancellationRequested)
+        {
+            return new PriceCollectionItemResult(
+                instrument.Id,
+                scheduledFor,
+                PriceCollectionOutcome.Failed,
+                PriceCollectionErrors.DeadlineExceeded.Code,
+                null);
+        }
+
         PriceCollectionAttempt attempt = new(
             instrument.Id,
             scheduledFor,
@@ -554,7 +583,20 @@ public sealed class CollectDuePricesHandler
             attemptedAt,
             _clock.GetCurrentInstant());
 
-        await _store.RecordAttemptAsync(attempt, cancellationToken);
+        try
+        {
+            await _store.RecordAttemptAsync(attempt, budgetToken);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested is false)
+        {
+            return new PriceCollectionItemResult(
+                instrument.Id,
+                scheduledFor,
+                PriceCollectionOutcome.Failed,
+                PriceCollectionErrors.DeadlineExceeded.Code,
+                null);
+        }
 
         return new PriceCollectionItemResult(
             instrument.Id,

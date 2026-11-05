@@ -320,6 +320,15 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                     cancellationToken);
                 LogResponse(relativeUri, captured);
 
+                if (captured.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    _rateGate.RegisterCooldown(
+                        EToroRateLimitPolicies.MarketData.Name,
+                        _clock.GetCurrentInstant().Plus(
+                            Duration.FromTimeSpan(
+                                RequiredDelay(captured, attempt))));
+                }
+
                 if (IsTransient(captured.StatusCode) is false
                     || attempt >= _options.MaxRetryAttempts)
                 {

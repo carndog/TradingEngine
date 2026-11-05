@@ -931,10 +931,41 @@ public sealed class CollectDuePricesHandlerTests
                 result.Items[0].ErrorCode,
                 Is.EqualTo(PriceCollectionErrors.DeadlineExceeded.Code));
             Assert.That(_store.Observations, Is.Empty);
-            Assert.That(_store.Attempts, Has.Count.EqualTo(1));
+            Assert.That(_store.Attempts, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenAttemptWriteStallsPastDeadline_ReturnsDeadlineWithoutWriting()
+    {
+        ManualTimeProvider timeProvider = new();
+        StubMarketSessionPolicy sessions = new()
+        {
+            Responder = (_, _) => ExchangeSessionStatus.Closed
+        };
+        _store.AttemptGate = token => Task.Delay(Timeout.InfiniteTimeSpan, token);
+        CollectDuePricesHandler handler = CreateHandler(
+            sessions,
+            timeProvider: timeProvider);
+
+        Task<PriceCollectionRunResult> run = handler.HandleAsync(
+            new CollectDuePrices(),
+            CancellationToken.None);
+        timeProvider.Advance(TimeSpan.FromSeconds(61));
+        PriceCollectionRunResult result = await run;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items, Has.Count.EqualTo(1));
             Assert.That(
-                _store.Attempts[0].ErrorCode,
+                result.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Failed));
+            Assert.That(
+                result.Items[0].ErrorCode,
                 Is.EqualTo(PriceCollectionErrors.DeadlineExceeded.Code));
+            Assert.That(_store.Observations, Is.Empty);
+            Assert.That(_store.Attempts, Is.Empty);
+            Assert.That(result.DeadlineReached, Is.True);
         });
     }
 

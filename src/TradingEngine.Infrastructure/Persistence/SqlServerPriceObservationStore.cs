@@ -10,6 +10,8 @@ namespace TradingEngine.Infrastructure.Persistence;
 public sealed class SqlServerPriceObservationStore : IPriceObservationStore
 {
     private const int MaximumNativeScale = 18;
+    private const string SlotIndexName =
+        "UX_PriceObservations_WatchedInstrumentId_ScheduledFor";
 
     private readonly TradingEngineDbContext _context;
 
@@ -117,14 +119,27 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
             await _context.SaveChangesAsync(cancellationToken);
             return true;
         }
-        catch (DbUpdateException exception) when (IsUniqueViolation(exception))
+        catch (OperationCanceledException)
         {
             _context.ChangeTracker.Clear();
-            return false;
+            throw;
         }
         catch (DbUpdateException exception)
         {
             _context.ChangeTracker.Clear();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(
+                    "The observation save was cancelled.",
+                    exception,
+                    cancellationToken);
+            }
+
+            if (IsUniqueViolation(exception))
+            {
+                return false;
+            }
+
             throw new PriceObservationStorageException(
                 "Persisting the observation and its collection attempt failed.",
                 exception);
@@ -143,9 +158,22 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
         {
             await _context.SaveChangesAsync(cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            _context.ChangeTracker.Clear();
+            throw;
+        }
         catch (DbUpdateException exception)
         {
             _context.ChangeTracker.Clear();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(
+                    "The attempt save was cancelled.",
+                    exception,
+                    cancellationToken);
+            }
+
             throw new PriceObservationStorageException(
                 "Persisting the collection attempt failed.",
                 exception);
@@ -212,6 +240,12 @@ public sealed class SqlServerPriceObservationStore : IPriceObservationStore
 
     private static bool IsUniqueViolation(DbUpdateException exception)
     {
-        return exception.InnerException is SqlException { Number: 2601 or 2627 };
+        return exception.InnerException is SqlException
+        {
+            Number: 2601 or 2627
+        } sqlException
+            && sqlException.Message.Contains(
+                SlotIndexName,
+                StringComparison.Ordinal);
     }
 }

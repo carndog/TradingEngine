@@ -34,7 +34,7 @@ For each monitored instrument the handler computes `scheduledFor` by flooring th
 | Name | Behaviour |
 | --- | --- |
 | `per-instrument` (default) | Effective interval = `WatchedInstrument.SamplingIntervalSeconds` unchanged. The cadence configured per instrument is the cadence collected. |
-| `provider-budget-clamped` | Effective interval = `max(SamplingIntervalSeconds, ceil(monitoredCount × windowSeconds / providerRateLimit))`. With the eToro defaults (120 requests / 60 s) the floor is `ceil(count / 2)` seconds — identical to `EToroRateLimitPolicies.MinimumSamplingIntervalSeconds`. The provider's shared rolling-window rate gate additionally paces calls inside the process, so the clamp is a conservative steady-state bound, not a quota guarantee. |
+| `provider-budget-clamped` | Effective interval = `max(SamplingIntervalSeconds, ceil(monitoredCount × windowSeconds / providerRateLimit))`. With the eToro defaults (120 requests / 60 s) the floor is `ceil(count / 2)` seconds — identical to `EToroRateLimitPolicies.MinimumSamplingIntervalSeconds`. The provider's shared rolling-window rate gate additionally paces calls inside the process and honours provider-directed cooldowns — a 429 carrying `Retry-After`/`RateLimit-Reset` registers a cooldown until the directed instant, so every subsequent call on the shared gate declines locally (zero HTTP attempts) until it expires or the remaining budget cannot outlast it. The clamp is therefore a conservative steady-state bound, not a quota guarantee. |
 
 Existing instruments keep working under either policy: `SamplingIntervalSeconds` (1–3600, stored on the instrument) remains the demand input; the policy only derives the effective interval used for slot flooring.
 
@@ -59,7 +59,7 @@ Every processed instrument produces exactly one `PriceCollectionAttempts` row wi
 | `Observed` | Quote returned and persisted as a new `PriceObservations` row |
 | `SkippedMarketClosed` | Exchange session closed — no provider call was made |
 | `SkippedDuplicate` | Another invocation already persisted this slot (unique index) |
-| `Throttled` | Provider returned `market_data.provider_throttled` (rate gate or 429) |
+| `Throttled` | Provider returned `market_data.provider_throttled` (rate gate, provider-directed cooldown after a 429, or the 429 response itself) |
 | `PriceUnavailable` | Provider returned a quote with neither bid nor ask after the bounded retry |
 | `Failed` | Any other failure; `ErrorCode` carries `price_collection.*` or `market_data.*` |
 
@@ -159,9 +159,11 @@ The `appsettings` deployment **replaces the whole app-settings collection** on e
 | --- | --- | --- |
 | `ETORO_MARKET_DATA_API_KEY` | `etoroMarketDataApiKey` (`@secure`) | `EToro__MarketData__ApiKey` |
 | `ETORO_MARKET_DATA_USER_KEY` | `etoroMarketDataUserKey` (`@secure`) | `EToro__MarketData__UserKey` |
-| `ETORO_MARKET_DATA_EXCHANGE_MAP` | `marketDataExchangeMap` (JSON object) | `EToro__MarketData__ExchangeMap__{exchange}` |
-| `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` | `marketDataQuoteCurrencyMap` (JSON object) | `EToro__MarketData__QuoteCurrencyMap__{currency}` |
-| `PRICE_COLLECTION_EXCHANGE_SESSIONS` | `priceCollectionExchangeSessions` (JSON object) | `PriceCollection__ExchangeSessions__{exchange}__…` |
+| `ETORO_MARKET_DATA_EXCHANGE_MAP` | `marketDataExchangeMap` (`@secure` JSON object) | `EToro__MarketData__ExchangeMap__{exchange}__{index}` |
+| `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` | `marketDataQuoteCurrencyMap` (`@secure` JSON object) | `EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol}` |
+| `PRICE_COLLECTION_EXCHANGE_SESSIONS` | `priceCollectionExchangeSessions` (`@secure` JSON object) | `PriceCollection__ExchangeSessions__{exchange}__…` |
+
+All five parameters are `@secure()` in both `infra/main.bicep` and `infra/modules/app-service.bicep`, so deployment output and what-if previews carry unevaluated `parameters(...)` references rather than resolved keys or values. The what-if job summary additionally prints property *paths only* and redacts any `EToro__MarketData__*`/`PriceCollection__ExchangeSessions__*` path segment; the deploy step runs with `--output none`, so resolved parameter values never reach CI logs.
 
 The map/session secrets hold JSON objects flattened by the template — for example `ETORO_MARKET_DATA_EXCHANGE_MAP={"XNAS":["<provider exchange name>"]}` (string arrays, matching `EToro:MarketData:ExchangeMap`), `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP={"XNAS":{"MSFT":"USD"}}` (exchange → symbol → native currency, matching `EToro:MarketData:QuoteCurrencyMap`), and `PRICE_COLLECTION_EXCHANGE_SESSIONS={"XNAS":{"timeZone":"America/New_York","alwaysOpen":false,"windows":[{"days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"open":"09:30","close":"16:00"}]}}`. Keys must match the `Exchange` values on `WatchedInstruments`.
 
@@ -209,8 +211,8 @@ The hosted service logs one `Information` line per run: `InvocationId` plus obse
 
 ## Testing
 
-- `tests/TradingEngine.Application.Tests/PriceCollection` drives `CollectDuePricesHandler` with a `FakeClock`, a manual `TimeProvider`, stub provider and capturing store: due vs disabled instruments, both sampling policies, market-closed/unconfigured sessions, throttling and same-slot throttle backoff, both-null quotes retried then `PriceUnavailable`, one-sided quotes, same-slot outcome dedup with next-slot recovery, stalled reads/writes bounded by the fake-time budget, storage failures isolated per instrument, cancellation, repeat delivery and overlapping invocations. `WeeklyScheduleMarketSessionPolicyTests` covers open/close boundaries, overnight windows and the spring-forward/fall-back transitions.
-- `tests/TradingEngine.Infrastructure.IntegrationTests/Persistence/PriceCollectionPersistenceTests.cs` runs against real SQL Server via Testcontainers: `decimal(38,18)` precision round-trip, one-sided quotes, nullable `ProviderObservedAt`, unique-slot dedup, two successive slots, atomic observation+attempt rollback under a forced audit-write failure, concurrent writers racing the same slot (one observation, one `Observed`, one `SkippedDuplicate`, then the losing context collecting another instrument), quotes with scale finer than 18 rejected without rounding, latest-attempt lookup, check-constraint and FK enforcement.
+- `tests/TradingEngine.Application.Tests/PriceCollection` drives `CollectDuePricesHandler` with a `FakeClock`, a manual `TimeProvider`, stub provider and capturing store: due vs disabled instruments, both sampling policies, market-closed/unconfigured sessions, throttling and same-slot throttle backoff, both-null quotes retried then `PriceUnavailable`, one-sided quotes, same-slot outcome dedup with next-slot recovery, stalled reads/writes and stalled audit writes bounded by the fake-time budget (deadline item returned, no unbounded SQL write started), storage failures isolated per instrument, cancellation, repeat delivery and overlapping invocations. `WeeklyScheduleMarketSessionPolicyTests` covers open/close boundaries, overnight windows and the spring-forward/fall-back transitions.
+- `tests/TradingEngine.Infrastructure.IntegrationTests/Persistence/PriceCollectionPersistenceTests.cs` runs against real SQL Server via Testcontainers: `decimal(38,18)` precision round-trip, one-sided quotes, nullable `ProviderObservedAt`, unique-slot dedup, two successive slots, atomic observation+attempt rollback under a forced audit-write failure, concurrent writers racing the same slot (one observation, one `Observed`, one `SkippedDuplicate`, then the losing context collecting another instrument), quotes with scale finer than 18 rejected without rounding, latest-attempt lookup, check-constraint and FK enforcement, a `SaveChangesAsync` cancelled mid-write leaving no partial rows and a reusable context (the change tracker is cleared so a later save cannot resubmit stale entries), and unique violations on indexes other than the scheduled-slot index surfacing as storage errors rather than `SkippedDuplicate`.
 
 ## Out of scope
 

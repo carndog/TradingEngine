@@ -545,6 +545,105 @@ public sealed class PriceCollectionPersistenceTests
     }
 
     [Test]
+    public async Task TryRecordObservationAndAttemptAsync_WhenSaveCancelled_TracksNothingAndContextRecovers()
+    {
+        Guid instrumentId = await InsertInstrumentAsync("CAN", "Monitored", null);
+        await ExecuteNonQueryAsync(
+            "CREATE TRIGGER TR_PO_DelayInsert ON PriceObservations " +
+            "AFTER INSERT AS WAITFOR DELAY '00:00:03'");
+
+        TradingEngineDbContext context = CreateContext();
+        try
+        {
+            SqlServerPriceObservationStore store = new(context);
+            using CancellationTokenSource cancelled = new(
+                TimeSpan.FromMilliseconds(750));
+
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+                await store.TryRecordObservationAndAttemptAsync(
+                    CreateObservation(instrumentId, Slot),
+                    CreateObservedAttempt(instrumentId, Slot),
+                    cancelled.Token));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(context.ChangeTracker.Entries(), Is.Empty);
+                Assert.That(ObservationCountFor(instrumentId), Is.EqualTo(0));
+                Assert.That(AttemptCountFor(instrumentId), Is.EqualTo(0));
+            });
+
+            await ExecuteNonQueryAsync("DROP TRIGGER TR_PO_DelayInsert");
+
+            Assert.That(
+                await store.TryRecordObservationAndAttemptAsync(
+                    CreateObservation(instrumentId, Slot),
+                    CreateObservedAttempt(instrumentId, Slot),
+                    CancellationToken.None),
+                Is.True);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ObservationCountFor(instrumentId), Is.EqualTo(1));
+                Assert.That(AttemptCountFor(instrumentId), Is.EqualTo(1));
+            });
+        }
+        finally
+        {
+            await context.DisposeAsync();
+            await ExecuteNonQueryAsync(
+                "IF OBJECT_ID('TR_PO_DelayInsert') IS NOT NULL " +
+                "DROP TRIGGER TR_PO_DelayInsert");
+        }
+    }
+
+    [Test]
+    public async Task TryRecordObservationAndAttemptAsync_WhenOtherIndexViolated_ThrowsStorageException()
+    {
+        Guid instrumentId = await InsertInstrumentAsync("OTH", "Monitored", null);
+        Guid clashInvocationId = Guid.NewGuid();
+        await ExecuteNonQueryAsync(
+            "CREATE UNIQUE INDEX UX_PO_TestInvocationId " +
+            "ON PriceObservations (InvocationId)");
+        await ExecuteNonQueryAsync(
+            "INSERT INTO PriceObservations " +
+            "(Id, WatchedInstrumentId, ScheduledFor, Provider, " +
+            "ProviderInstrumentId, Bid, Ask, QuoteCurrency, " +
+            "ProviderObservedAt, RetrievedAt, Timeliness, ProviderRequestId, " +
+            "InvocationId) VALUES (" +
+            $"NEWID(), '{instrumentId}', '2026-10-30T13:00:00.0000000', 'eToro', " +
+            "1, 1, 1, 'USD', NULL, '2026-10-30T13:00:01.0000000', 'Realtime', " +
+            $"'clash-request', '{clashInvocationId}')");
+
+        try
+        {
+            await using TradingEngineDbContext context = CreateContext();
+            SqlServerPriceObservationStore store = new(context);
+            ScheduledPriceObservation clash = CreateObservation(instrumentId, Slot)
+                with
+                {
+                    InvocationId = clashInvocationId
+                };
+
+            await Assert.ThrowsAsync<PriceObservationStorageException>(async () =>
+                await store.TryRecordObservationAndAttemptAsync(
+                    clash,
+                    CreateObservedAttempt(instrumentId, Slot),
+                    CancellationToken.None));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ObservationCountFor(instrumentId), Is.EqualTo(1));
+                Assert.That(AttemptCountFor(instrumentId), Is.EqualTo(0));
+            });
+        }
+        finally
+        {
+            await ExecuteNonQueryAsync(
+                "DROP INDEX UX_PO_TestInvocationId ON PriceObservations");
+        }
+    }
+
+    [Test]
     public async Task GetLatestAttemptsAsync_ReturnsMostRecentAttemptPerInstrument()
     {
         Guid first = await InsertInstrumentAsync("ATT-A", "Monitored", null);

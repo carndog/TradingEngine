@@ -48,12 +48,15 @@ param etoroMarketDataApiKey string = ''
 param etoroMarketDataUserKey string = ''
 
 @description('Map of instrument exchange identifier to the provider exchange names accepted for it, flattened into indexed EToro__MarketData__ExchangeMap__* app settings. Supplied as a JSON object of string arrays at deploy time; an empty object emits no settings.')
+@secure()
 param marketDataExchangeMap object = {}
 
 @description('Map of instrument exchange identifier and symbol to the provider native currency, flattened into EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol} app settings. Supplied as a JSON object of objects at deploy time; an empty object emits no settings.')
+@secure()
 param marketDataQuoteCurrencyMap object = {}
 
 @description('Exchange session definitions keyed by exchange identifier, flattened into PriceCollection__ExchangeSessions__* app settings. Each value supports timeZone, alwaysOpen and windows[{days[], open, close}]. Supplied as a JSON object at deploy time; an empty object emits no settings.')
+@secure()
 param priceCollectionExchangeSessions object = {}
 
 @description('Tags applied to the resources.')
