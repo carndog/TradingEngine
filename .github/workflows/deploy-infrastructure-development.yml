@@ -51,6 +51,11 @@ jobs:
       AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
       AZURE_ENTRA_AUTH_CLIENT_ID: ${{ secrets.AZURE_ENTRA_AUTH_CLIENT_ID }}
       AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS: ${{ secrets.AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS }}
+      ETORO_MARKET_DATA_API_KEY: ${{ secrets.ETORO_MARKET_DATA_API_KEY }}
+      ETORO_MARKET_DATA_USER_KEY: ${{ secrets.ETORO_MARKET_DATA_USER_KEY }}
+      ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
+      ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
+      PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -87,6 +92,12 @@ jobs:
 
       - name: Run subscription what-if (merge preview, SQL enabled)
         run: |
+          extra_params=()
+          if [ -n "$ETORO_MARKET_DATA_API_KEY" ]; then extra_params+=(--parameters "etoroMarketDataApiKey=$ETORO_MARKET_DATA_API_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_USER_KEY" ]; then extra_params+=(--parameters "etoroMarketDataUserKey=$ETORO_MARKET_DATA_USER_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
+          if [ -n "$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP" ]; then extra_params+=(--parameters "marketDataQuoteCurrencyMap=$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP"); fi
+          if [ -n "$PRICE_COLLECTION_EXCHANGE_SESSIONS" ]; then extra_params+=(--parameters "priceCollectionExchangeSessions=$PRICE_COLLECTION_EXCHANGE_SESSIONS"); fi
           az deployment sub what-if \
             --name "$DEPLOYMENT_NAME" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
@@ -99,6 +110,7 @@ jobs:
             --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
             --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
             --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" \
+            "${extra_params[@]}" \
             --no-pretty-print \
             --output json > what-if.json
 
@@ -107,7 +119,7 @@ jobs:
           {
             echo "## Merge preview — Azure SQL and Easy Auth enabled"
             echo ""
-            echo "This is the change set that merging this pull request applies to the development environment. Azure SQL was provisioned under issue #35; inspect the resource rows below for unintended changes. \`configureEntraAuth\` is \`true\`, so the change enables App Service Easy Auth with Microsoft Entra ID, creates the dedicated user-assigned identity and applies the owner principal allowlist. The Entra administrator, app registration and allowlist values come from the \`development-infrastructure-preview\` environment secrets; their values are omitted from this summary."
+            echo "This is the change set that merging this pull request applies to the development environment. Azure SQL was provisioned under issue #35; inspect the resource rows below for unintended changes. \`configureEntraAuth\` is \`true\`, so the change enables App Service Easy Auth with Microsoft Entra ID, creates the dedicated user-assigned identity and applies the owner principal allowlist. The Entra administrator, app registration and allowlist values come from the \`development-infrastructure-preview\` environment secrets; their values are omitted from this summary. Private market-data and exchange-session setting paths are replaced by a fixed redaction label by the jq formatter in \`.github/scripts/whatif-summary.jq\`."
             echo ""
             echo "**Cost context:** Jason approved and provisioned Azure SQL under issue #35. Before merging, confirm the SQL server, database and App Service Plan are \`NoChange\` in this preview. If that changes in a later preview, review the new cost impact before deploying."
             echo ""
@@ -125,27 +137,7 @@ jobs:
               echo ""
               echo "#### Property changes"
               echo ""
-              jq -r '
-                def delta_rows:
-                  . as $d
-                  | ($d.children // []) as $children
-                  | if ($children | length) > 0 then
-                      $children[] | delta_rows
-                    else
-                      "| `\($d.path // "?")` | \($d.propertyChangeType // $d.changeType // "Unknown") |"
-                    end;
-                (.changes // [])[] |
-                  "##### `\(.resourceId)`",
-                  "",
-                  "| Property path | Change |",
-                  "| --- | --- |",
-                  ((.delta // []) | if length == 0 then
-                    "| — | No property-level delta reported |"
-                  else
-                    (.[] | delta_rows)
-                  end),
-                  ""
-              ' what-if.json
+              jq -r -f .github/scripts/whatif-summary.jq what-if.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -171,6 +163,11 @@ jobs:
       AZURE_DATABASE_PROBE_KEY: ${{ secrets.AZURE_DATABASE_PROBE_KEY }}
       AZURE_ENTRA_AUTH_CLIENT_ID: ${{ secrets.AZURE_ENTRA_AUTH_CLIENT_ID }}
       AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS: ${{ secrets.AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS }}
+      ETORO_MARKET_DATA_API_KEY: ${{ secrets.ETORO_MARKET_DATA_API_KEY }}
+      ETORO_MARKET_DATA_USER_KEY: ${{ secrets.ETORO_MARKET_DATA_USER_KEY }}
+      ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
+      ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
+      PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -207,6 +204,12 @@ jobs:
 
       - name: Deploy subscription-scope Bicep
         run: |
+          extra_params=()
+          if [ -n "$ETORO_MARKET_DATA_API_KEY" ]; then extra_params+=(--parameters "etoroMarketDataApiKey=$ETORO_MARKET_DATA_API_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_USER_KEY" ]; then extra_params+=(--parameters "etoroMarketDataUserKey=$ETORO_MARKET_DATA_USER_KEY"); fi
+          if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
+          if [ -n "$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP" ]; then extra_params+=(--parameters "marketDataQuoteCurrencyMap=$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP"); fi
+          if [ -n "$PRICE_COLLECTION_EXCHANGE_SESSIONS" ]; then extra_params+=(--parameters "priceCollectionExchangeSessions=$PRICE_COLLECTION_EXCHANGE_SESSIONS"); fi
           az deployment sub create \
             --name "$DEPLOYMENT_NAME" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
@@ -218,7 +221,9 @@ jobs:
             --parameters sqlEntraAdminPrincipalType="$AZURE_SQL_ENTRA_ADMIN_PRINCIPAL_TYPE" \
             --parameters databaseProbeKey="$AZURE_DATABASE_PROBE_KEY" \
             --parameters entraAuthClientId="$AZURE_ENTRA_AUTH_CLIENT_ID" \
-            --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS"
+            --parameters entraAuthAllowedPrincipalIds="$AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS" \
+            "${extra_params[@]}" \
+            --output none
 
       - name: Write deployment summary
         run: |

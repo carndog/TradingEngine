@@ -20,6 +20,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<ChartAnalysisDefinitionXmlSerializer>();
         services.AddScoped<IWatchedInstrumentStore, SqlServerWatchedInstrumentStore>();
         services.AddScoped<IMonitoringRuleStore, SqlServerMonitoringRuleStore>();
+        services.AddScoped<IMonitoredInstrumentSource, SqlServerMonitoredInstrumentSource>();
+        services.AddScoped<IPriceObservationStore, SqlServerPriceObservationStore>();
 
         return services;
     }

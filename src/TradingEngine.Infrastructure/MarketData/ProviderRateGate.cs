@@ -9,6 +9,9 @@ public sealed class ProviderRateGate
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly Dictionary<string, Queue<Instant>> _requests =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Instant> _cooldowns =
+        new(StringComparer.Ordinal);
+    private readonly object _cooldownLock = new();
 
     public ProviderRateGate(IClock clock, TimeProvider timeProvider)
     {
@@ -51,6 +54,21 @@ public sealed class ProviderRateGate
             while (true)
             {
                 Instant now = _clock.GetCurrentInstant();
+                Instant? cooldownUntil = CooldownUntil(policy.Name);
+                if (cooldownUntil is not null && cooldownUntil > now)
+                {
+                    if (cooldownUntil >= deadline)
+                    {
+                        return false;
+                    }
+
+                    await Task.Delay(
+                        (cooldownUntil.Value - now).ToTimeSpan(),
+                        _timeProvider,
+                        cancellationToken);
+                    continue;
+                }
+
                 while (requests.Count > 0
                     && requests.Peek().Plus(Duration.FromTimeSpan(policy.Window)) <= now)
                 {
@@ -81,6 +99,28 @@ public sealed class ProviderRateGate
         finally
         {
             _semaphore.Release();
+        }
+    }
+
+    public void RegisterCooldown(string policyName, Instant cooldownUntil)
+    {
+        lock (_cooldownLock)
+        {
+            if (_cooldowns.TryGetValue(policyName, out Instant existing) is false
+                || cooldownUntil > existing)
+            {
+                _cooldowns[policyName] = cooldownUntil;
+            }
+        }
+    }
+
+    private Instant? CooldownUntil(string policyName)
+    {
+        lock (_cooldownLock)
+        {
+            return _cooldowns.TryGetValue(policyName, out Instant until)
+                ? until
+                : null;
         }
     }
 

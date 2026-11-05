@@ -29,6 +29,16 @@ public sealed class TradingEngineDbContext : DbContext
         get { return Set<MonitoringRuleRevisionRow>(); }
     }
 
+    internal DbSet<PriceObservationRow> PriceObservations
+    {
+        get { return Set<PriceObservationRow>(); }
+    }
+
+    internal DbSet<PriceCollectionAttemptRow> PriceCollectionAttempts
+    {
+        get { return Set<PriceCollectionAttemptRow>(); }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(TradingEngineDbContext).Assembly);

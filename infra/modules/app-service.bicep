@@ -36,8 +36,86 @@ param easyAuthIdentityName string = ''
 @secure()
 param applicationInsightsConnectionString string = ''
 
+@description('Enable the timer-triggered price collection hosted service, exposed as the PriceCollection__Enabled app setting.')
+param priceCollectionEnabled bool = false
+
+@description('eToro market-data API key, exposed as the EToro__MarketData__ApiKey app setting. Supplied at deploy time from environment secrets; empty omits the setting. Never commit a live value.')
+@secure()
+param etoroMarketDataApiKey string = ''
+
+@description('eToro market-data user key, exposed as the EToro__MarketData__UserKey app setting. Supplied at deploy time from environment secrets; empty omits the setting. Never commit a live value.')
+@secure()
+param etoroMarketDataUserKey string = ''
+
+@description('Map of instrument exchange identifier to the provider exchange names accepted for it, flattened into indexed EToro__MarketData__ExchangeMap__* app settings. Supplied as a JSON object of string arrays at deploy time; an empty object emits no settings.')
+@secure()
+param marketDataExchangeMap object = {}
+
+@description('Map of instrument exchange identifier and symbol to the provider native currency, flattened into EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol} app settings. Supplied as a JSON object of objects at deploy time; an empty object emits no settings.')
+@secure()
+param marketDataQuoteCurrencyMap object = {}
+
+@description('Exchange session definitions keyed by exchange identifier, flattened into PriceCollection__ExchangeSessions__* app settings. Each value supports timeZone, alwaysOpen and windows[{days[], open, close}]. Supplied as a JSON object at deploy time; an empty object emits no settings.')
+@secure()
+param priceCollectionExchangeSessions object = {}
+
 @description('Tags applied to the resources.')
 param tags object
+
+var exchangeMapSettings = reduce(
+  items(marketDataExchangeMap),
+  {},
+  (accumulated, exchange) => union(
+    accumulated,
+    reduce(
+      range(0, length(exchange.value)),
+      {},
+      (indexAccumulated, valueIndex) => union(
+        indexAccumulated,
+        {
+          'EToro__MarketData__ExchangeMap__${exchange.key}__${valueIndex}': string(exchange.value[valueIndex])
+        }))))
+
+var quoteCurrencyMapSettings = reduce(
+  items(marketDataQuoteCurrencyMap),
+  {},
+  (accumulated, exchange) => union(
+    accumulated,
+    reduce(
+      items(exchange.value),
+      {},
+      (symbolAccumulated, symbol) => union(
+        symbolAccumulated,
+        {
+          'EToro__MarketData__QuoteCurrencyMap__${exchange.key}__${symbol.key}': string(symbol.value)
+        }))))
+
+var exchangeSessionSettings = reduce(
+  items(priceCollectionExchangeSessions),
+  {},
+  (accumulated, exchange) => union(
+    accumulated,
+    {
+      'PriceCollection__ExchangeSessions__${exchange.key}__TimeZone': exchange.value.?timeZone ?? ''
+      'PriceCollection__ExchangeSessions__${exchange.key}__AlwaysOpen': string(exchange.value.?alwaysOpen ?? false)
+    },
+    reduce(
+      range(0, length(exchange.value.?windows ?? [])),
+      {},
+      (windowAccumulated, windowIndex) => union(
+        windowAccumulated,
+        {
+          'PriceCollection__ExchangeSessions__${exchange.key}__Windows__${windowIndex}__Open': exchange.value.windows[windowIndex].?open ?? ''
+          'PriceCollection__ExchangeSessions__${exchange.key}__Windows__${windowIndex}__Close': exchange.value.windows[windowIndex].?close ?? ''
+        },
+        reduce(
+          range(0, length(exchange.value.windows[windowIndex].?days ?? [])),
+          {},
+          (dayAccumulated, dayIndex) => union(
+            dayAccumulated,
+            {
+              'PriceCollection__ExchangeSessions__${exchange.key}__Windows__${windowIndex}__Days__${dayIndex}': exchange.value.windows[windowIndex].days[dayIndex]
+            }))))))
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
@@ -88,7 +166,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '') {
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions)) {
   parent: webApp
   name: 'appsettings'
   properties: union(
@@ -107,6 +185,24 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
     applicationInsightsConnectionString != ''
       ? {
           APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsightsConnectionString
+        }
+      : {},
+    etoroMarketDataApiKey != ''
+      ? {
+          EToro__MarketData__ApiKey: etoroMarketDataApiKey
+        }
+      : {},
+    etoroMarketDataUserKey != ''
+      ? {
+          EToro__MarketData__UserKey: etoroMarketDataUserKey
+        }
+      : {},
+    exchangeMapSettings,
+    quoteCurrencyMapSettings,
+    exchangeSessionSettings,
+    priceCollectionEnabled
+      ? {
+          PriceCollection__Enabled: 'true'
         }
       : {}
   )

@@ -787,7 +787,69 @@ public sealed class EToroMarketDataProviderTests
         });
     }
 
+    [Test]
+    public async Task GetCurrentQuoteAsync_WhenRetryAfterCooldownActive_MakesNoHttpAttemptsUntilExpiry()
+    {
+        _options.MaxExecutionTimeSeconds = 30;
+        ScriptedHttpMessageHandler handler = new();
+        handler.Enqueue((_, _) =>
+        {
+            HttpResponseMessage throttled = new(HttpStatusCode.TooManyRequests);
+            throttled.Headers.TryAddWithoutValidation("Retry-After", "120");
+            return Task.FromResult(throttled);
+        });
+        ProviderRateGate gate = new(_clock, _timeProvider);
+        IMarketDataProvider provider = CreateProvider(handler, gate);
+
+        Result<MarketQuote> first = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        _clock.Advance(Duration.FromSeconds(61));
+        MarketInstrumentIdentity second = new("XID", "DEMO", "USD");
+        Result<MarketQuote> during = await provider.GetCurrentQuoteAsync(
+            second,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.IsFailure, Is.True);
+            Assert.That(during.IsFailure, Is.True);
+            Assert.That(
+                during.Error.Code,
+                Is.EqualTo("market_data.provider_throttled"));
+            Assert.That(
+                during.Error.Extensions?["scope"],
+                Is.EqualTo("local_pacing"));
+            Assert.That(handler.Requests, Has.Count.EqualTo(1));
+        });
+
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4242, "DEMO", 7, "Other Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
+        _clock.Advance(Duration.FromSeconds(60));
+
+        Result<MarketQuote> after = await provider.GetCurrentQuoteAsync(
+            second,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(after.IsSuccess, Is.True);
+            Assert.That(after.Value.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(handler.Requests, Has.Count.EqualTo(3));
+        });
+    }
+
     private EToroMarketDataProvider CreateProvider(ScriptedHttpMessageHandler handler)
+    {
+        return CreateProvider(handler, new ProviderRateGate(_clock, _timeProvider));
+    }
+
+    private EToroMarketDataProvider CreateProvider(
+        ScriptedHttpMessageHandler handler,
+        ProviderRateGate rateGate)
     {
         return new EToroMarketDataProvider(
             new HttpClient(handler)
@@ -795,7 +857,7 @@ public sealed class EToroMarketDataProviderTests
                 BaseAddress = new Uri("https://public-api.test/")
             },
             Options.Create(_options),
-            new ProviderRateGate(_clock, _timeProvider),
+            rateGate,
             new EToroInstrumentIdCache(_clock),
             _clock,
             _timeProvider,
