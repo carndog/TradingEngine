@@ -33,7 +33,7 @@ Contracts are transport-facing types rather than domain types. Domain and Applic
 - Give each use case a command and a handler. Add a use-case-specific port only when the use case needs an external capability.
 - Do not add a generic repository or mediator abstraction without a demonstrated need.
 - Application reads the current time through NodaTime `IClock`. It passes the resulting `Instant` into Domain methods explicitly, and into store ports wherever a lookup is time-sensitive.
-- Infrastructure implements the ports. The current adapters are the SQL Server stores for watched instruments and monitoring rules.
+- Infrastructure implements the ports. The current adapters are the SQL Server stores for watched instruments and monitoring rules, and the read-only eToro market-data adapter behind `IMarketDataProvider` (see [eToro market-data adapter](etoro-market-data-adapter.md)).
 
 ## Domain conventions
 
