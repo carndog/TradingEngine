@@ -114,7 +114,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         for (int page = 1; page <= _options.MaxSearchPages; page++)
         {
             EToroProviderResponse response = await SendWithBoundedRetriesAsync(
-                SearchUri(instrument.Symbol, page),
+                SearchUri(instrument.Symbol, page, _options.SearchPageSize),
                 deadline,
                 cancellationToken);
 
@@ -379,12 +379,12 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         }
     }
 
-    private static string SearchUri(string symbol, int page)
+    private static string SearchUri(string symbol, int page, int pageSize)
     {
         return string.Create(
             CultureInfo.InvariantCulture,
             $"{SearchPath}?internalSymbolFull={Uri.EscapeDataString(symbol)}" +
-            $"&fields={SearchFields}&pageNumber={page}");
+            $"&fields={SearchFields}&pageNumber={page}&pageSize={pageSize}");
     }
 
     private Error? CheckQuoteCurrency(MarketInstrumentIdentity instrument)

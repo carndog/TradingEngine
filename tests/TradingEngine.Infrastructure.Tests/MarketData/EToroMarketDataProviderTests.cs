@@ -759,6 +759,40 @@ public sealed class EToroMarketDataProviderTests
     }
 
     [Test]
+    public async Task GetCurrentQuoteAsync_WhenExactMatchSitsBeyondFirstPage_ResolvesViaPageSize()
+    {
+        (long Id, string Symbol, int ExchangeId, string Exchange)[] items =
+            EToroPayloads.SearchFillers(9000, 50)
+                .Append((4242, "DEMO", 5, "Test Exchange"))
+                .ToArray();
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            1,
+            51,
+            items));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketQuote> result = await provider.GetCurrentQuoteAsync(
+            Instrument,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(result.Value.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(handler.Requests, Has.Count.EqualTo(2));
+            Assert.That(
+                handler.Requests[0].RequestUri!.ToString(),
+                Does.Contain("pageSize=100"));
+            Assert.That(
+                handler.Requests[0].RequestUri!.ToString(),
+                Does.Contain("pageNumber=1"));
+        });
+    }
+
+    [Test]
     public async Task GetCurrentQuoteAsync_WhenPagesExceedBound_ReturnsIncomplete()
     {
         _options.MaxSearchPages = 2;
