@@ -7,6 +7,9 @@ param databaseName string
 @description('Azure region for the database.')
 param location string
 
+@description('Use the always-on Basic service objective for this database.')
+param useBasic bool = false
+
 @description('Maximum vCore capacity of the serverless database.')
 param maxVcores int = 1
 
@@ -31,19 +34,27 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01' = {
   name: databaseName
   location: location
   tags: tags
-  sku: {
-    name: 'GP_S_Gen5'
-    tier: 'GeneralPurpose'
-    family: 'Gen5'
-    capacity: maxVcores
-  }
+  sku: useBasic
+    ? {
+        name: 'Basic'
+        tier: 'Basic'
+        capacity: 5
+      }
+    : {
+        name: 'GP_S_Gen5'
+        tier: 'GeneralPurpose'
+        family: 'Gen5'
+        capacity: maxVcores
+      }
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
-    maxSizeBytes: maxSizeBytes
-    autoPauseDelay: autoPauseDelayMinutes
-    minCapacity: json(minVcores)
-    useFreeLimit: true
-    freeLimitExhaustionBehavior: 'AutoPause'
+    maxSizeBytes: useBasic ? 2147483648 : maxSizeBytes
+    useFreeLimit: !useBasic
+    ...(useBasic ? {} : {
+      autoPauseDelay: autoPauseDelayMinutes
+      minCapacity: json(minVcores)
+      freeLimitExhaustionBehavior: 'AutoPause'
+    })
     requestedBackupStorageRedundancy: 'Local'
     zoneRedundant: false
     readScale: 'Disabled'

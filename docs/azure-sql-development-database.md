@@ -1,8 +1,8 @@
 # Azure SQL development database
 
-This document describes the Azure SQL infrastructure for the TradingEngine development environment: the logical server, the free-offer serverless database, the managed-identity authentication model and the deployment gate that issue #35 deliberately enabled.
+Development selects an always-on Basic database with 5 DTUs and a 2 GiB maximum size. The development parameter file enables `useBasicSqlDatabase` on the existing logical server and database resource. Other parameter files default to the free serverless configuration.
 
-**Current state: SQL provisioning is enabled for the development environment.** `provisionAzureSql` is `true` in `infra/environments/dev.bicepparam`, so the next infrastructure deployment creates the logical server and free-offer database and sets the `ConnectionStrings__TradingEngine` app setting on the Web App. Provisioning still requires Jason's explicit cost approval immediately before deployment; see [Deployment gate](#deployment-gate) and the [operations runbook](azure-sql-operations-runbook.md).
+Before changing an existing database to Basic, confirm that its allocated data files fit in 2 GiB, that point-in-time restore is available, and that the infrastructure preview targets the same database with an in-place SKU change. If Azure rejects the free-offer transition, inspect the deployment error before taking another action. Removing the free offer separately is permanent and can leave a billable serverless database if the tier change fails.
 
 ## Logical server versus database
 
@@ -25,7 +25,7 @@ The tenant ID is resolved at deploy time with `tenant().tenantId`; it is never c
 
 ## Free-tier cost controls
 
-The database targets the Azure SQL Database **free offer** (General Purpose serverless), which provides 100,000 vCore-seconds of compute, 32 GB of data storage and 32 GB of backup storage per month at no charge:
+When `useBasicSqlDatabase` is false, the database targets the Azure SQL Database **free offer** (General Purpose serverless), which provides 100,000 vCore-seconds of compute, 32 GB of data storage and 32 GB of backup storage per month at no charge:
 
 | Setting | Value | Reason |
 | --- | --- | --- |
@@ -121,7 +121,7 @@ az sql server show --name $sqlServerName --resource-group rg-tradingengine-dev -
 az sql db show --name sqldb-tradingengine-dev --server $sqlServerName --resource-group rg-tradingengine-dev -o table
 ```
 
-Confirm `administrators.azureADOnlyAuthentication` is `true`, `minimalTlsVersion` is `1.2`, the SKU is `GP_S_Gen5`, `useFreeLimit` is `true` and `freeLimitExhaustionBehavior` is `AutoPause`. The full smoke test — `__EFMigrationsHistory`, the `/health/database` readiness check through the Web App managed identity, and a failed connection by an identity without a contained user — is in the [operations runbook](azure-sql-operations-runbook.md).
+Confirm Entra-only authentication and TLS 1.2. For development verify that the database is online with service objective `Basic`, 5 DTUs and `maxSizeBytes` equal to `2147483648`. The full smoke test — `__EFMigrationsHistory`, the `/health/database` readiness check through the Web App managed identity, and a failed connection by an identity without a contained user — is in the [operations runbook](azure-sql-operations-runbook.md).
 
 ## Rollback and teardown
 

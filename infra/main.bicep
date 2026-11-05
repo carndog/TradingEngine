@@ -21,6 +21,9 @@ param tags object
 @description('Provision the Azure SQL logical server and database. Disabled by default; enabling is a deliberate issue-35 decision.')
 param provisionAzureSql bool = false
 
+@description('Select the always-on Basic database (5 DTUs, 2 GiB). Other environments default to the free serverless offer.')
+param useBasicSqlDatabase bool = false
+
 @description('Login/display name of the Microsoft Entra administrator for the SQL logical server. Required only when provisionAzureSql is true; never commit a live value.')
 param sqlEntraAdminLogin string = ''
 
@@ -164,6 +167,7 @@ module sqlDatabase 'modules/sql-database.bicep' = if (provisionAzureSql) {
     sqlServerName: sqlServerName
     databaseName: sqlDatabaseName
     location: location
+    useBasic: useBasicSqlDatabase
     tags: tags
   }
   dependsOn: [

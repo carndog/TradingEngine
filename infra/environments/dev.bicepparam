@@ -11,6 +11,7 @@ param appServicePlanFreeOfferExpirationTime = '2026-10-15T17:51:00'
 // deploy time from GitHub environment secrets and must never be committed to
 // this repository.
 param provisionAzureSql = true
+param useBasicSqlDatabase = true
 
 // Easy Auth (issue #38) is enabled for the development environment. The app
 // registration client ID and the owner principal allowlist are intentionally

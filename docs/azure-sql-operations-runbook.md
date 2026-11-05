@@ -6,6 +6,8 @@ This runbook covers the one-time bootstrap and the recurring operations for the 
 
 ## 1. Cost approval gate
 
+The current development tier and conversion checks are in [Azure SQL development database](azure-sql-development-database.md). The following checks describe the original free-offer provisioning under issue #35.
+
 Issue #35 requires Jason's explicit cost approval **immediately before** the deployment that provisions SQL. Before approving, review:
 
 - The pull-request what-if summary (the merge preview shows the SQL server, database and `ConnectionStrings__TradingEngine` app setting being created).
@@ -158,10 +160,10 @@ Created in step 3.5 above. The contained user name is the service principal disp
 After provisioning, bootstrap and migration:
 
 ```powershell
-# Free-offer properties and Entra-only authentication
+# Database service objective and Entra-only authentication
 az sql db show --name <database-name> --server <sql-server-name> `
   --resource-group rg-tradingengine-dev `
-  --query "{sku:sku.name, useFreeLimit:properties.useFreeLimit, exhaustion:properties.freeLimitExhaustionBehavior, autoPause:properties.autoPauseDelay}"
+  --query "{status:status, objective:currentServiceObjectiveName, capacity:sku.capacity, maxBytes:maxSizeBytes}"
 az sql server show --name <sql-server-name> --resource-group rg-tradingengine-dev `
   --query "{entraOnly:properties.administrators.azureADOnlyAuthentication, tls:properties.minimalTlsVersion}"
 
@@ -205,6 +207,8 @@ az sql server delete --name <sql-server-name> `
 Do **not** delete `rg-tradingengine-dev` — it contains the App Service. Incremental Bicep deployments never delete resources, so disabling `provisionAzureSql` alone does not remove SQL.
 
 ## 9. Cost monitoring
+
+For Basic, monitor DTU percentage, allocated data storage and the SQL database charge in Cost Management. The following allowance checks apply only to databases on the free serverless offer.
 
 - Portal: database → **Metrics** → the **Free amount remaining** metric shows monthly vCore-seconds left. Create a free alert rule at 10,000 vCore-seconds (10%) remaining.
 - The 100,000 vCore-second and 32 GB allowances reset each calendar month; `AutoPause` means exhaustion pauses the database rather than billing.
