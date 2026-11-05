@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NodaTime;
+using NodaTime.Testing;
 using TradingEngine.Application.MarketData;
 using TradingEngine.Application.Ports;
 using TradingEngine.Domain.Results;
@@ -67,7 +68,9 @@ public sealed class EToroMarketDataRegistrationTests
             .GetServices<IStartupValidator>()
             .Single();
 
-        Assert.Throws<OptionsValidationException>(() => validator.Validate());
+        Assert.That(
+            () => validator.Validate(),
+            Throws.TypeOf<OptionsValidationException>());
     }
 
     [Test]
@@ -89,6 +92,11 @@ public sealed class EToroMarketDataRegistrationTests
             })
             .Build();
         ServiceCollection services = new();
+        FakeClock clock = new(Instant.FromUtc(2026, 10, 30, 12, 0, 0));
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<TimeProvider>(
+            new ManualTimeProvider(
+                delay => clock.Advance(Duration.FromTimeSpan(delay))));
         services.AddEtoroMarketData(configuration);
         services.ConfigureHttpClientDefaults(
             builder => builder.ConfigurePrimaryHttpMessageHandler(() => handler));
