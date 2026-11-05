@@ -119,7 +119,7 @@ jobs:
           {
             echo "## Merge preview — Azure SQL and Easy Auth enabled"
             echo ""
-            echo "This is the change set that merging this pull request applies to the development environment. Azure SQL was provisioned under issue #35; inspect the resource rows below for unintended changes. \`configureEntraAuth\` is \`true\`, so the change enables App Service Easy Auth with Microsoft Entra ID, creates the dedicated user-assigned identity and applies the owner principal allowlist. The Entra administrator, app registration and allowlist values come from the \`development-infrastructure-preview\` environment secrets; their values are omitted from this summary."
+            echo "This is the change set that merging this pull request applies to the development environment. Azure SQL was provisioned under issue #35; inspect the resource rows below for unintended changes. \`configureEntraAuth\` is \`true\`, so the change enables App Service Easy Auth with Microsoft Entra ID, creates the dedicated user-assigned identity and applies the owner principal allowlist. The Entra administrator, app registration and allowlist values come from the \`development-infrastructure-preview\` environment secrets; their values are omitted from this summary. Private market-data and exchange-session setting paths are replaced by a fixed redaction label by the jq formatter in \`.github/scripts/whatif-summary.jq\`."
             echo ""
             echo "**Cost context:** Jason approved and provisioned Azure SQL under issue #35. Before merging, confirm the SQL server, database and App Service Plan are \`NoChange\` in this preview. If that changes in a later preview, review the new cost impact before deploying."
             echo ""
@@ -137,30 +137,7 @@ jobs:
               echo ""
               echo "#### Property changes"
               echo ""
-              jq -r '
-                def delta_rows:
-                  . as $d
-                  | ($d.children // []) as $children
-                  | if ($children | length) > 0 then
-                      $children[] | delta_rows
-                    else
-                      "| `\($d.path // "?")` | \($d.propertyChangeType // $d.changeType // "Unknown") |"
-                    end;
-                (.changes // [])[] |
-                  "##### `\(.resourceId)`",
-                  "",
-                  "| Property path | Change |",
-                  "| --- | --- |",
-                  ((.delta // []) | if length == 0 then
-                    "| — | No property-level delta reported |"
-                  else
-                    (.[] | delta_rows)
-                  end),
-                  ""
-              ' what-if.json \
-                | sed -E \
-                    -e 's/EToro__MarketData__[A-Za-z0-9_.-]+/EToro__MarketData__&lt;redacted&gt;/g' \
-                    -e 's/PriceCollection__ExchangeSessions__[A-Za-z0-9_.-]+/PriceCollection__ExchangeSessions__&lt;redacted&gt;/g'
+              jq -r -f .github/scripts/whatif-summary.jq what-if.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

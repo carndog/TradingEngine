@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NodaTime;
 using NodaTime.Testing;
 using TradingEngine.Application.MarketData;
@@ -430,6 +431,35 @@ public sealed class CollectDuePricesHandlerTests
         await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await handler.HandleAsync(new CollectDuePrices(), cancellation.Token));
         Assert.That(_marketData.Requests, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenCallerCancelsBlockedProviderCall_PropagatesCancellation()
+    {
+        TaskCompletionSource providerStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _marketData.Responder = async (_, token) =>
+        {
+            providerStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            throw new UnreachableException();
+        };
+        CollectDuePricesHandler handler = CreateHandler(OpenSessions());
+        using CancellationTokenSource cancellation = new();
+
+        Task<PriceCollectionRunResult> run = handler.HandleAsync(
+            new CollectDuePrices(),
+            cancellation.Token);
+        await providerStarted.Task;
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await run);
+        Assert.Multiple(() =>
+        {
+            Assert.That(_marketData.Requests, Has.Count.EqualTo(1));
+            Assert.That(_store.Observations, Is.Empty);
+            Assert.That(_store.Attempts, Is.Empty);
+        });
     }
 
     [Test]

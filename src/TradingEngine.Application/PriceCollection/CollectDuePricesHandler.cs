@@ -280,9 +280,9 @@ public sealed class CollectDuePricesHandler
                     identity,
                     budgetToken);
             }
-            catch (OperationCanceledException) when (
-                cancellationToken.IsCancellationRequested is false)
+            catch (OperationCanceledException)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return await RecordAttemptAsync(
                     instrument,
                     scheduledFor,
