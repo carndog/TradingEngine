@@ -20,7 +20,11 @@ public sealed class EToroMarketDataOptions
 
     public int MaxSearchPages { get; set; } = 5;
 
-    public int SearchPageSize { get; set; } = 100;
+    public const int MinSearchPageSize = 1;
+
+    public const int MaxSearchPageSize = 100;
+
+    public int SearchPageSize { get; set; } = MaxSearchPageSize;
 
     public Dictionary<string, string[]> ExchangeMap { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);

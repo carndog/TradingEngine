@@ -18,7 +18,14 @@ public static class MarketDataServiceCollectionExtensions
 
         services.AddOptions<EToroMarketDataOptions>()
             .Bind(configuration.GetSection(EToroMarketDataOptions.SectionName))
-            .PostConfigure(options => options.NormalizeMappings());
+            .PostConfigure(options => options.NormalizeMappings())
+            .Validate(
+                options => options.SearchPageSize >=
+                    EToroMarketDataOptions.MinSearchPageSize &&
+                    options.SearchPageSize <=
+                    EToroMarketDataOptions.MaxSearchPageSize,
+                "EToro:MarketData:SearchPageSize must be between 1 and 100.")
+            .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton<ProviderRateGate>();
