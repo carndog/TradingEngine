@@ -3,6 +3,7 @@ using TradingEngine.Api;
 using TradingEngine.Api.Authentication;
 using TradingEngine.Api.Diagnostics;
 using TradingEngine.Api.MonitoringRules;
+using TradingEngine.Api.PriceCollection;
 using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.Session;
 using TradingEngine.Api.WatchedInstruments;
@@ -31,7 +32,8 @@ builder.Services
     .AddWatchedInstruments()
     .AddMonitoringRules()
     .AddTradingEngineInfrastructure(connectionString)
-    .AddEtoroMarketData(builder.Configuration);
+    .AddEtoroMarketData(builder.Configuration)
+    .AddPriceCollection(builder.Configuration);
 
 WebApplication app = builder.Build();
 

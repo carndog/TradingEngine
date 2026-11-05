@@ -36,6 +36,9 @@ param easyAuthIdentityName string = ''
 @secure()
 param applicationInsightsConnectionString string = ''
 
+@description('Enable the timer-triggered price collection hosted service, exposed as the PriceCollection__Enabled app setting. Exchange session definitions remain appsettings/app-setting configuration, not infrastructure parameters.')
+param priceCollectionEnabled bool = false
+
 @description('Tags applied to the resources.')
 param tags object
 
@@ -88,7 +91,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '') {
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled) {
   parent: webApp
   name: 'appsettings'
   properties: union(
@@ -107,6 +110,11 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
     applicationInsightsConnectionString != ''
       ? {
           APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsightsConnectionString
+        }
+      : {},
+    priceCollectionEnabled
+      ? {
+          PriceCollection__Enabled: 'true'
         }
       : {}
   )

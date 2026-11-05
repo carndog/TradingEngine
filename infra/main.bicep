@@ -51,6 +51,9 @@ param applicationInsightsRetentionDays int = 30
 @description('Daily ingestion cap in GB on the Log Analytics workspace, as a string to allow fractional values. A safeguard against ingestion spikes, not a cost bound: excess data above the cap is still billed and collection resumes at a workspace-specific reset hour.')
 param logAnalyticsDailyDataCapGb string = '0.1'
 
+@description('Enable the timer-triggered price collection hosted service inside the API. Disabled by default; enabling is a deliberate issue-9 decision and also requires exchange session app settings.')
+param enablePriceCollection bool = false
+
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'
 var appServicePlanName = 'asp-${namingPrefix}-${environmentName}'
 var webAppName = 'app-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
@@ -89,6 +92,7 @@ module appService 'modules/app-service.bicep' = {
     entraAuthAllowedPrincipalIds: entraAuthAllowedPrincipalIds
     easyAuthIdentityName: easyAuthIdentityName
     applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
+    priceCollectionEnabled: enablePriceCollection
     tags: tags
   }
   dependsOn: [
