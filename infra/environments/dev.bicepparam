@@ -27,10 +27,8 @@ param configureEntraAuth = true
 param applicationInsightsRetentionDays = 30
 param logAnalyticsDailyDataCapGb = '0.1'
 
-// Timer-triggered price collection (issue #9) runs as a hosted service inside
-// the API. It stays disabled until the exchange session app settings for the
-// monitored instruments have been reviewed; see docs/price-collection.md.
-param enablePriceCollection = false
+// The hosted timer collects prices for monitored instruments using the private settings below.
+param enablePriceCollection = true
 
 // The eToro market-data keys, the exchange/quote-currency maps and the exchange
 // session definitions are intentionally absent: they are supplied at deploy
