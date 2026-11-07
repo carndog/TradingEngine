@@ -40,10 +40,6 @@ public static class ChartAnalysisErrors
         "chart_analysis.condition_required",
         "A zone condition entry cannot be null.");
 
-    public static readonly Error MissingZones = Error.Validation(
-        "chart_analysis.missing_zones",
-        "A chart-analysis definition requires at least one zone.");
-
     public static readonly Error PriceScaleOutOfRange = Error.Validation(
         "chart_analysis.price_scale_out_of_range",
         "The price scale must be between 0 and 8.");
