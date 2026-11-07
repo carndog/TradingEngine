@@ -54,6 +54,23 @@ internal sealed class WatchedInstrumentRowConfiguration : IEntityTypeConfigurati
                 InstantConverters.ToUtcDateTimeNullable,
                 InstantConverters.FromUtcDateTimeNullable);
 
+        builder.Property(row => row.PriceDisplayDecimalPlaces)
+            .IsRequired()
+            .HasDefaultValue(2);
+
+        builder.Property(row => row.PriceDisplayUnit)
+            .IsRequired()
+            .HasMaxLength(16)
+            .HasDefaultValue("Major");
+
+        builder.ToTable(table => table.HasCheckConstraint(
+            "CK_WatchedInstruments_PriceDisplayDecimalPlaces",
+            "[PriceDisplayDecimalPlaces] >= 0 AND [PriceDisplayDecimalPlaces] <= 8"));
+
+        builder.ToTable(table => table.HasCheckConstraint(
+            "CK_WatchedInstruments_PriceDisplayUnit",
+            "[PriceDisplayUnit] IN ('Major', 'Native')"));
+
         builder.Property(row => row.RowVersion)
             .IsRowVersion();
 

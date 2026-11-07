@@ -6,6 +6,7 @@ using TradingEngine.Client.Models;
 using TradingEngine.Client.Pages;
 using TradingEngine.Client.Services;
 using TradingEngine.Contracts.MonitoringRules;
+using TradingEngine.Contracts.WatchedInstruments;
 
 namespace TradingEngine.Client.Tests.Pages;
 
@@ -73,6 +74,69 @@ public sealed class InstrumentDetailPageTests
             Assert.That(cut.Markup, Does.Contain("BSYM"));
             Assert.That(cut.Markup, Does.Not.Contain("ASYM"));
         });
+    }
+
+    [Test]
+    public void PricesTab_Selected_LoadsSavedPricesThroughReadEndpoint()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        List<string> paths = [];
+        handler.Fallback = (request, _) =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            lock (paths)
+            {
+                paths.Add(path);
+            }
+
+            return Task.FromResult(RouteInstrumentRequest(path));
+        };
+        using BunitContext ctx = CreateContext(handler, clock);
+        NavigationManager navigation = ctx.Services.GetRequiredService<NavigationManager>();
+        navigation.NavigateTo($"instruments/{InstrumentA}?tab=prices");
+
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("No price observations have been saved")),
+            TimeSpan.FromSeconds(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Find(".te-tabs button[aria-pressed]").TextContent, Is.EqualTo("Prices"));
+            Assert.That(paths, Does.Contain($"/api/watched-instruments/{InstrumentA}/price-observations"));
+            Assert.That(handler.Methods, Is.All.EqualTo(HttpMethod.Get));
+        });
+    }
+
+    private static HttpResponseMessage RouteInstrumentRequest(string path)
+    {
+        if (path.EndsWith("/price-observations", StringComparison.Ordinal))
+        {
+            return StubHttpMessageHandler.Json(HttpStatusCode.OK, ClientTestData.JsonOf(
+                new PriceObservationPageResponse(InstrumentA, null, [], 25, null, null)));
+        }
+
+        if (path.EndsWith("/settings", StringComparison.Ordinal))
+        {
+            return StubHttpMessageHandler.Json(HttpStatusCode.OK, ClientTestData.JsonOf(
+                ClientTestData.Settings(InstrumentA, "PSYM")));
+        }
+
+        if (path.EndsWith("/timeline", StringComparison.Ordinal))
+        {
+            return StubHttpMessageHandler.Json(HttpStatusCode.OK, ClientTestData.JsonOf(
+                ClientTestData.Timeline("tok-p")));
+        }
+
+        if (path.EndsWith("/drafts", StringComparison.Ordinal))
+        {
+            return StubHttpMessageHandler.Json(HttpStatusCode.OK, ClientTestData.JsonOf(
+                ClientTestData.Drafts("tok-p")));
+        }
+
+        return StubHttpMessageHandler.Json(HttpStatusCode.NotFound, "{}");
     }
 
     [Test]

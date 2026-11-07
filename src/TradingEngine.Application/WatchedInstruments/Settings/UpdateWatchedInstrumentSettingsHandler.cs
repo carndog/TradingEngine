@@ -35,6 +35,17 @@ public sealed class UpdateWatchedInstrumentSettingsHandler
             return WatchedInstrumentErrors.MonitoringStateUndefined;
         }
 
+        if (command.PriceDisplayDecimalPlaces is < PriceDisplayPreferences.MinimumDecimalPlaces
+            or > PriceDisplayPreferences.MaximumDecimalPlaces)
+        {
+            return PriceDisplayErrors.DecimalPlacesOutOfRange;
+        }
+
+        if (command.PriceDisplayUnit is not null && Enum.IsDefined(command.PriceDisplayUnit.Value) is false)
+        {
+            return PriceDisplayErrors.UnitUndefined;
+        }
+
         Result<WatchedInstrumentSettingsSnapshot> snapshot = await _store.GetSettingsAsync(
             command.InstrumentId,
             cancellationToken);
@@ -61,16 +72,28 @@ public sealed class UpdateWatchedInstrumentSettingsHandler
             return applied.Error;
         }
 
+        PriceDisplayPreferences display = MergeDisplay(snapshot.Value.Display, command);
         if (instrument.MonitoringState == previousState
-            && instrument.SamplingIntervalSeconds == previousInterval)
+            && instrument.SamplingIntervalSeconds == previousInterval
+            && display == snapshot.Value.Display)
         {
             return snapshot;
         }
 
         return await _store.SaveSettingsAsync(
             instrument,
+            display,
             command.ExpectedConcurrencyToken,
             cancellationToken);
+    }
+
+    private static PriceDisplayPreferences MergeDisplay(
+        PriceDisplayPreferences current,
+        UpdateWatchedInstrumentSettings command)
+    {
+        return new PriceDisplayPreferences(
+            command.PriceDisplayDecimalPlaces ?? current.DecimalPlaces,
+            command.PriceDisplayUnit ?? current.Unit);
     }
 
     private static Result ApplyDesiredState(

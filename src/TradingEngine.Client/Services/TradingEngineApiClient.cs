@@ -86,6 +86,26 @@ public sealed class TradingEngineApiClient
             cancellationToken);
     }
 
+    public Task<ApiResult<PriceObservationPageResponse>> GetPriceObservationsAsync(
+        Guid id,
+        DateTimeOffset? before,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        string path = $"api/watched-instruments/{id}/price-observations?pageSize={pageSize}";
+        if (before is not null)
+        {
+            path += $"&before={Uri.EscapeDataString(PriceObservationFormat.FormatCursor(before.Value))}";
+        }
+
+        return SendAsync<PriceObservationPageResponse>(
+            HttpMethod.Get,
+            path,
+            body: null,
+            ifMatch: null,
+            cancellationToken);
+    }
+
     public Task<ApiResult<WatchedInstrumentSettingsResponse>> UpdateSettingsAsync(
         Guid id,
         UpdateWatchedInstrumentSettingsRequest request,

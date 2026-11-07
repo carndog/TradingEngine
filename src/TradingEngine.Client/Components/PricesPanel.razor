@@ -1,0 +1,360 @@
+@inject TradingEngineApiClient Api
+@implements IDisposable
+
+<section class="te-detail-card te-prices" aria-labelledby="te-prices-title">
+    <div class="te-row">
+        <h3 id="te-prices-title">Saved prices</h3>
+        <div class="te-price-actions">
+            <label class="te-inline-field">
+                Rows
+                <select value="@_pageSize" @onchange="ChangePageSizeAsync" disabled="@_loading" aria-label="Rows per page">
+                    @foreach (int option in PageSizeOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+            </label>
+            <button type="button" @onclick="RefreshAsync" disabled="@_loading">Refresh</button>
+        </div>
+    </div>
+    <div class="te-sr-status" role="status" aria-live="polite">@StatusText</div>
+
+    @if (_error is not null)
+    {
+        <ErrorNotice Error="@_error">
+            <button type="button" @onclick="RetryAsync">Retry</button>
+            @if (_error.IsUnauthorized)
+            {
+                <a href="@SignInUrl">Sign in again</a>
+            }
+        </ErrorNotice>
+    }
+    else if (_page is null)
+    {
+        <p class="te-note">Loading saved prices…</p>
+    }
+    else if (_page.Latest is null)
+    {
+        <p class="te-note">No price observations have been saved for this instrument yet.</p>
+    }
+    else
+    {
+        <div class="te-latest-price" aria-label="Latest saved bid and ask">
+            <dl class="te-price-summary">
+                <div>
+                    <dt>Bid (@UnitLabel(_page.Latest))</dt>
+                    <dd data-testid="latest-bid">@Price(_page.Latest, _page.Latest.Bid)</dd>
+                </div>
+                <div>
+                    <dt>Ask (@UnitLabel(_page.Latest))</dt>
+                    <dd data-testid="latest-ask">@Price(_page.Latest, _page.Latest.Ask)</dd>
+                </div>
+            </dl>
+            <p class="te-latest-meta" data-testid="latest-meta">
+                <span>Scheduled (UTC) <strong>@PriceObservationFormat.FormatMinute(_page.Latest.ScheduledFor)</strong></span>
+                <span>Retrieved (UTC) <strong>@PriceObservationFormat.FormatMinute(_page.Latest.RetrievedAt)</strong></span>
+                <span class="te-status">@PriceObservationFormat.FormatTimeliness(_page.Latest.Timeliness)</span>
+            </p>
+        </div>
+
+        @if (_page.Items.Count == 0)
+        {
+            <p class="te-note">No older saved observations.</p>
+        }
+        else
+        {
+            <div class="te-row te-history-head">
+                <h4>Recent observations</h4>
+                <button type="button" aria-expanded="@(_showDetails ? "true" : "false")" aria-controls="te-price-history" @onclick="ToggleDetails">
+                    @(_showDetails ? "Hide details" : "Show details")
+                </button>
+            </div>
+            <div class="te-scroll" tabindex="0" aria-label="Saved price observations table">
+                <table id="te-price-history" class="te-price-table@(_showDetails ? " te-with-details" : string.Empty)" aria-label="Saved price observations">
+                    <thead>
+                        <tr>
+                            <th scope="col">Scheduled (UTC)</th>
+                            <th scope="col" class="te-num">Bid (@HeadingUnit)</th>
+                            <th scope="col" class="te-num">Ask (@HeadingUnit)</th>
+                            @if (HasMixedUnits)
+                            {
+                                <th scope="col">Unit</th>
+                            }
+                            <th scope="col">Status</th>
+                            @if (_showDetails)
+                            {
+                                <th scope="col">Retrieved (UTC)</th>
+                                <th scope="col">Provider observed (UTC)</th>
+                                <th scope="col">Provider</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (PriceObservationDto row in _page.Items)
+                        {
+                            <tr class="@(IsOtherUnit(row) ? "te-other-unit" : string.Empty)">
+                                <td class="te-time-cell">@Timestamp(row.ScheduledFor)</td>
+                                <td class="te-num">@Price(row, row.Bid)</td>
+                                <td class="te-num">@Price(row, row.Ask)</td>
+                                @if (HasMixedUnits)
+                                {
+                                    <td><span class="@(IsOtherUnit(row) ? "te-unit-flag" : string.Empty)">@RowUnit(row)</span></td>
+                                }
+                                <td><span class="te-status">@PriceObservationFormat.FormatTimeliness(row.Timeliness)</span></td>
+                                @if (_showDetails)
+                                {
+                                    <td class="te-time-cell">@Timestamp(row.RetrievedAt)</td>
+                                    <td class="te-time-cell">
+                                        @if (row.ProviderObservedAt is null)
+                                        {
+                                            @PriceObservationFormat.Missing
+                                        }
+                                        else
+                                        {
+                                            @Timestamp(row.ProviderObservedAt.Value)
+                                        }
+                                    </td>
+                                    <td>@row.Provider</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <div class="te-pagination">
+            <span class="te-small" data-testid="price-range">@RangeText</span>
+            <div class="te-pager">
+                <button type="button" @onclick="ShowNewestAsync" disabled="@(_loading || _cursors.Count == 0)" aria-label="Newest saved observations">Newest</button>
+                <button type="button" @onclick="ShowNewerAsync" disabled="@(_loading || _cursors.Count == 0)" aria-label="Newer saved observations">Newer</button>
+                <button type="button" @onclick="ShowOlderAsync" disabled="@(_loading || _page.NextBefore is null)" aria-label="Older saved observations">Older</button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    public const int DefaultPageSize = 10;
+
+    public static readonly IReadOnlyList<int> PageSizeOptions = [10, 25, 50];
+
+    private int _pageSize = DefaultPageSize;
+    private bool _showDetails;
+
+    private readonly List<DateTimeOffset> _cursors = new();
+    private PriceObservationPageResponse? _page;
+    private ApiError? _error;
+    private bool _loading;
+    private Guid _loadedId;
+    private int _generation;
+    private CancellationTokenSource? _requestCts;
+
+    [Parameter]
+    public Guid InstrumentId { get; set; }
+
+    [Parameter]
+    public string QuoteCurrency { get; set; } = string.Empty;
+
+    [Parameter]
+    public int DecimalPlaces { get; set; } = 2;
+
+    [Parameter]
+    public string DisplayUnitPreference { get; set; } = PriceObservationFormat.MajorDisplayUnit;
+
+    private string HeadingUnit => PriceObservationFormat.DisplayUnit(QuoteCurrency, DisplayUnitPreference);
+
+    private bool HasMixedUnits => _page is not null && _page.Items.Any(IsOtherUnit);
+
+    private string RangeText => _page is null
+        ? string.Empty
+        : $"Page {_cursors.Count + 1} · {RowCountText(_page.Items.Count)}";
+
+    [Parameter]
+    public string SignInUrl { get; set; } = string.Empty;
+
+    [Parameter]
+    public CancellationToken Cancellation { get; set; }
+
+    private string StatusText
+    {
+        get
+        {
+            if (_loading)
+            {
+                return "Loading saved prices…";
+            }
+
+            if (_error is not null)
+            {
+                return "Saved prices could not be loaded.";
+            }
+
+            if (_page is null)
+            {
+                return string.Empty;
+            }
+
+            return _page.Items.Count == 0
+                ? "No saved observations on this page."
+                : $"Showing {RowCountText(_page.Items.Count)}.";
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (InstrumentId != _loadedId)
+        {
+            _loadedId = InstrumentId;
+            _page = null;
+            _error = null;
+            _cursors.Clear();
+            await LoadAsync(null);
+        }
+    }
+
+    private static string RowCountText(int count)
+    {
+        return count == 1 ? "1 observation" : $"{count} observations";
+    }
+
+    private string RowUnit(PriceObservationDto row)
+    {
+        return PriceObservationFormat.DisplayUnit(row.QuoteCurrency, DisplayUnitPreference);
+    }
+
+    private bool IsOtherUnit(PriceObservationDto row)
+    {
+        return RowUnit(row) != HeadingUnit;
+    }
+
+    private string UnitLabel(PriceObservationDto row)
+    {
+        return RowUnit(row);
+    }
+
+    private string Price(PriceObservationDto row, decimal? value)
+    {
+        return PriceObservationFormat.FormatPrice(value, row.QuoteCurrency, RowUnit(row), DecimalPlaces);
+    }
+
+    private static RenderFragment Timestamp(DateTimeOffset value)
+    {
+        return @<time datetime="@PriceObservationFormat.FormatCursor(value)"><span class="te-date">@PriceObservationFormat.FormatDate(value)</span> <span class="te-clock">@PriceObservationFormat.FormatClock(value)</span></time>;
+    }
+
+    private void ToggleDetails()
+    {
+        _showDetails = _showDetails is false;
+    }
+
+    private Task ChangePageSizeAsync(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out int size) is false
+            || PageSizeOptions.Contains(size) is false
+            || size == _pageSize)
+        {
+            return Task.CompletedTask;
+        }
+
+        _pageSize = size;
+        return RefreshAsync();
+    }
+
+    private Task RefreshAsync()
+    {
+        _cursors.Clear();
+        return LoadAsync(null);
+    }
+
+    private Task ShowNewestAsync()
+    {
+        return RefreshAsync();
+    }
+
+    private Task RetryAsync()
+    {
+        return LoadAsync(CurrentCursor());
+    }
+
+    private Task ShowOlderAsync()
+    {
+        if (_page?.NextBefore is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _cursors.Add(_page.NextBefore.Value);
+        return LoadAsync(_page.NextBefore.Value);
+    }
+
+    private Task ShowNewerAsync()
+    {
+        if (_cursors.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        _cursors.RemoveAt(_cursors.Count - 1);
+        return LoadAsync(CurrentCursor());
+    }
+
+    private DateTimeOffset? CurrentCursor()
+    {
+        return _cursors.Count == 0 ? null : _cursors[^1];
+    }
+
+    private async Task LoadAsync(DateTimeOffset? before)
+    {
+        _requestCts?.Cancel();
+        _requestCts?.Dispose();
+        _requestCts = CancellationTokenSource.CreateLinkedTokenSource(Cancellation);
+        CancellationToken cancellation = _requestCts.Token;
+        int generation = ++_generation;
+        Guid instrumentId = InstrumentId;
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            ApiResult<PriceObservationPageResponse> result =
+                await Api.GetPriceObservationsAsync(instrumentId, before, _pageSize, cancellation);
+            if (IsStale(generation, instrumentId))
+            {
+                return;
+            }
+
+            if (result.IsSuccess)
+            {
+                _page = result.Value;
+            }
+            else
+            {
+                _error = result.Error;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            if (generation == _generation)
+            {
+                _loading = false;
+            }
+        }
+    }
+
+    private bool IsStale(int generation, Guid instrumentId)
+    {
+        return generation != _generation || instrumentId != InstrumentId;
+    }
+
+    public void Dispose()
+    {
+        _requestCts?.Cancel();
+        _requestCts?.Dispose();
+        _requestCts = null;
+    }
+}

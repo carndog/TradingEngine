@@ -99,6 +99,7 @@ In a private browser window:
 | `GET /version` anonymous | `200` with the deployed commit SHA |
 | `GET /health/database` without `X-Database-Probe-Key` | `404` |
 | `GET /api/watched-instruments` anonymous | `401` |
+| `GET /api/watched-instruments/{id}/price-observations` anonymous | `401` |
 | `GET /` or `/_framework/…` anonymous | `401` (platform, before the app) |
 | `GET /signin.html`, `/css/app.css`, `/favicon.ico` anonymous | `200` |
 | `POST /api/…` anonymous | `401` |

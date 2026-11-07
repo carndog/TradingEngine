@@ -192,15 +192,20 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
         Result<WatchedInstrument> instrument = Restore(row);
 
-        return new WatchedInstrumentSettingsSnapshot(instrument.Value, row.RowVersion);
+        return new WatchedInstrumentSettingsSnapshot(instrument.Value, row.RowVersion)
+        {
+            Display = RestoreDisplay(row)
+        };
     }
 
     public async Task<Result<WatchedInstrumentSettingsSnapshot>> SaveSettingsAsync(
         WatchedInstrument instrument,
+        PriceDisplayPreferences display,
         byte[] expectedConcurrencyToken,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(instrument);
+        ArgumentNullException.ThrowIfNull(display);
         ArgumentNullException.ThrowIfNull(expectedConcurrencyToken);
 
         WatchedInstrumentRow? row = await _context.WatchedInstruments
@@ -217,6 +222,8 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 
         row.MonitoringState = instrument.MonitoringState.ToString();
         row.SamplingIntervalSeconds = instrument.SamplingIntervalSeconds;
+        row.PriceDisplayDecimalPlaces = display.DecimalPlaces;
+        row.PriceDisplayUnit = display.Unit.ToString();
         row.LastChangedAt = PersistedInstant.Require(
             instrument.LastChangedAt,
             nameof(instrument));
@@ -230,7 +237,22 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
             return WatchedInstrumentErrors.ConcurrentChange;
         }
 
-        return new WatchedInstrumentSettingsSnapshot(instrument, row.RowVersion);
+        return new WatchedInstrumentSettingsSnapshot(instrument, row.RowVersion)
+        {
+            Display = display
+        };
+    }
+
+    private static PriceDisplayPreferences RestoreDisplay(WatchedInstrumentRow row)
+    {
+        if (Enum.TryParse(row.PriceDisplayUnit, ignoreCase: false, out PriceDisplayUnit unit) is false
+            || Enum.IsDefined(unit) is false)
+        {
+            throw new InvalidDataException(
+                $"The stored price display unit '{row.PriceDisplayUnit}' is not a defined value.");
+        }
+
+        return new PriceDisplayPreferences(row.PriceDisplayDecimalPlaces, unit);
     }
 
     public async Task<Result<WatchedInstrumentBulkDeleteOutcome>> DeleteInstrumentsAsync(

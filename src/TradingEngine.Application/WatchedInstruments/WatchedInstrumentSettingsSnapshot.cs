@@ -4,4 +4,7 @@ namespace TradingEngine.Application.WatchedInstruments;
 
 public sealed record WatchedInstrumentSettingsSnapshot(
     WatchedInstrument Instrument,
-    byte[] ConcurrencyToken);
+    byte[] ConcurrencyToken)
+{
+    public PriceDisplayPreferences Display { get; init; } = PriceDisplayPreferences.Default;
+}

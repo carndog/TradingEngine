@@ -205,6 +205,26 @@ WHERE a.WatchedInstrumentId = @instrumentId
 ORDER BY a.RecordedAt DESC;
 ```
 
+## Reading saved observations
+
+`GET /api/watched-instruments/{id}/price-observations?pageSize=25&before=<UTC ISO-8601>` returns the latest saved observation and a newest-first page of persisted observations for one instrument. It reads `PriceObservations` only: it never calls the market-data provider, never triggers collection and never writes. It uses the existing Easy Auth, fetch-site and read rate-limit pipeline.
+
+- `latest` is the single observation with the greatest `ScheduledFor`; a missing bid or ask stays `null` and is never filled from an older row. It is independent of the requested page.
+- `items` are ordered by `ScheduledFor` descending. Paging is keyset: pass the response `nextBefore` as `before` to read strictly older rows, so collections that land between requests cannot repeat or skip rows. `nextBefore` is `null` on the final page.
+- `pageSize` defaults to 25 at the API (the portal requests 10, 25 or 50) and must be between 1 and 100. `before` must end in `Z` and carry at most seven fractional-second digits within the stored range; invalid input returns `400` with `price_observation.page_size_out_of_range` or `price_observation.cursor_invalid`.
+- An unknown or deleted instrument returns `404` with `price_observation.instrument_not_found`; an existing instrument with no observations returns `200` with `latest: null` and empty `items`. Configured (paused) instruments keep readable history.
+- Bid and ask are JSON numbers with stored precision and `quoteCurrency` is the native unit (for example `GBX`); neither is converted. Missing slots are not interpolated. `timeliness` is `realtime`, `delayed` or `unknown` as reported.
+
+The portal shows this on the instrument detail page under **Prices** as "Saved prices": a compact latest summary (bid and ask, scheduled and retrieved minute, status) tied to the newest observation even while browsing older pages, then a newest-first table with Scheduled (UTC), Bid, Ask and Status columns. **Show details** adds Retrieved (UTC), Provider observed (UTC) and Provider. Pages hold 10, 25 or 50 rows (default 10); changing the size or pressing Refresh returns to the first page. Visible times show only date, hours and minutes; the API values and paging cursors keep full precision.
+
+### Price display settings
+
+`PriceDisplayDecimalPlaces` (0–8, default 2) and `PriceDisplayUnit` (`major` default, or `native`) are per-instrument presentation preferences stored on `WatchedInstruments` and edited through `GET`/`PUT /api/watched-instruments/{id}/settings` with the usual `If-Match` concurrency. They are separate from monitoring-rule `PriceScale` and collection settings and do not create a rule revision. Requests that omit either field keep the stored value. The `PriceDisplayPreferences` migration adds both columns with defaults, so existing instruments show 2 decimal places in the major unit; stored observations are never rewritten.
+
+Formatting rounds with `MidpointRounding.AwayFromZero` to exactly the configured places and adds thousands separators. `major` converts a fixed subunit to its major unit before rounding (GBX ÷ 100 → GBP); `native` shows the stored unit. Other units show as stored. Each row converts from its own stored unit; if that yields a different unit from the instrument heading, a Unit column appears and the row is flagged. A missing side shows as `—`.
+
+To apply the intended defaults after deployment, open each instrument's **Settings** tab, set **Price decimal places** (for example BTC = 0, XRP = 2) and, for GBX instruments, choose **Display unit**, then **Save settings**.
+
 ## Observability and safety
 
 The hosted service logs one `Information` line per run: `InvocationId` plus observed / market-closed / duplicate / throttled / failed counts and `DeadlineReached`. Per-instrument detail lives in `PriceCollectionAttempts`. Logs never carry credentials, auth headers, raw provider payloads or quote values — only counts, codes, request IDs and timestamps.
@@ -213,6 +233,7 @@ The hosted service logs one `Information` line per run: `InvocationId` plus obse
 
 - `tests/TradingEngine.Application.Tests/PriceCollection` drives `CollectDuePricesHandler` with a `FakeClock`, a manual `TimeProvider`, stub provider and capturing store: due vs disabled instruments, both sampling policies, market-closed/unconfigured sessions, throttling and same-slot throttle backoff, both-null quotes retried then `PriceUnavailable`, one-sided quotes, same-slot outcome dedup with next-slot recovery, stalled reads/writes and stalled audit writes bounded by the fake-time budget (deadline item returned, no unbounded SQL write started), storage failures isolated per instrument, cancellation, repeat delivery and overlapping invocations. `WeeklyScheduleMarketSessionPolicyTests` covers open/close boundaries, overnight windows and the spring-forward/fall-back transitions.
 - `tests/TradingEngine.Infrastructure.IntegrationTests/Persistence/PriceCollectionPersistenceTests.cs` runs against real SQL Server via Testcontainers: `decimal(38,18)` precision round-trip, one-sided quotes, nullable `ProviderObservedAt`, unique-slot dedup, two successive slots, atomic observation+attempt rollback under a forced audit-write failure, concurrent writers racing the same slot (one observation, one `Observed`, one `SkippedDuplicate`, then the losing context collecting another instrument), quotes with scale finer than 18 rejected without rounding, latest-attempt lookup, check-constraint and FK enforcement, a `SaveChangesAsync` cancelled mid-write leaving no partial rows and a reusable context (the change tracker is cleared so a later save cannot resubmit stale entries), and unique violations on indexes other than the scheduled-slot index surfacing as storage errors rather than `SkippedDuplicate`.
+- `tests/TradingEngine.Infrastructure.IntegrationTests/Persistence/PriceObservationHistoryPersistenceTests.cs` covers the saved-observation read against real SQL Server: newest-first ordering with equal prices, one-sided latest observations without backfill, full precision, native units and distinct timestamps, empty, unknown, deleted and configured instruments, isolation across identical slots, bounded keyset pages, insertion between pages without repetition or omission, and no persistence mutation. API and client tests cover validation, `404` vs empty, `401` in trusted-header mode, no provider calls, and UI loading, empty, error/retry, sign-in, paging, refresh and stale-response suppression.
 
 ## Out of scope
 

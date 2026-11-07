@@ -16,6 +16,10 @@ internal sealed class WatchedInstrumentRow
 
     public int SamplingIntervalSeconds { get; set; }
 
+    public int PriceDisplayDecimalPlaces { get; set; } = 2;
+
+    public string PriceDisplayUnit { get; set; } = "Major";
+
     public Instant CreatedAt { get; set; }
 
     public Instant LastChangedAt { get; set; }

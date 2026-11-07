@@ -8,7 +8,7 @@
             <span class="te-tag te-dirty">Unsaved changes</span>
         }
     </div>
-    <p class="te-note">Sampling interval and monitoring state for this instrument.</p>
+    <p class="te-note">Monitoring, sampling and price display for this instrument.</p>
     <ErrorNotice Error="@_saveError">
         <button type="button" @onclick="SaveAsync">Retry</button>
         @if (_saveError?.IsUnauthorized == true)
@@ -23,7 +23,7 @@
                         OnReapply="ReapplyConflictAsync">
             <LatestSummary>
                 Server now shows @LatestStateLabel — last changed @UtcTimes.Format(_conflict.Latest?.LastChangedAt).
-                Your input: @_editState · @_editInterval s.
+                Your input: @_editState · @_editInterval s · @_editDecimals dp · @_editUnit.
             </LatestSummary>
         </ConflictNotice>
     }
@@ -40,6 +40,21 @@
             <input type="number" min="1" max="3600" @bind="_editInterval" @bind:event="oninput"
                    aria-label="Sampling interval seconds">
         </label>
+        <label>
+            Price decimal places
+            <input type="number" min="0" max="8" step="1" @bind="_editDecimals" @bind:event="oninput"
+                   aria-label="Price decimal places">
+        </label>
+        @if (_seeded is not null && PriceObservationFormat.HasMajorUnit(_seeded.QuoteCurrency))
+        {
+            <label>
+                Display unit
+                <select @bind="_editUnit" @bind:event="oninput" aria-label="Display unit">
+                    <option value="major">@PriceObservationFormat.MajorUnitOf(_seeded.QuoteCurrency)</option>
+                    <option value="native">@_seeded.QuoteCurrency (native)</option>
+                </select>
+            </label>
+        }
     </div>
     <div class="te-footer">
         <button type="button" class="te-primary" @onclick="SaveAsync" disabled="@_busy">
@@ -59,6 +74,8 @@
     private readonly ConflictResolution<WatchedInstrumentSettingsResponse> _conflict = new();
     private string _editState = "configured";
     private int _editInterval = 60;
+    private int _editDecimals = 2;
+    private string _editUnit = PriceObservationFormat.MajorDisplayUnit;
     private string _token = string.Empty;
     private bool _busy;
     private ApiError? _saveError;
@@ -80,12 +97,14 @@
 
     private bool _dirty => _seeded is not null
         && (_editState != _seeded.MonitoringState
-            || _editInterval != _seeded.SamplingIntervalSeconds);
+            || _editInterval != _seeded.SamplingIntervalSeconds
+            || _editDecimals != _seeded.PriceDisplayDecimalPlaces
+            || _editUnit != _seeded.PriceDisplayUnit);
 
     private string LatestStateLabel =>
         _conflict.Latest is null
             ? string.Empty
-            : $"{_conflict.Latest.MonitoringState} · {_conflict.Latest.SamplingIntervalSeconds} s";
+            : $"{_conflict.Latest.MonitoringState} · {_conflict.Latest.SamplingIntervalSeconds} s · {_conflict.Latest.PriceDisplayDecimalPlaces} dp · {_conflict.Latest.PriceDisplayUnit}";
 
     protected override void OnParametersSet()
     {
@@ -104,6 +123,8 @@
         _token = latest.ConcurrencyToken;
         _editState = latest.MonitoringState;
         _editInterval = latest.SamplingIntervalSeconds;
+        _editDecimals = latest.PriceDisplayDecimalPlaces;
+        _editUnit = latest.PriceDisplayUnit;
         _saveError = null;
     }
 
@@ -113,6 +134,8 @@
         {
             _editState = _seeded.MonitoringState;
             _editInterval = _seeded.SamplingIntervalSeconds;
+            _editDecimals = _seeded.PriceDisplayDecimalPlaces;
+            _editUnit = _seeded.PriceDisplayUnit;
         }
     }
 
@@ -132,7 +155,7 @@
         {
             result = await Api.UpdateSettingsAsync(
                 _seeded.Id,
-                new UpdateWatchedInstrumentSettingsRequest(_editState, _editInterval),
+                new UpdateWatchedInstrumentSettingsRequest(_editState, _editInterval, _editDecimals, _editUnit),
                 _token,
                 Cancellation);
         }

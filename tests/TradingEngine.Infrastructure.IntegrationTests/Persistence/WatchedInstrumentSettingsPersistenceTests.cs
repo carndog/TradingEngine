@@ -76,6 +76,7 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
 
             Result<WatchedInstrumentSettingsSnapshot> saved = await store.SaveSettingsAsync(
                 instrument,
+                PriceDisplayPreferences.Default,
                 firstToken,
                 CancellationToken.None);
 
@@ -119,6 +120,7 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
             winner.StartMonitoring(60, Instant.FromUtc(2026, 10, 5, 9, 30));
             Result<WatchedInstrumentSettingsSnapshot> saved = await store.SaveSettingsAsync(
                 winner,
+                PriceDisplayPreferences.Default,
                 firstToken,
                 CancellationToken.None);
             Assert.That(saved.IsSuccess, Is.True);
@@ -136,6 +138,7 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
 
             stale = await store.SaveSettingsAsync(
                 loser,
+                PriceDisplayPreferences.Default,
                 firstToken,
                 CancellationToken.None);
         }
@@ -169,6 +172,75 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
             Assert.That(snapshot.IsFailure, Is.True);
             Assert.That(snapshot.Error, Is.EqualTo(WatchedInstrumentErrors.SettingsNotFound));
         });
+    }
+
+    [Test]
+    public async Task GetSettingsAsync_ForRowWrittenWithoutDisplayColumns_ReturnsDefaultPreferences()
+    {
+        Guid id = Guid.CreateVersion7();
+        await using (TradingEngineDbContext context = CreateContext("Settings"))
+        {
+            await context.Database.ExecuteSqlAsync($"""
+                INSERT INTO WatchedInstruments (Id, Symbol, Exchange, QuoteCurrency, MonitoringState, SamplingIntervalSeconds, CreatedAt, LastChangedAt)
+                VALUES ({id}, 'DEMO-LEGACY', 'XTEST', 'GBX', 'Configured', 60, SYSUTCDATETIME(), SYSUTCDATETIME())
+                """);
+        }
+
+        Result<WatchedInstrumentSettingsSnapshot> snapshot;
+        await using (TradingEngineDbContext context = CreateContext("Settings"))
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            snapshot = await store.GetSettingsAsync(id, CancellationToken.None);
+        }
+
+        Assert.That(snapshot.Value.Display, Is.EqualTo(PriceDisplayPreferences.Default));
+    }
+
+    [Test]
+    public async Task SaveSettingsAsync_WithDisplayPreferences_PersistsWithoutTouchingObservations()
+    {
+        Guid id = await AddInstrumentAsync();
+        PriceDisplayPreferences wholeUnits = new(0, PriceDisplayUnit.Native);
+
+        await using (TradingEngineDbContext context = CreateContext("Settings"))
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            Result<WatchedInstrumentSettingsSnapshot> snapshot =
+                await store.GetSettingsAsync(id, CancellationToken.None);
+            Result<WatchedInstrumentSettingsSnapshot> saved = await store.SaveSettingsAsync(
+                snapshot.Value.Instrument,
+                wholeUnits,
+                snapshot.Value.ConcurrencyToken,
+                CancellationToken.None);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(snapshot.Value.Display, Is.EqualTo(PriceDisplayPreferences.Default));
+                Assert.That(saved.Value.Display, Is.EqualTo(wholeUnits));
+                Assert.That(saved.Value.ConcurrencyToken, Is.Not.EqualTo(snapshot.Value.ConcurrencyToken));
+            });
+        }
+
+        await using (TradingEngineDbContext context = CreateContext("Settings"))
+        {
+            SqlServerWatchedInstrumentStore store = new(context, _serializer);
+            Result<WatchedInstrumentSettingsSnapshot> reloaded =
+                await store.GetSettingsAsync(id, CancellationToken.None);
+
+            Assert.That(reloaded.Value.Display, Is.EqualTo(wholeUnits));
+        }
+    }
+
+    [TestCase("UPDATE WatchedInstruments SET PriceDisplayDecimalPlaces = 9")]
+    [TestCase("UPDATE WatchedInstruments SET PriceDisplayUnit = 'Pounds'")]
+    public async Task Database_WithOutOfRangeDisplayPreference_RejectsUpdate(string sql)
+    {
+        await AddInstrumentAsync();
+        await using TradingEngineDbContext context = CreateContext("Settings");
+
+        Assert.That(
+            async () => await context.Database.ExecuteSqlRawAsync(sql),
+            Throws.InstanceOf<Microsoft.Data.SqlClient.SqlException>());
     }
 
     private async Task<Guid> AddInstrumentAsync()

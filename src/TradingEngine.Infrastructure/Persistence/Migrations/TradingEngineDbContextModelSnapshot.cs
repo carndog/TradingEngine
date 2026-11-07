@@ -262,6 +262,18 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
+                    b.Property<int>("PriceDisplayDecimalPlaces")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(2);
+
+                    b.Property<string>("PriceDisplayUnit")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("Major");
+
                     b.Property<string>("QuoteCurrency")
                         .IsRequired()
                         .HasMaxLength(10)
@@ -293,6 +305,10 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_WatchedInstruments_ChangeTimestamps", "[LastChangedAt] >= [CreatedAt]");
 
                             t.HasCheckConstraint("CK_WatchedInstruments_MonitoringState", "[MonitoringState] IN ('Configured', 'Monitored')");
+
+                            t.HasCheckConstraint("CK_WatchedInstruments_PriceDisplayDecimalPlaces", "[PriceDisplayDecimalPlaces] >= 0 AND [PriceDisplayDecimalPlaces] <= 8");
+
+                            t.HasCheckConstraint("CK_WatchedInstruments_PriceDisplayUnit", "[PriceDisplayUnit] IN ('Major', 'Native')");
 
                             t.HasCheckConstraint("CK_WatchedInstruments_SamplingIntervalSeconds", "[SamplingIntervalSeconds] >= 1 AND [SamplingIntervalSeconds] <= 3600");
                         });

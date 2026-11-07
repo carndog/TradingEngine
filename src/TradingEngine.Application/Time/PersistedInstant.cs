@@ -10,6 +10,13 @@ public static class PersistedInstant
     private static readonly Instant Maximum =
         Instant.FromDateTimeUtc(DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc));
 
+    public static bool IsPersistable(Instant instant)
+    {
+        return instant >= Minimum
+            && instant <= Maximum
+            && instant == Instant.FromUnixTimeTicks(instant.ToUnixTimeTicks());
+    }
+
     public static Instant Require(Instant instant, string parameterName)
     {
         if (instant < Minimum || instant > Maximum)

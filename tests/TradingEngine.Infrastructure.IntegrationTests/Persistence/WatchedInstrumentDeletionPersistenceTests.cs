@@ -122,6 +122,7 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
             instrument.ChangeSamplingInterval(120, Instant.FromUtc(2026, 10, 4, 9, 30));
             Result<WatchedInstrumentSettingsSnapshot> saved = await store.SaveSettingsAsync(
                 instrument,
+                PriceDisplayPreferences.Default,
                 firstToken,
                 CancellationToken.None);
             Assert.That(saved.IsSuccess, Is.True);
@@ -278,6 +279,7 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
             instrument.ChangeSamplingInterval(120, DeletedAt);
             Result<WatchedInstrumentSettingsSnapshot> saved = await store.SaveSettingsAsync(
                 instrument,
+                PriceDisplayPreferences.Default,
                 token,
                 CancellationToken.None);
 
@@ -379,7 +381,7 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
         await using TradingEngineDbContext saveContext = CreateContext();
         Task<Result<WatchedInstrumentSettingsSnapshot>> saving =
             new SqlServerWatchedInstrumentStore(saveContext, _serializer)
-                .SaveSettingsAsync(instrument, token, CancellationToken.None);
+                .SaveSettingsAsync(instrument, PriceDisplayPreferences.Default, token, CancellationToken.None);
         Task<Result<WatchedInstrumentBulkDeleteOutcome>> deleting = DeleteAsync(
             [new WatchedInstrumentDeleteItem(id, token)]);
 

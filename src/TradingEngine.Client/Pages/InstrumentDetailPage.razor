@@ -37,6 +37,7 @@ else
         <button type="button" aria-pressed="@(_tab == "current")" @onclick='() => SelectTab("current")'>Current</button>
         <button type="button" aria-pressed="@(_tab == "drafts")" @onclick='() => SelectTab("drafts")'>Drafts</button>
         <button type="button" aria-pressed="@(_tab == "timeline")" @onclick='() => SelectTab("timeline")'>Timeline</button>
+        <button type="button" aria-pressed="@(_tab == "prices")" @onclick='() => SelectTab("prices")'>Prices</button>
         <button type="button" aria-pressed="@(_tab == "settings")" @onclick='() => SelectTab("settings")'>Settings</button>
     </div>
 
@@ -115,6 +116,16 @@ else
                                 OnCancel="CancelPendingAsync"
                                 OnInputChanged="OnPendingInputChanged" />
         </TimelinePanel>
+    }
+
+    @if (_tab == "prices")
+    {
+        <PricesPanel InstrumentId="@Id"
+                     QuoteCurrency="@_settings.QuoteCurrency"
+                     DecimalPlaces="@_settings.PriceDisplayDecimalPlaces"
+                     DisplayUnitPreference="@_settings.PriceDisplayUnit"
+                     SignInUrl="@SignInUrl"
+                     Cancellation="@_lifetime.Token" />
     }
 
     @if (_tab == "settings")
@@ -213,7 +224,7 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
-        _tab = TabQuery is "drafts" or "timeline" or "settings" ? TabQuery : "current";
+        _tab = TabQuery is "drafts" or "timeline" or "prices" or "settings" ? TabQuery : "current";
         if (FocusQuery is not null && FocusQuery.Value != _focusId)
         {
             _focusId = FocusQuery.Value;

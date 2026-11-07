@@ -254,6 +254,137 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
         });
     }
 
+    [Test]
+    public async Task HandleAsync_WithOnlyDisplayPreferencesChanged_SavesPreferencesWithoutChangingInstrument()
+    {
+        CapturingWatchedInstrumentStore store = new();
+        store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
+        UpdateWatchedInstrumentSettingsHandler handler = new(
+            store,
+            new FakeClock(Now));
+
+        Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
+            new UpdateWatchedInstrumentSettings(
+                InstrumentId,
+                MonitoringState.Monitored,
+                60,
+                Token,
+                0,
+                PriceDisplayUnit.Native),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(store.SavedDisplay, Is.EqualTo(new PriceDisplayPreferences(0, PriceDisplayUnit.Native)));
+            Assert.That(store.SavedInstrument!.SamplingIntervalSeconds, Is.EqualTo(60));
+            Assert.That(store.SavedInstrument.LastChangedAt, Is.EqualTo(Instant.FromUtc(2026, 1, 2, 9, 30)));
+            Assert.That(result.Value.Display, Is.EqualTo(new PriceDisplayPreferences(0, PriceDisplayUnit.Native)));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WithOmittedDisplayPreferences_KeepsStoredPreferences()
+    {
+        CapturingWatchedInstrumentStore store = new();
+        store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60) with
+        {
+            Display = new PriceDisplayPreferences(0, PriceDisplayUnit.Native)
+        };
+        UpdateWatchedInstrumentSettingsHandler handler = new(
+            store,
+            new FakeClock(Now));
+
+        Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
+            new UpdateWatchedInstrumentSettings(
+                InstrumentId,
+                MonitoringState.Monitored,
+                120,
+                Token),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(store.SavedDisplay, Is.EqualTo(new PriceDisplayPreferences(0, PriceDisplayUnit.Native)));
+            Assert.That(store.SavedInstrument!.SamplingIntervalSeconds, Is.EqualTo(120));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WithUnchangedDisplayPreferences_ReturnsSnapshotWithoutSaving()
+    {
+        CapturingWatchedInstrumentStore store = new();
+        store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
+        UpdateWatchedInstrumentSettingsHandler handler = new(
+            store,
+            new FakeClock(Now));
+
+        Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
+            new UpdateWatchedInstrumentSettings(
+                InstrumentId,
+                MonitoringState.Monitored,
+                60,
+                Token,
+                2,
+                PriceDisplayUnit.Major),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(store.SavedInstrument, Is.Null);
+        });
+    }
+
+    [TestCase(-1)]
+    [TestCase(9)]
+    public async Task HandleAsync_WithDecimalPlacesOutOfRange_ReturnsValidationError(int decimalPlaces)
+    {
+        CapturingWatchedInstrumentStore store = new();
+        store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
+        UpdateWatchedInstrumentSettingsHandler handler = new(
+            store,
+            new FakeClock(Now));
+
+        Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
+            new UpdateWatchedInstrumentSettings(
+                InstrumentId,
+                MonitoringState.Monitored,
+                60,
+                Token,
+                decimalPlaces),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Error, Is.EqualTo(PriceDisplayErrors.DecimalPlacesOutOfRange));
+            Assert.That(store.SavedInstrument, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WithUndefinedDisplayUnit_ReturnsValidationError()
+    {
+        CapturingWatchedInstrumentStore store = new();
+        store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
+        UpdateWatchedInstrumentSettingsHandler handler = new(
+            store,
+            new FakeClock(Now));
+
+        Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
+            new UpdateWatchedInstrumentSettings(
+                InstrumentId,
+                MonitoringState.Monitored,
+                60,
+                Token,
+                2,
+                (PriceDisplayUnit)42),
+            CancellationToken.None);
+
+        Assert.That(result.Error, Is.EqualTo(PriceDisplayErrors.UnitUndefined));
+    }
+
     private static WatchedInstrumentSettingsSnapshot CreateSnapshot(
         MonitoringState state,
         int intervalSeconds)
