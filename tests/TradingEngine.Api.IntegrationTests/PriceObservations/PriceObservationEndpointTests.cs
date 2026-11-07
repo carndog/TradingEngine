@@ -139,6 +139,37 @@ public sealed class PriceObservationEndpointTests
         });
     }
 
+    [Test]
+    public async Task Get_EmittedNextBeforeCursorReusedUnchanged_ReadsNextPage()
+    {
+        Instant boundary = Slot.PlusTicks(1234567);
+        PriceObservationRecord row = new(
+            boundary,
+            Slot.Plus(Duration.FromSeconds(30)),
+            null,
+            1.5m,
+            1.6m,
+            "GBX",
+            "synthetic",
+            MarketQuoteTimeliness.Realtime);
+        _reader.Result = new PriceObservationHistory(InstrumentId, row, [row], 1, null, boundary);
+        HttpClient client = _factory.CreateClient();
+        HttpResponseMessage first = await client.GetAsync(Path("?pageSize=1"));
+        string firstBody = await first.Content.ReadAsStringAsync();
+        using JsonDocument document = JsonDocument.Parse(firstBody);
+        string nextBefore = document.RootElement.GetProperty("nextBefore").GetString()!;
+
+        HttpResponseMessage second = await client.GetAsync(
+            Path($"?pageSize=1&before={Uri.EscapeDataString(nextBefore)}"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(nextBefore, Is.EqualTo("2026-10-30T13:45:00.1234567+00:00"));
+            Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(_reader.LastBefore, Is.EqualTo(boundary));
+        });
+    }
+
     [TestCase("?pageSize=0", "price_observation.page_size_out_of_range")]
     [TestCase("?pageSize=101", "price_observation.page_size_out_of_range")]
     [TestCase("?pageSize=abc", "price_observation.page_size_out_of_range")]
@@ -146,6 +177,7 @@ public sealed class PriceObservationEndpointTests
     [TestCase("?before=not-a-time", "price_observation.cursor_invalid")]
     [TestCase("?before=2026-10-30T13:45:00+01:00", "price_observation.cursor_invalid")]
     [TestCase("?before=2026-10-30T13:45:00.123456789Z", "price_observation.cursor_invalid")]
+    [TestCase("?before=2026-10-30T13:45:00.123456789%2B00:00", "price_observation.cursor_invalid")]
     [TestCase("?before=", "price_observation.cursor_invalid")]
     public async Task Get_InvalidPagingInput_ReturnsValidationProblemWithoutReading(string query, string code)
     {

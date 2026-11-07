@@ -825,10 +825,6 @@ a {
     font-size: 14px;
 }
 
-.te-latest-price {
-    margin-top: 12px;
-}
-
 .te-latest-meta {
     display: flex;
     flex-wrap: wrap;

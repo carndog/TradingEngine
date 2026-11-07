@@ -74,8 +74,8 @@
                     <thead>
                         <tr>
                             <th scope="col">Scheduled (UTC)</th>
-                            <th scope="col" class="te-num">Bid (@HeadingUnit)</th>
-                            <th scope="col" class="te-num">Ask (@HeadingUnit)</th>
+                            <th scope="col" class="te-num">Bid@(HistoryHeadingSuffix)</th>
+                            <th scope="col" class="te-num">Ask@(HistoryHeadingSuffix)</th>
                             @if (HasMixedUnits)
                             {
                                 <th scope="col">Unit</th>
@@ -165,6 +165,8 @@
     private string HeadingUnit => PriceObservationFormat.DisplayUnit(QuoteCurrency, DisplayUnitPreference);
 
     private bool HasMixedUnits => _page is not null && _page.Items.Any(IsOtherUnit);
+
+    private string HistoryHeadingSuffix => HasMixedUnits ? string.Empty : $" ({HeadingUnit})";
 
     private string RangeText => _page is null
         ? string.Empty

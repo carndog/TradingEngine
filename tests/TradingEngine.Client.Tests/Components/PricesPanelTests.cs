@@ -87,7 +87,7 @@ public sealed class PricesPanelTests
     }
 
     [Test]
-    public void Render_RowInDifferentStoredUnit_ShowsUnitColumnAndFlagsRow()
+    public void Render_RowInDifferentStoredUnit_ShowsUnitColumnUnitNeutralHeadingsAndFlagsRow()
     {
         StubHttpMessageHandler handler = new();
         PriceObservationDto newest = Observation(Slot, 1200m, 1210m, "GBX");
@@ -100,10 +100,13 @@ public sealed class PricesPanelTests
         cut.WaitForAssertion(() => Assert.That(cut.FindAll("tbody tr"), Has.Count.EqualTo(2)));
         Assert.Multiple(() =>
         {
-            Assert.That(cut.FindAll("th[scope=col]").Select(header => header.TextContent.Trim()), Does.Contain("Unit"));
+            Assert.That(cut.FindAll("th[scope=col]").Select(header => header.TextContent.Trim()),
+                Is.EqualTo(new[] { "Scheduled (UTC)", "Bid", "Ask", "Unit", "Status" }));
             Assert.That(cut.FindAll("tr.te-other-unit"), Has.Count.EqualTo(1));
-            Assert.That(cut.Find("tr.te-other-unit").TextContent, Does.Contain("USD"));
-            Assert.That(cut.Find("tr.te-other-unit").TextContent, Does.Contain("15.50"));
+            Assert.That(cut.FindAll("tr.te-other-unit td").Select(cell => cell.TextContent.Trim()).Skip(1).Take(3),
+                Is.EqualTo(new[] { "15.50", "15.75", "USD" }));
+            Assert.That(cut.FindAll("tbody tr")[0].TextContent, Does.Contain("GBP"));
+            Assert.That(cut.Find("tr.te-other-unit").TextContent, Does.Not.Contain("GBP"));
         });
     }
 
@@ -295,8 +298,8 @@ public sealed class PricesPanelTests
             new Dictionary<string, object?> { [nameof(PricesPanel.InstrumentId)] = InstrumentB })));
         cut.WaitForAssertion(() => Assert.That(cut.Markup, Does.Contain("222")));
         PriceObservationDto rowA = Observation(Slot, 111m, 112m, "USD");
-        delayedA.SetResult(Page(InstrumentA, rowA, [rowA], null));
-        await Task.Delay(100);
+        await cut.InvokeAsync(() => delayedA.SetResult(Page(InstrumentA, rowA, [rowA], null)));
+        await cut.InvokeAsync(() => { });
 
         Assert.Multiple(() =>
         {

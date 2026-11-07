@@ -13,6 +13,9 @@ internal static class PriceObservationEndpoints
 {
     private const string GroupPath = "/api/watched-instruments/{id:guid}/price-observations";
 
+    private static readonly InstantPattern UtcOffsetCursorPattern =
+        InstantPattern.CreateWithInvariantCulture("uuuu'-'MM'-'dd'T'HH':'mm':'ss;FFFFFFFFF'+00:00'");
+
     public static RouteGroupBuilder MapPriceObservationEndpoints(this IEndpointRouteBuilder routes)
     {
         ArgumentNullException.ThrowIfNull(routes);
@@ -33,7 +36,7 @@ internal static class PriceObservationEndpoints
         Instant? cursor = null;
         if (before is not null)
         {
-            ParseResult<Instant> parsed = InstantPattern.ExtendedIso.Parse(before);
+            ParseResult<Instant> parsed = ParseCursor(before);
             if (parsed.Success is false)
             {
                 return ApiProblemDetails.Problem(PriceObservationErrors.CursorInvalid);
@@ -69,6 +72,17 @@ internal static class PriceObservationEndpoints
             found.PageSize,
             ToOffset(found.Before),
             ToOffset(found.NextBefore)));
+    }
+
+    private static ParseResult<Instant> ParseCursor(string before)
+    {
+        ParseResult<Instant> parsed = InstantPattern.ExtendedIso.Parse(before);
+        if (parsed.Success)
+        {
+            return parsed;
+        }
+
+        return UtcOffsetCursorPattern.Parse(before);
     }
 
     private static PriceObservationDto ToDto(PriceObservationRecord record)

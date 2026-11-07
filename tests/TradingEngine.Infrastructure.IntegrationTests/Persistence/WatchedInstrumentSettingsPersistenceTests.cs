@@ -182,7 +182,7 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
         {
             await context.Database.ExecuteSqlAsync($"""
                 INSERT INTO WatchedInstruments (Id, Symbol, Exchange, QuoteCurrency, MonitoringState, SamplingIntervalSeconds, CreatedAt, LastChangedAt)
-                VALUES ({id}, 'DEMO-LEGACY', 'XTEST', 'GBX', 'Configured', 60, SYSUTCDATETIME(), SYSUTCDATETIME())
+                VALUES ({id}, 'DEMO-LEGACY', 'XTEST', 'GBX', 'Configured', 60, '2026-10-30T13:45:00', '2026-10-30T13:45:00')
                 """);
         }
 

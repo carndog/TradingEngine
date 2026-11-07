@@ -211,7 +211,7 @@ ORDER BY a.RecordedAt DESC;
 
 - `latest` is the single observation with the greatest `ScheduledFor`; a missing bid or ask stays `null` and is never filled from an older row. It is independent of the requested page.
 - `items` are ordered by `ScheduledFor` descending. Paging is keyset: pass the response `nextBefore` as `before` to read strictly older rows, so collections that land between requests cannot repeat or skip rows. `nextBefore` is `null` on the final page.
-- `pageSize` defaults to 25 at the API (the portal requests 10, 25 or 50) and must be between 1 and 100. `before` must end in `Z` and carry at most seven fractional-second digits within the stored range; invalid input returns `400` with `price_observation.page_size_out_of_range` or `price_observation.cursor_invalid`.
+- `pageSize` defaults to 25 at the API (the portal requests 10, 25 or 50) and must be between 1 and 100. `before` must be UTC, ending in `Z` or `+00:00` (the form `nextBefore` is returned in, URL-encoded), and carry at most seven fractional-second digits within the stored range; invalid input returns `400` with `price_observation.page_size_out_of_range` or `price_observation.cursor_invalid`.
 - An unknown or deleted instrument returns `404` with `price_observation.instrument_not_found`; an existing instrument with no observations returns `200` with `latest: null` and empty `items`. Configured (paused) instruments keep readable history.
 - Bid and ask are JSON numbers with stored precision and `quoteCurrency` is the native unit (for example `GBX`); neither is converted. Missing slots are not interpolated. `timeliness` is `realtime`, `delayed` or `unknown` as reported.
 
@@ -221,7 +221,7 @@ The portal shows this on the instrument detail page under **Prices** as "Saved p
 
 `PriceDisplayDecimalPlaces` (0–8, default 2) and `PriceDisplayUnit` (`major` default, or `native`) are per-instrument presentation preferences stored on `WatchedInstruments` and edited through `GET`/`PUT /api/watched-instruments/{id}/settings` with the usual `If-Match` concurrency. They are separate from monitoring-rule `PriceScale` and collection settings and do not create a rule revision. Requests that omit either field keep the stored value. The `PriceDisplayPreferences` migration adds both columns with defaults, so existing instruments show 2 decimal places in the major unit; stored observations are never rewritten.
 
-Formatting rounds with `MidpointRounding.AwayFromZero` to exactly the configured places and adds thousands separators. `major` converts a fixed subunit to its major unit before rounding (GBX ÷ 100 → GBP); `native` shows the stored unit. Other units show as stored. Each row converts from its own stored unit; if that yields a different unit from the instrument heading, a Unit column appears and the row is flagged. A missing side shows as `—`.
+Formatting rounds with `MidpointRounding.AwayFromZero` to exactly the configured places and adds thousands separators. `major` converts a fixed subunit to its major unit before rounding (GBX ÷ 100 → GBP); `native` shows the stored unit. Other units show as stored. Each row converts from its own stored unit; if that yields a different unit from the instrument heading, a Unit column appears, the row is flagged and the Bid/Ask headings drop their unit. A missing side shows as `—`.
 
 To apply the intended defaults after deployment, open each instrument's **Settings** tab, set **Price decimal places** (for example BTC = 0, XRP = 2) and, for GBX instruments, choose **Display unit**, then **Save settings**.
 

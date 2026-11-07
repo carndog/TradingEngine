@@ -4,10 +4,8 @@
 
 namespace TradingEngine.Infrastructure.Persistence.Migrations;
 
-/// <inheritdoc />
 public partial class PriceDisplayPreferences : Migration
 {
-    /// <inheritdoc />
     protected override void Up(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.AddColumn<int>(
@@ -36,7 +34,6 @@ public partial class PriceDisplayPreferences : Migration
             sql: "[PriceDisplayUnit] IN ('Major', 'Native')");
     }
 
-    /// <inheritdoc />
     protected override void Down(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.DropCheckConstraint(

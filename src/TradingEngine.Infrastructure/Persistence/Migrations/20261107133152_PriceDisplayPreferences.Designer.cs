@@ -15,7 +15,6 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
     [Migration("20261107133152_PriceDisplayPreferences")]
     partial class PriceDisplayPreferences
     {
-        /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
