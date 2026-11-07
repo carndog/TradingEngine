@@ -14,6 +14,65 @@ public sealed class InstrumentSettingsEditorTests
 {
     private static readonly Guid InstrumentId = Guid.Parse("d5000000-0000-0000-0000-000000000001");
 
+    [Test]
+    public void Save_DisplayPreferencesChanged_SendsDecimalPlacesAndUnit()
+    {
+        StubHttpMessageHandler handler = new();
+        List<string> bodies = [];
+        WatchedInstrumentSettingsResponse settings = ClientTestData.Settings(InstrumentId) with { QuoteCurrency = "GBX" };
+        handler.Enqueue(async (request, _) =>
+        {
+            bodies.Add(await request.Content!.ReadAsStringAsync());
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                ClientTestData.JsonOf(settings with { PriceDisplayDecimalPlaces = 0, PriceDisplayUnit = "native", ConcurrencyToken = "tok-2" }));
+        });
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(ctx, settings);
+
+        cut.Find("input[aria-label='Price decimal places']").Input("0");
+        cut.Find("select[aria-label='Display unit']").Input("native");
+        ClickButton(cut, "Save settings");
+
+        cut.WaitForAssertion(() => Assert.That(bodies, Has.Count.EqualTo(1)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(bodies[0], Does.Contain("\"priceDisplayDecimalPlaces\":0"));
+            Assert.That(bodies[0], Does.Contain("\"priceDisplayUnit\":\"native\""));
+            Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes"));
+        });
+    }
+
+    [Test]
+    public void Render_NonSubunitCurrency_HidesDisplayUnitChoice()
+    {
+        StubHttpMessageHandler handler = new();
+        using BunitContext ctx = CreateContext(handler);
+
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(ctx, ClientTestData.Settings(InstrumentId));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.FindAll("select[aria-label='Display unit']"), Is.Empty);
+            Assert.That(cut.Find("input[aria-label='Price decimal places']").GetAttribute("value"), Is.EqualTo("2"));
+        });
+    }
+
+    [Test]
+    public void Render_GbxCurrency_OffersPoundsAndNativePence()
+    {
+        StubHttpMessageHandler handler = new();
+        using BunitContext ctx = CreateContext(handler);
+
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(
+            ctx,
+            ClientTestData.Settings(InstrumentId) with { QuoteCurrency = "GBX" });
+
+        Assert.That(
+            cut.FindAll("select[aria-label='Display unit'] option").Select(option => option.TextContent.Trim()),
+            Is.EqualTo(new[] { "GBP", "GBX (native)" }));
+    }
+
     private static BunitContext CreateContext(StubHttpMessageHandler handler)
     {
         BunitContext ctx = new();

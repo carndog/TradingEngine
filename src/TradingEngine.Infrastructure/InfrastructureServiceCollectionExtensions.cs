@@ -22,6 +22,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IMonitoringRuleStore, SqlServerMonitoringRuleStore>();
         services.AddScoped<IMonitoredInstrumentSource, SqlServerMonitoredInstrumentSource>();
         services.AddScoped<IPriceObservationStore, SqlServerPriceObservationStore>();
+        services.AddScoped<IPriceObservationHistoryReader, SqlServerPriceObservationHistoryReader>();
 
         return services;
     }

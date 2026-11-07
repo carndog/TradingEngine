@@ -280,6 +280,100 @@ public sealed class WatchedInstrumentSettingsEndpointTests
         });
     }
 
+    [Test]
+    public async Task PutSettings_WithDisplayPreferences_SavesAndReturnsThem()
+    {
+        _store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await SendPutAsync(
+            client,
+            new UpdateWatchedInstrumentSettingsRequest("monitored", 60, 0, "native"));
+        WatchedInstrumentSettingsResponse? body = await response.Content
+            .ReadFromJsonAsync<WatchedInstrumentSettingsResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(body!.PriceDisplayDecimalPlaces, Is.EqualTo(0));
+            Assert.That(body.PriceDisplayUnit, Is.EqualTo("native"));
+            Assert.That(_store.SavedDisplay, Is.EqualTo(new PriceDisplayPreferences(0, PriceDisplayUnit.Native)));
+            Assert.That(_store.ExpectedToken, Is.EqualTo(Token));
+        });
+    }
+
+    [Test]
+    public async Task PutSettings_FromClientOmittingDisplayFields_KeepsStoredPreferences()
+    {
+        _store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60).Value with
+        {
+            Display = new PriceDisplayPreferences(0, PriceDisplayUnit.Native)
+        };
+        HttpClient client = _factory.CreateClient();
+        HttpRequestMessage request = new(
+            HttpMethod.Put,
+            $"/api/watched-instruments/{InstrumentId}/settings")
+        {
+            Content = new StringContent(
+                "{\"monitoringState\":\"monitored\",\"samplingIntervalSeconds\":120}",
+                System.Text.Encoding.UTF8,
+                "application/json")
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", TokenHeader);
+
+        HttpResponseMessage response = await client.SendAsync(request);
+        WatchedInstrumentSettingsResponse? body = await response.Content
+            .ReadFromJsonAsync<WatchedInstrumentSettingsResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(_store.SavedDisplay, Is.EqualTo(new PriceDisplayPreferences(0, PriceDisplayUnit.Native)));
+            Assert.That(body!.PriceDisplayDecimalPlaces, Is.EqualTo(0));
+            Assert.That(body.PriceDisplayUnit, Is.EqualTo("native"));
+        });
+    }
+
+    [Test]
+    public async Task GetSettings_WithDefaultPreferences_ReturnsTwoPlacesAndMajorUnit()
+    {
+        _store.GetSettingsResult = CreateSnapshot(MonitoringState.Configured, 60);
+        HttpClient client = _factory.CreateClient();
+
+        WatchedInstrumentSettingsResponse? body = await client
+            .GetFromJsonAsync<WatchedInstrumentSettingsResponse>($"/api/watched-instruments/{InstrumentId}/settings");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(body!.PriceDisplayDecimalPlaces, Is.EqualTo(2));
+            Assert.That(body.PriceDisplayUnit, Is.EqualTo("major"));
+        });
+    }
+
+    [TestCase(9, null, "watched_instrument.price_display_decimal_places_out_of_range")]
+    [TestCase(-1, null, "watched_instrument.price_display_decimal_places_out_of_range")]
+    [TestCase(2, "pounds", "watched_instrument.price_display_unit_undefined")]
+    public async Task PutSettings_WithInvalidDisplayPreferences_ReturnsValidationProblem(
+        int decimalPlaces,
+        string? unit,
+        string expectedCode)
+    {
+        _store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
+        HttpClient client = _factory.CreateClient();
+
+        HttpResponseMessage response = await SendPutAsync(
+            client,
+            new UpdateWatchedInstrumentSettingsRequest("monitored", 60, decimalPlaces, unit));
+        ProblemDetails? problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(ProblemCode(problem), Is.EqualTo(expectedCode));
+            Assert.That(_store.SavedInstrument, Is.Null);
+        });
+    }
+
     private Task<HttpResponseMessage> SendPutAsync(
         HttpClient client,
         UpdateWatchedInstrumentSettingsRequest body)

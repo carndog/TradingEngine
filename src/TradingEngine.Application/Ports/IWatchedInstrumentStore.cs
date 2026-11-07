@@ -28,6 +28,7 @@ public interface IWatchedInstrumentStore
 
     Task<Result<WatchedInstrumentSettingsSnapshot>> SaveSettingsAsync(
         WatchedInstrument instrument,
+        PriceDisplayPreferences display,
         byte[] expectedConcurrencyToken,
         CancellationToken cancellationToken);
 

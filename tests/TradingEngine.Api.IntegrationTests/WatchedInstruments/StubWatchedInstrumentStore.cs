@@ -32,6 +32,8 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
     public WatchedInstrument? SavedInstrument { get; private set; }
 
+    public PriceDisplayPreferences? SavedDisplay { get; private set; }
+
     public byte[]? ExpectedToken { get; private set; }
 
     public (IReadOnlyList<WatchedInstrumentDeleteItem> Items, Instant DeletedAt)? RequestedDelete { get; private set; }
@@ -94,11 +96,13 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
 
     public Task<Result<WatchedInstrumentSettingsSnapshot>> SaveSettingsAsync(
         WatchedInstrument instrument,
+        PriceDisplayPreferences display,
         byte[] expectedConcurrencyToken,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         SavedInstrument = instrument;
+        SavedDisplay = display;
         ExpectedToken = expectedConcurrencyToken;
 
         if (SaveSettingsResult is not null)
@@ -107,7 +111,10 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
         }
 
         return Task.FromResult<Result<WatchedInstrumentSettingsSnapshot>>(
-            new WatchedInstrumentSettingsSnapshot(instrument, [9, 9, 9, 9, 9, 9, 9, 9]));
+            new WatchedInstrumentSettingsSnapshot(instrument, [9, 9, 9, 9, 9, 9, 9, 9])
+            {
+                Display = display
+            });
     }
 
     public Task<Result<WatchedInstrumentBulkDeleteOutcome>> DeleteInstrumentsAsync(

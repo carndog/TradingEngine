@@ -9,4 +9,6 @@ public sealed record WatchedInstrumentSettingsResponse(
     int SamplingIntervalSeconds,
     DateTimeOffset CreatedAt,
     DateTimeOffset LastChangedAt,
-    string ConcurrencyToken);
+    string ConcurrencyToken,
+    int PriceDisplayDecimalPlaces = 2,
+    string PriceDisplayUnit = "major");

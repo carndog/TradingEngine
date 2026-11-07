@@ -4,6 +4,7 @@ using TradingEngine.Api.Authentication;
 using TradingEngine.Api.Diagnostics;
 using TradingEngine.Api.MonitoringRules;
 using TradingEngine.Api.PriceCollection;
+using TradingEngine.Api.PriceObservations;
 using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.Session;
 using TradingEngine.Api.WatchedInstruments;
@@ -31,6 +32,7 @@ builder.Services
     .AddSystemClock()
     .AddWatchedInstruments()
     .AddMonitoringRules()
+    .AddPriceObservations()
     .AddTradingEngineInfrastructure(connectionString)
     .AddEtoroMarketData(builder.Configuration)
     .AddPriceCollection(builder.Configuration);
@@ -90,6 +92,7 @@ app.MapGet("/auth-check", () => TypedResults.NoContent())
 
 app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();
+app.MapPriceObservationEndpoints();
 app.MapSessionEndpoints();
 
 HttpMethodMetadata getAndHeadOnly = new([HttpMethods.Get, HttpMethods.Head]);

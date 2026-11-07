@@ -182,6 +182,18 @@ internal static class WatchedInstrumentEndpoints
             return ApiProblemDetails.Problem(monitoringState.Error);
         }
 
+        PriceDisplayUnit? displayUnit = null;
+        if (request.PriceDisplayUnit is not null)
+        {
+            Result<PriceDisplayUnit> mappedUnit = MapPriceDisplayUnit(request.PriceDisplayUnit);
+            if (mappedUnit.IsFailure)
+            {
+                return ApiProblemDetails.Problem(mappedUnit.Error);
+            }
+
+            displayUnit = mappedUnit.Value;
+        }
+
         (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(
             context.Request,
             WatchedInstrumentErrors.ConcurrencyTokenInvalid);
@@ -195,7 +207,9 @@ internal static class WatchedInstrumentEndpoints
                 id,
                 monitoringState.Value,
                 request.SamplingIntervalSeconds,
-                token),
+                token,
+                request.PriceDisplayDecimalPlaces,
+                displayUnit),
             cancellationToken);
         if (saved.IsFailure)
         {
@@ -310,7 +324,29 @@ internal static class WatchedInstrumentEndpoints
             instrument.SamplingIntervalSeconds,
             ToOffset(instrument.CreatedAt),
             ToOffset(instrument.LastChangedAt),
-            ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken));
+            ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken),
+            snapshot.Display.DecimalPlaces,
+            FormatPriceDisplayUnit(snapshot.Display.Unit));
+    }
+
+    private static Result<PriceDisplayUnit> MapPriceDisplayUnit(string value)
+    {
+        return value switch
+        {
+            "major" => PriceDisplayUnit.Major,
+            "native" => PriceDisplayUnit.Native,
+            _ => PriceDisplayErrors.UnitUndefined
+        };
+    }
+
+    private static string FormatPriceDisplayUnit(PriceDisplayUnit unit)
+    {
+        return unit switch
+        {
+            PriceDisplayUnit.Major => "major",
+            PriceDisplayUnit.Native => "native",
+            _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, "Unknown price display unit.")
+        };
     }
 
     private static string FormatMonitoringState(MonitoringState state)

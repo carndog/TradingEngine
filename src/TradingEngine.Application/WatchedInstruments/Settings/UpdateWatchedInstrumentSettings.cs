@@ -6,4 +6,6 @@ public sealed record UpdateWatchedInstrumentSettings(
     Guid InstrumentId,
     MonitoringState MonitoringState,
     int SamplingIntervalSeconds,
-    byte[]? ExpectedConcurrencyToken);
+    byte[]? ExpectedConcurrencyToken,
+    int? PriceDisplayDecimalPlaces = null,
+    PriceDisplayUnit? PriceDisplayUnit = null);
