@@ -46,11 +46,6 @@ public sealed record ChartAnalysisDefinition
             return ChartAnalysisErrors.PriceScaleOutOfRange;
         }
 
-        if (supportZones.Count == 0 && resistanceZones.Count == 0)
-        {
-            return ChartAnalysisErrors.MissingZones;
-        }
-
         IReadOnlyList<ChartZone> support = CopyZones(supportZones, nameof(supportZones));
         IReadOnlyList<ChartZone> resistance = CopyZones(resistanceZones, nameof(resistanceZones));
 

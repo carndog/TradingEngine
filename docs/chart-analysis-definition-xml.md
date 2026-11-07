@@ -61,6 +61,8 @@ The document has no XML namespace and carries no schema-version attribute. The r
 </ChartAnalysisDefinition>
 ```
 
+Both zone containers are optional: a document with neither `SupportZones` nor `ResistanceZones` is valid and describes a price-only instrument with no configured zones.
+
 All examples use synthetic values. Real chart-analysis definitions and meaningful parameter values must not be committed to the public repository.
 
 ## Price representation
