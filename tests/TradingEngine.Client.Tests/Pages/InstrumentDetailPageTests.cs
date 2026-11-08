@@ -308,11 +308,14 @@ public sealed class InstrumentDetailPageTests
         }
 
         cut.Instance.RefreshInterval = TimeSpan.FromMinutes(5);
-        handler.Fallback = null;
-        EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
-            ClientTestData.Timeline("tok-3", boundary), ClientTestData.Drafts("tok-3"));
-        await cut.InvokeAsync(
-            () => cut.FindAll("button").Single(b => b.TextContent == "Refresh now").Click());
+        await cut.InvokeAsync(() =>
+        {
+            handler.Fallback = (request, _) => Task.FromResult(
+                RouteInstrumentRequest(request.RequestUri!.AbsolutePath));
+            EnqueueInstrumentLoad(handler, InstrumentA, "XTEST",
+                ClientTestData.Timeline("tok-3", boundary), ClientTestData.Drafts("tok-3"));
+            cut.FindAll("button").Single(b => b.TextContent == "Refresh now").Click();
+        });
         cut.WaitForAssertion(
             () => Assert.That(cut.Instance.RefreshFaulted, Is.False),
             TimeSpan.FromSeconds(5));

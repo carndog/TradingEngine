@@ -288,6 +288,46 @@ public sealed class ChartAnalysisEvaluatorTests
     }
 
     [Test]
+    public void Evaluate_WithEmptyDefinitionAndObservations_ReturnsNoActionNoConfiguredZones()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(4, [], []).Value;
+        EvaluationInput input = Input(definition, Observation(Ten, 106m, 107m), Observation(Eleven, 104m, 105m));
+
+        Result<EvaluationResult> result = Evaluate(input);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Value.Outcome, Is.EqualTo(EvaluationOutcome.NoAction));
+            Assert.That(result.Value.Reason, Is.EqualTo(EvaluationReason.NoConfiguredZones));
+            Assert.That(result.Value.Matches, Is.Empty);
+            Assert.That(result.Value.MonitoringRuleRevisionId, Is.EqualTo(RevisionId));
+            Assert.That(result.Value.ObservedAt, Is.EqualTo(Eleven));
+            Assert.That(result.Value.PreviousObservedAt, Is.EqualTo(Ten));
+            Assert.That(result.Value.PriceBasis, Is.EqualTo(PriceBasis.Bid));
+            Assert.That(result.Value.QuoteCurrency, Is.EqualTo("USD"));
+            Assert.That(result.Value.CurrentBid, Is.EqualTo(104m));
+            Assert.That(result.Value.CurrentAsk, Is.EqualTo(105m));
+        });
+    }
+
+    [Test]
+    public void Evaluate_WithEmptyDefinitionAndNoPreviousObservation_ReturnsNoConfiguredZones()
+    {
+        ChartAnalysisDefinition definition = ChartAnalysisDefinition.Create(4, [], []).Value;
+        EvaluationInput input = Input(definition, null, Observation(Eleven, 104m, 105m));
+
+        Result<EvaluationResult> result = Evaluate(input);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Value.Outcome, Is.EqualTo(EvaluationOutcome.NoAction));
+            Assert.That(result.Value.Reason, Is.EqualTo(EvaluationReason.NoConfiguredZones));
+            Assert.That(result.Value.Matches, Is.Empty);
+            Assert.That(result.Value.PreviousObservedAt, Is.Null);
+        });
+    }
+
+    [Test]
     public void Evaluate_WithPriceCrossingTwoZones_ReturnsBothMatchesOrderedByLower()
     {
         ChartAnalysisDefinition definition = Definition(

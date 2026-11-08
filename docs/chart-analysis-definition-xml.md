@@ -88,7 +88,7 @@ Conditions describe generic chart events. They do not decide position size, orde
 | `support-loss` | Support zone | The previous price was greater than or equal to `lower` and the current price is below `lower` |
 | `breakout` | Resistance zone | The previous price was less than or equal to `upper` and the current price is above `upper` |
 
-Equality with a boundary remains within the zone. A first observation establishes state and does not produce a crossing condition. `ChartAnalysisEvaluator` implements these semantics (see [Chart-condition evaluation](chart-analysis-evaluation.md)); later integration work will own deduplication and the durable record of each observation and decision.
+Equality with a boundary remains within the zone. A first observation establishes state and does not produce a crossing condition. `ChartAnalysisEvaluator` implements these semantics (see [Chart-condition evaluation](chart-analysis-evaluation.md)); later integration work will own deduplication and the durable record of triggered alerts rather than a record of every evaluation.
 
 Each zone has a stable `id` so a resulting signal can identify the chart feature that produced it. Each condition has a stable `actionId` resolved by an application action registry. The only public example action is `publish-signal`; strategy-specific or execution-specific actions and parameters remain private.
 
