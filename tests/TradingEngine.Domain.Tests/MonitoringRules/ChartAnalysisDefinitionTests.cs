@@ -24,12 +24,17 @@ public sealed class ChartAnalysisDefinitionTests
     }
 
     [Test]
-    public void Create_WithNoZones_ReturnsMissingZonesError()
+    public void Create_WithNoZones_ReturnsDefinition()
     {
         Result<ChartAnalysisDefinition> result = ChartAnalysisDefinition.Create(4, [], []);
 
-        Assert.That(result.IsFailure, Is.True);
-        Assert.That(result.Error, Is.EqualTo(ChartAnalysisErrors.MissingZones));
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Value.PriceScale, Is.EqualTo(4));
+            Assert.That(result.Value.SupportZones, Is.Empty);
+            Assert.That(result.Value.ResistanceZones, Is.Empty);
+        });
     }
 
     [Test]

@@ -183,6 +183,25 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     }
 
     [Test]
+    public void Deserialize_WithEmptyDefinition_RoundTripsToCanonicalXml()
+    {
+        string xml = "<ChartAnalysisDefinition priceScale=\"4\" />";
+
+        ChartAnalysisDefinition definition = _serializer.Deserialize(xml);
+        string reserialized = _serializer.Serialize(definition);
+        ChartAnalysisDefinition reparsed = _serializer.Deserialize(reserialized);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reserialized, Is.EqualTo("<ChartAnalysisDefinition priceScale=\"4\" />"));
+            Assert.That(definition.PriceScale, Is.EqualTo(4));
+            Assert.That(definition.SupportZones, Is.Empty);
+            Assert.That(definition.ResistanceZones, Is.Empty);
+            Assert.That(reparsed.PriceScale, Is.EqualTo(4));
+        });
+    }
+
+    [Test]
     public void Deserialize_WithInvertedZoneBoundaries_ThrowsInvalidDataException()
     {
         string xml = ReadExample("invalid-boundaries.xml");

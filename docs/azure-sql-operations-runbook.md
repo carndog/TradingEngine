@@ -329,7 +329,7 @@ Perform the whole cutover in one coordinated window. Freeze `main` for the durat
    $read = $get.Content | ConvertFrom-Json
    ```
 
-   The zone conditions must appear in the order shown: a support zone requires `buy-zone` then `support-loss`, a resistance zone requires `breakout`; a request with both zone arrays empty is rejected with HTTP 400 and `chart_analysis.missing_zones`. The POST returns **201** with a `Location` header and the new `id` in the body. `GET /api/watched-instruments/{id}` returns **200** with that registration's instrument and definition — it reads the configuration applicable at the instant the request executes and takes no lookup instant, so a point before the revision's `EffectiveFrom` cannot be requested through it. Confirm the response `symbol` matches and, for example, `supportZones[0].level` is 100.
+   The zone conditions must appear in the order shown: a support zone requires `buy-zone` then `support-loss`, a resistance zone requires `breakout`; both zone arrays may be empty for a price-only instrument. The POST returns **201** with a `Location` header and the new `id` in the body. `GET /api/watched-instruments/{id}` returns **200** with that registration's instrument and definition — it reads the configuration applicable at the instant the request executes and takes no lookup instant, so a point before the revision's `EffectiveFrom` cannot be requested through it. Confirm the response `symbol` matches and, for example, `supportZones[0].level` is 100.
 9. **Verify persistence.** In Query Editor confirm the write landed in the new model only:
 
    ```sql

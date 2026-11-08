@@ -47,7 +47,7 @@
 
   <xs:element name="ChartAnalysisDefinition">
     <xs:complexType>
-      <xs:choice>
+      <xs:choice minOccurs="0">
         <xs:sequence>
           <xs:element name="SupportZones" type="SupportZonesType" />
           <xs:element name="ResistanceZones" type="ResistanceZonesType" minOccurs="0" />
