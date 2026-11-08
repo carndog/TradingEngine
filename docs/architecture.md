@@ -88,6 +88,13 @@ Application obtains the current instant through `IClock` and passes the same cap
 
 See [Chart-analysis definition XML](chart-analysis-definition-xml.md) for the canonical contract.
 
+## Chart-condition evaluation
+
+- `ChartAnalysisEvaluator` (Domain, `TradingEngine.Domain.MonitoringRules`) applies the documented `buy-zone`, `support-loss` and `breakout` contract to an `EvaluationInput`: an explicitly selected revision identifier and `ChartAnalysisDefinition`, an optional `Previous` and required `Current` `PriceObservation`, and the `PriceBasis` (`Bid` or `Ask`) to compare on. Application selects the revision effective at the observation instant; the evaluator never looks one up.
+- The evaluator is a pure function over its input — no database, XML, network, notification, system-clock or mutable state — so live monitoring and historical replay share one implementation.
+- `Evaluate` returns `Result<EvaluationResult>`: `Triggered` and `NoAction` (`FirstObservation`, `NoConditionTriggered`, `NoConfiguredZones`) are successful outcomes carrying the revision identifier, observation instants, basis, quote context and ordered `TriggeredCondition` matches; unusable input is a failed `Result` with a `chart_evaluation.*` error, never a `NoAction`.
+- Alert composition, durable alert/checkpoint storage, deduplication and delivery remain proposed integration work (issue #11). See [Chart-condition evaluation](chart-analysis-evaluation.md) for the full contract and decided edge-case semantics.
+
 ## Instrument identification
 
 `WatchedInstrument` is a straightforward aggregate with ordinary properties:
