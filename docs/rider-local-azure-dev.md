@@ -54,6 +54,14 @@ alternative, never a prerequisite. Full local and deployed verification
 checklists live in
 [docs/local-and-deployed-verification.md](local-and-deployed-verification.md).
 
+## Local telemetry in Grafana
+
+To see a local request and its SQL dependency spans before deploying, run the
+`grafana/otel-lgtm` container and add `OTEL_EXPORTER_OTLP_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_PROTOCOL` to the `http` run configuration; the Docker
+commands, Rider variables and a read-only Prices walkthrough are in
+[Local Grafana from Rider](observability.md#local-grafana-from-rider).
+
 ## HTTP walkthrough
 
 - `src/TradingEngine.Api/TradingEngine.Api.http` — local walkthrough, no
