@@ -41,6 +41,7 @@ public sealed class TelemetryExportPipelineTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.WithoutLocalOtlpExport();
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};" +
@@ -297,6 +298,7 @@ public sealed class TelemetryExportPipelineTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.WithoutLocalOtlpExport();
                 builder.ConfigureServices(services =>
                     services.AddSingleton<ILoggerProvider>(recorder));
             });

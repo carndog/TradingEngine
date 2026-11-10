@@ -57,9 +57,10 @@ checklists live in
 ## Local telemetry in Grafana
 
 To see a local request and its SQL dependency spans before deploying, run the
-`grafana/otel-lgtm` container and add `OTEL_EXPORTER_OTLP_ENDPOINT` and
-`OTEL_EXPORTER_OTLP_PROTOCOL` to the `http` run configuration; the Docker
-commands, Rider variables and a read-only Prices walkthrough are in
+`grafana/otel-lgtm` container and set `OTEL_EXPORTER_OTLP_ENDPOINT` and
+`OTEL_EXPORTER_OTLP_PROTOCOL` as user secrets (the `http` launch profile's
+variables are read-only in Rider); the Docker commands, user-secrets commands
+and a read-only Prices walkthrough are in
 [Local Grafana from Rider](observability.md#local-grafana-from-rider).
 
 ## HTTP walkthrough
