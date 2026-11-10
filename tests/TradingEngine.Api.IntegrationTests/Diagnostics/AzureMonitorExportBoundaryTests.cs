@@ -36,6 +36,7 @@ public sealed class AzureMonitorExportBoundaryTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.WithoutLocalOtlpExport();
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};IngestionEndpoint=https://localhost/");

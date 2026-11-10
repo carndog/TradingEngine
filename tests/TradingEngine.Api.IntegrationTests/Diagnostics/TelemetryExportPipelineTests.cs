@@ -41,6 +41,7 @@ public sealed class TelemetryExportPipelineTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.WithoutLocalOtlpExport();
                 builder.UseSetting(
                     TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
                     $"InstrumentationKey={Guid.NewGuid()};" +
@@ -297,18 +298,26 @@ public sealed class TelemetryExportPipelineTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.WithoutLocalOtlpExport();
+                builder.UseSetting(
+                    TelemetryServiceCollectionExtensions.ConnectionStringConfigurationKey,
+                    string.Empty);
                 builder.ConfigureServices(services =>
                     services.AddSingleton<ILoggerProvider>(recorder));
             });
 
         _ = factory.CreateClient();
 
-        Assert.That(
-            recorder.States.Any(state =>
-                state.Any(pair =>
-                    pair.Key == CustomEventNameAttribute
-                    && pair.Value?.ToString() == StartupTelemetryHostedService.StartupEventName)),
-            Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.Services.GetService<TracerProvider>(), Is.Null);
+            Assert.That(
+                recorder.States.Any(state =>
+                    state.Any(pair =>
+                        pair.Key == CustomEventNameAttribute
+                        && pair.Value?.ToString() == StartupTelemetryHostedService.StartupEventName)),
+                Is.True);
+        });
     }
 
     private static bool IsServerSpan(Activity activity)

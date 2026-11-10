@@ -53,7 +53,7 @@ When neither `APPLICATIONINSIGHTS_CONNECTION_STRING` nor the [local OTLP opt-in]
 
 ### Local Application Insights (optional)
 
-To exercise the Azure Monitor export path locally, set the environment variable or a user secret named `APPLICATIONINSIGHTS_CONNECTION_STRING` to a development Application Insights connection string before `dotnet run`, and leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset (it takes precedence in Development). Do not commit a real connection string.
+To exercise the Azure Monitor export path locally, set the environment variable or a user secret named `APPLICATIONINSIGHTS_CONNECTION_STRING` to a development Application Insights connection string before `dotnet run`, and leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset in both environment variables and user secrets (it takes precedence in Development). Do not commit a real connection string.
 
 ## Local Grafana from Rider
 
@@ -79,14 +79,28 @@ docker stop tradingengine-lgtm
 
 ### Rider settings
 
-Add these two environment variables to the `TradingEngine.Api: http` run configuration under **Run → Edit Configurations → Environment variables**, next to the private connection string described in [Local API in Rider against Azure Dev](rider-local-azure-dev.md#private-connection-configuration):
+Rider shows the variables of a launch-settings run configuration such as `TradingEngine.Api: http` as read-only, so set the two values as user secrets for the API project, next to the private connection string described in [Local API in Rider against Azure Dev](rider-local-azure-dev.md#private-connection-configuration). Run from the repository root:
 
-| Variable | Value |
+```bash
+dotnet user-secrets set OTEL_EXPORTER_OTLP_ENDPOINT http://localhost:4318 --project src/TradingEngine.Api
+dotnet user-secrets set OTEL_EXPORTER_OTLP_PROTOCOL http/protobuf --project src/TradingEngine.Api
+```
+
+| Setting | Value |
 | --- | --- |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
 
-Keep them per developer in your Rider run configuration; do not add them to the committed `Properties/launchSettings.json`. Remove `OTEL_EXPORTER_OTLP_ENDPOINT` to go back to today's behaviour. If Grafana is not running while the variables are set, export failures are handled inside the OpenTelemetry pipeline and the API works normally. The variables are honoured only in `Development`; deployed environments keep Azure Monitor.
+User secrets are stored per developer outside the repository, persist across Rider restarts and are loaded only in `Development`; do not add the values to the committed `Properties/launchSettings.json`. Environment variables with the same names (for example in a shell before `dotnet run`) work too and override user secrets. The API integration tests clear the endpoint for the Azure Monitor export tests, so leaving the secrets set does not change test results.
+
+Go back to today's behaviour with:
+
+```bash
+dotnet user-secrets remove OTEL_EXPORTER_OTLP_ENDPOINT --project src/TradingEngine.Api
+dotnet user-secrets remove OTEL_EXPORTER_OTLP_PROTOCOL --project src/TradingEngine.Api
+```
+
+If Grafana is not running while the endpoint is set, export failures are handled inside the OpenTelemetry pipeline and the API works normally. The settings are honoured only in `Development`; deployed environments keep Azure Monitor.
 
 Normal Rider login behaviour is unaffected: the local API still runs without Easy Auth headers in Development, exactly as described in the Rider guide.
 
@@ -95,7 +109,7 @@ Normal Rider login behaviour is unaffected: the local API still runs without Eas
 This walkthrough is read-only; it does not register or change anything.
 
 1. Start Grafana with the command above.
-2. Press F5 (or Run) on the Rider `http` profile with the two variables set. The console shows the usual `TradingEngine.Api.Started` line.
+2. Press F5 (or Run) on the unchanged Rider `http` profile with the two user secrets set. The console shows the usual `TradingEngine.Api.Started` line.
 3. Open <http://localhost:5068/>, choose an existing watched instrument and select the **Prices** tab. The browser calls `GET /api/watched-instruments/{id}/price-observations?pageSize=…`.
 4. In Grafana open **Explore**, choose the **Tempo** data source and use **Search** with *Service Name* `TradingEngine.Api` and *Span Name* `GET /api/watched-instruments/{id:guid}/price-observations/`, or run the TraceQL query:
 
