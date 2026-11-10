@@ -26,6 +26,8 @@
     <PackageVersion Include="NodaTime" Version="3.3.7" />
     <PackageVersion Include="NodaTime.Testing" Version="3.3.7" />
     <PackageVersion Include="NUnit3TestAdapter" Version="6.3.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.15.2" />
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="9.0.21" />
     <PackageVersion Include="Testcontainers.MsSql" Version="4.16.0" />
   </ItemGroup>

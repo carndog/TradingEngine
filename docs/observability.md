@@ -38,11 +38,76 @@ The distro's trace-based log sampler (`EnableTraceBasedLogsSampler`, on by defau
 | `applicationInsightsRetentionDays` | `infra/main.bicep` parameter (`30` in `dev.bicepparam`) | Retention for Application Insights data; 30 days is the supported minimum. |
 | `logAnalyticsDailyDataCapGb` | `infra/main.bicep` parameter (`'0.1'` in `dev.bicepparam`) | Daily ingestion cap on the Log Analytics workspace. |
 
-When `APPLICATIONINSIGHTS_CONNECTION_STRING` is absent the API skips the OpenTelemetry/Azure Monitor pipeline entirely: local development, tests and CI run with no Azure credentials and no Application Insights resource. The startup event is still written to the standard `ILogger` output, so it appears in App Service application logs. Exporter delivery problems are handled inside the OpenTelemetry pipeline and never fail API operations.
+When neither `APPLICATIONINSIGHTS_CONNECTION_STRING` nor the [local OTLP opt-in](#local-grafana-from-rider) is set, the API skips the OpenTelemetry pipeline entirely: local development, tests and CI run with no Azure credentials and no Application Insights resource. The startup event is still written to the standard `ILogger` output, so it appears in App Service application logs. Exporter delivery problems are handled inside the OpenTelemetry pipeline and never fail API operations.
 
-### Local telemetry (optional)
+### Exporter selection
 
-To exercise the export path locally, set the environment variable or a user secret named `APPLICATIONINSIGHTS_CONNECTION_STRING` to a development Application Insights connection string before `dotnet run`. Do not commit a real connection string.
+`TelemetryServiceCollectionExtensions.SelectExportTarget` picks exactly one exporter per process, so each signal is exported once:
+
+| Environment | `OTEL_EXPORTER_OTLP_ENDPOINT` | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Export |
+| --- | --- | --- | --- |
+| `Development` | set | set or unset | Local OTLP only — Azure Monitor is not registered |
+| `Development` | unset | set | Azure Monitor (unchanged) |
+| any other environment | ignored | set | Azure Monitor (unchanged; the deployed App Service path) |
+| any | unset / ignored | unset | None — startup event goes to console `ILogger` only |
+
+### Local Application Insights (optional)
+
+To exercise the Azure Monitor export path locally, set the environment variable or a user secret named `APPLICATIONINSIGHTS_CONNECTION_STRING` to a development Application Insights connection string before `dotnet run`, and leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset (it takes precedence in Development). Do not commit a real connection string.
+
+## Local Grafana from Rider
+
+Inspect a real local API request and its SQL timing before deploying, using the all-in-one [`grafana/otel-lgtm`](https://github.com/grafana/docker-otel-lgtm) image (Grafana with Tempo for traces, Loki for logs and Prometheus for metrics) and the existing Rider `http` launch profile.
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the environment is `Development`, the API exports traces, structured logs and metrics with the OpenTelemetry OTLP exporter instead of Azure Monitor. No Application Insights connection string is needed. The local pipeline uses the OpenTelemetry ASP.NET Core, `HttpClient` and SqlClient instrumentation, and the same resource identity, `TelemetryEnrichmentProcessor`/`TelemetryEnrichmentLogProcessor` and `SensitiveDataTelemetryProcessor`/`SensitiveDataLogProcessor` as the Azure path (see [Sensitive-data handling](#sensitive-data-handling)). The OTLP exporter runs last in each pipeline, so SQL text (`db.query.text`), `url.query` and request headers are removed before anything leaves the process. SQL spans keep `db.query.summary` (for example `SELECT [PriceObservations]`), `db.namespace`, `db.system.name`, `server.address` and duration.
+
+### Start and stop Grafana
+
+Start the container with the Grafana UI and the OTLP/HTTP receiver bound to loopback only:
+
+```bash
+docker run --name tradingengine-lgtm --rm -d -p 127.0.0.1:3000:3000 -p 127.0.0.1:4318:4318 grafana/otel-lgtm
+```
+
+Grafana is at <http://localhost:3000> once `docker logs tradingengine-lgtm` reports that the stack is running. Data lives only inside the container.
+
+Stop it (and discard the collected telemetry, because of `--rm`) with:
+
+```bash
+docker stop tradingengine-lgtm
+```
+
+### Rider settings
+
+Add these two environment variables to the `TradingEngine.Api: http` run configuration under **Run → Edit Configurations → Environment variables**, next to the private connection string described in [Local API in Rider against Azure Dev](rider-local-azure-dev.md#private-connection-configuration):
+
+| Variable | Value |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
+
+Keep them per developer in your Rider run configuration; do not add them to the committed `Properties/launchSettings.json`. Remove `OTEL_EXPORTER_OTLP_ENDPOINT` to go back to today's behaviour. If Grafana is not running while the variables are set, export failures are handled inside the OpenTelemetry pipeline and the API works normally. The variables are honoured only in `Development`; deployed environments keep Azure Monitor.
+
+Normal Rider login behaviour is unaffected: the local API still runs without Easy Auth headers in Development, exactly as described in the Rider guide.
+
+### Walkthrough: Prices request and its SQL span
+
+This walkthrough is read-only; it does not register or change anything.
+
+1. Start Grafana with the command above.
+2. Press F5 (or Run) on the Rider `http` profile with the two variables set. The console shows the usual `TradingEngine.Api.Started` line.
+3. Open <http://localhost:5068/>, choose an existing watched instrument and select the **Prices** tab. The browser calls `GET /api/watched-instruments/{id}/price-observations?pageSize=…`.
+4. In Grafana open **Explore**, choose the **Tempo** data source and use **Search** with *Service Name* `TradingEngine.Api` and *Span Name* `GET /api/watched-instruments/{id:guid}/price-observations/`, or run the TraceQL query:
+
+   ```traceql
+   { resource.service.name = "TradingEngine.Api" && span.http.route = "/api/watched-instruments/{id:guid}/price-observations/" }
+   ```
+
+   Traces are exported in batches every few seconds; refresh if the newest request is not listed yet.
+5. Open the trace. The root is the `Server` span `GET /api/watched-instruments/{id:guid}/price-observations/` (`http.route`, `url.path`, `http.response.status_code`, plus `application.version`, `application.commit` and `deployment.environment`). Its children are `Client` spans from `OpenTelemetry.Instrumentation.SqlClient`, named `SELECT [WatchedInstruments]` and `SELECT [PriceObservations]`, showing each query's duration within the request.
+6. Expand a SQL span's attributes: `db.system.name = microsoft.sql_server`, `db.namespace`, `db.query.summary`, `server.address`, `server.port`. There is no `db.query.text`, and the request span has no `url.query`.
+
+Logs and metrics from the same run are under **Explore → Loki** (`{service_name="TradingEngine.Api"}`; use **Logs for this span** from a trace to jump to correlated records) and **Explore → Prometheus** (for example `http_server_request_duration_seconds_count`, `db_client_operation_duration_seconds_count` and `tradingengine_api_rate_limiter_requests_total`). Custom dashboards are not provided.
 
 ## Sensitive-data handling
 
