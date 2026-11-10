@@ -26,10 +26,12 @@ same mechanism the deployed Web App uses with its managed identity
 ## Private connection configuration
 
 The API fails fast at startup when `ConnectionStrings:TradingEngine` is
-missing, so configure it once per machine. Either option survives Rider
-restarts; neither file is committed.
+missing. Neither option below writes to a committed file.
 
-Option A — user secrets (recommended):
+Option A — user secrets (recommended, and the option to use for Rider F5):
+configure it once per machine; the value is stored outside the repository,
+survives Rider restarts and is picked up by the unchanged `http` launch
+profile.
 
 ```
 cd src/TradingEngine.Api
@@ -37,9 +39,19 @@ dotnet user-secrets init          # once per machine/repo
 dotnet user-secrets set "ConnectionStrings:TradingEngine" "Server=tcp:<sql-server-name>.database.windows.net,1433;Database=sqldb-tradingengine-dev;Authentication=Active Directory Default;Encrypt=True;"
 ```
 
-Option B — Rider run configuration: add the environment variable
-`ConnectionStrings__TradingEngine` (double underscore) with the same value to
-the `http` launch profile in Run > Edit Configurations.
+Option B — session-scoped environment variable: Rider shows the `http`
+launch profile's environment variables as read-only, so instead set
+`ConnectionStrings__TradingEngine` (double underscore) in a PowerShell session
+and run the API from the repository root in that same shell:
+
+```powershell
+$env:ConnectionStrings__TradingEngine = "Server=tcp:<sql-server-name>.database.windows.net,1433;Database=sqldb-tradingengine-dev;Authentication=Active Directory Default;Encrypt=True;"
+dotnet run --project src/TradingEngine.Api --launch-profile http
+```
+
+The variable lasts only until that PowerShell window closes; it is not saved
+and does not affect Rider F5. While it is set it overrides a user secret of
+the same name.
 
 Use the exact connection string format documented in
 `docs/azure-sql-development-database.md` — no credentials appear in it.
