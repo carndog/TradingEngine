@@ -93,12 +93,11 @@ public sealed class EToroMarketDataOptions
                     QuoteCurrencyMapJson)
                 ?? new Dictionary<string, Dictionary<string, string>>();
         }
-        catch (JsonException exception)
+        catch (JsonException)
         {
             throw new InvalidOperationException(
                 $"{SectionName}:QuoteCurrencyMapJson must be a JSON object of " +
-                "exchange-to-symbol native-currency entries.",
-                exception);
+                "exchange-to-symbol string native-currency entries.");
         }
     }
 }

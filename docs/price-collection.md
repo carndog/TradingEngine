@@ -167,51 +167,40 @@ All five parameters are `@secure()` in both `infra/main.bicep` and `infra/module
 
 The map/session secrets hold JSON objects emitted by the template — for example `ETORO_MARKET_DATA_EXCHANGE_MAP={"XNAS":["<provider exchange name>"]}` (string arrays flattened into indexed settings, matching `EToro:MarketData:ExchangeMap`), `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP={"XNAS":{"MSFT":"USD"}}` (exchange → symbol → native currency, emitted verbatim as the `EToro__MarketData__QuoteCurrencyMapJson` setting *value* and bound by the adapter — not flattened — so symbol keys containing periods survive Linux App Service name mangling; see [eToro market-data adapter](etoro-market-data-adapter.md#quote-currency-verification)), and `PRICE_COLLECTION_EXCHANGE_SESSIONS={"XNAS":{"timeZone":"America/New_York","alwaysOpen":false,"windows":[{"days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"open":"09:30","close":"16:00"}]}}` (flattened). Keys must match the `Exchange` values on `WatchedInstruments`.
 
-#### Quote-currency map rollout order
+#### Quote-currency map rollout
 
-The `QuoteCurrencyMapJson` transport was introduced because dotted symbols cannot ride in setting *names* on Linux. Roll out in this order:
+The `QuoteCurrencyMapJson` transport was introduced because dotted symbols cannot ride in setting *names* on Linux. Both the `Deploy development` (app) and `Deploy development infrastructure` workflows start independently on merge — the app deploy can also be held (`DEPLOYMENT_HOLD`) or fail — so the template emits the map in **both** shapes at once:
 
-1. **Deploy the app build** containing `EToroMarketDataOptions.QuoteCurrencyMapJson` binding (this change). The discrete `EToro__MarketData__QuoteCurrencyMap__*` settings still present keep the running shape working.
-2. **Deploy the infrastructure** that switches `marketDataQuoteCurrencyMap` emission to the single `EToro__MarketData__QuoteCurrencyMapJson` setting. The appsettings deployment replaces the whole collection, so the flattened keys disappear in the same step; the new build already reads the JSON value.
+- `EToro__MarketData__QuoteCurrencyMapJson` — the whole map as one setting *value*, read by builds that bind `QuoteCurrencyMapJson`.
+- `EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol}` — the legacy discrete-key shape, emitted only for symbols **without** `.` (a dotted name would arrive mangled, and could collide with a literal-underscore sibling such as `DEMO_X`).
 
-Reversing the order strands the map: an old build reads only discrete keys and the new settings emit none, so every quote-currency lookup fails as unconfigured.
+A build predating `QuoteCurrencyMapJson` therefore keeps every usable discrete key — collection for non-dotted symbols continues unchanged whether the infrastructure deploys first, the app deployment is held, or the app deployment fails outright. A build with `QuoteCurrencyMapJson` reads the JSON value for every symbol, dotted or not; discrete keys still merge on top per symbol. Either order converges — no sequencing step is required. Once the JSON-reading build is verified, the flattened emission can be removed in a follow-up change (older builds would then lose non-dotted keys too, so only do that after rollback is no longer needed).
 
 #### Post-deployment verification (read-only)
 
-After the next eligible session opens, confirm a newly scheduled slot produced both an `Observed` attempt and a saved observation — the Prices tab reads `PriceObservations` only. Aggregate each table **separately** before joining: joining the raw tables multiplies rows once observations exist, because multiple attempts share one `(WatchedInstrumentId, ScheduledFor)`.
+After the next eligible session opens, confirm a newly scheduled slot produced both an `Observed` attempt and its matching saved observation — the Prices tab reads `PriceObservations` only. Match the two tables on **both** `WatchedInstrumentId` and `ScheduledFor`: an attempt and a price from different slots do not count as success, and earlier `Failed` retries for the same slot are ignored by the `Outcome` filter.
 
 ```sql
 DECLARE @since DATETIME2 = '<session-open-utc>';
 
 SELECT w.Symbol, w.Exchange,
-       ISNULL(obs.Observations, 0) AS Observations,
-       obs.LatestObservationScheduledFor,
-       ISNULL(att.Attempts, 0) AS Attempts,
-       ISNULL(att.ObservedAttempts, 0) AS ObservedAttempts,
-       ISNULL(att.FailedAttempts, 0) AS FailedAttempts
-FROM dbo.WatchedInstruments AS w
-LEFT JOIN (
-    SELECT o.WatchedInstrumentId,
-           COUNT_BIG(*) AS Observations,
-           MAX(o.ScheduledFor) AS LatestObservationScheduledFor
-    FROM dbo.PriceObservations AS o
-    WHERE o.ScheduledFor >= @since
-    GROUP BY o.WatchedInstrumentId
-) AS obs ON obs.WatchedInstrumentId = w.Id
-LEFT JOIN (
-    SELECT a.WatchedInstrumentId,
-           COUNT_BIG(*) AS Attempts,
-           SUM(CASE WHEN a.Outcome = 'Observed' THEN 1 ELSE 0 END) AS ObservedAttempts,
-           SUM(CASE WHEN a.Outcome = 'Failed' THEN 1 ELSE 0 END) AS FailedAttempts
-    FROM dbo.PriceCollectionAttempts AS a
-    WHERE a.ScheduledFor >= @since
-    GROUP BY a.WatchedInstrumentId
-) AS att ON att.WatchedInstrumentId = w.Id
-WHERE w.MonitoringState = 'Monitored' AND w.DeletedAt IS NULL
-ORDER BY w.Exchange, w.Symbol;
+       a.ScheduledFor AS MatchedSlotUtc,
+       a.AttemptedAt,
+       o.RetrievedAt,
+       o.Bid,
+       o.Ask,
+       o.QuoteCurrency
+FROM dbo.PriceCollectionAttempts AS a
+JOIN dbo.PriceObservations AS o
+  ON o.WatchedInstrumentId = a.WatchedInstrumentId
+ AND o.ScheduledFor = a.ScheduledFor
+JOIN dbo.WatchedInstruments AS w ON w.Id = a.WatchedInstrumentId
+WHERE a.Outcome = 'Observed'
+  AND a.ScheduledFor >= @since
+ORDER BY w.Exchange, w.Symbol, a.ScheduledFor DESC;
 ```
 
-Success is `ObservedAttempts >= 1` with `Observations >= 1` per affected instrument and the new row visible under **Prices → Saved prices**; earlier `Failed` attempts stay as history and are not rewritten.
+Each returned `MatchedSlotUtc` is a slot whose collection attempt succeeded *and* saved a price for that same slot; per instrument, at least one row must appear for the affected period and the newest row must be visible under **Prices → Saved prices**. Historical `Failed` rows remain untouched.
 
 **Secure XNAS configuration:** create the five secrets on the GitHub `development` environment (values come from the private deployment context, never committed). `ETORO_MARKET_DATA_API_KEY`/`USER_KEY` are the read-only market-data credentials; `ETORO_MARKET_DATA_EXCHANGE_MAP` maps `XNAS` to the provider exchange name(s) discovered through the search endpoint; `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` maps each XNAS symbol to its native listing currency; `PRICE_COLLECTION_EXCHANGE_SESSIONS` carries the XNAS regular session (America/New_York 09:30–16:00 weekdays). Once the secrets exist, every `Deploy development infrastructure` run — including what-if previews — keeps the settings in place; removing a secret removes the setting on the next deploy, by design.
 

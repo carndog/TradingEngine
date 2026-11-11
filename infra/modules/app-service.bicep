@@ -51,7 +51,7 @@ param etoroMarketDataUserKey string = ''
 @secure()
 param marketDataExchangeMap object = {}
 
-@description('Map of instrument exchange identifier and symbol to the provider native currency, emitted as the single EToro__MarketData__QuoteCurrencyMapJson app setting whose value is the JSON object. Carrying the map inside the value preserves symbol keys that contain periods, which Linux App Service flattens to underscores when they appear in setting names. Supplied as a JSON object of objects at deploy time; an empty object emits no setting.')
+@description('Map of instrument exchange identifier and symbol to the provider native currency. Emitted two ways for a safe independent rollout of app and infrastructure: as the single EToro__MarketData__QuoteCurrencyMapJson app setting whose value is the JSON object (symbol keys containing periods stay verbatim inside the value, which Linux App Service cannot carry in setting names), and as legacy flattened EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol} settings for symbols without periods so a previous build keeps its discrete-key configuration until the JSON-reading build runs. Supplied as a JSON object of objects at deploy time; an empty object emits no settings.')
 @secure()
 param marketDataQuoteCurrencyMap object = {}
 
@@ -76,11 +76,27 @@ var exchangeMapSettings = reduce(
           'EToro__MarketData__ExchangeMap__${exchange.key}__${valueIndex}': string(exchange.value[valueIndex])
         }))))
 
-var quoteCurrencyMapSettings = !empty(marketDataQuoteCurrencyMap)
+var quoteCurrencyMapJsonSetting = !empty(marketDataQuoteCurrencyMap)
   ? {
       EToro__MarketData__QuoteCurrencyMapJson: string(marketDataQuoteCurrencyMap)
     }
   : {}
+
+var quoteCurrencyMapFlattenedSettings = reduce(
+  items(marketDataQuoteCurrencyMap),
+  {},
+  (accumulated, exchange) => union(
+    accumulated,
+    reduce(
+      items(exchange.value),
+      {},
+      (symbolAccumulated, symbol) => union(
+        symbolAccumulated,
+        contains(symbol.key, '.')
+          ? {}
+          : {
+              'EToro__MarketData__QuoteCurrencyMap__${exchange.key}__${symbol.key}': string(symbol.value)
+            }))))
 
 var exchangeSessionSettings = reduce(
   items(priceCollectionExchangeSessions),
@@ -190,7 +206,8 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
         }
       : {},
     exchangeMapSettings,
-    quoteCurrencyMapSettings,
+    quoteCurrencyMapJsonSetting,
+    quoteCurrencyMapFlattenedSettings,
     exchangeSessionSettings,
     priceCollectionEnabled
       ? {
