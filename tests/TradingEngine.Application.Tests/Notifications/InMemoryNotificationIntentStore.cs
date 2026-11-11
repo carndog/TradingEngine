@@ -34,7 +34,7 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
                         item.Status is NotificationStatus.Pending
                             or NotificationStatus.Ambiguous
                             or NotificationStatus.Submitted)
-                    .OrderBy(item => item.AttemptCount)
+                    .OrderBy(item => item.AttemptCount > 0 ? 1 : 0)
                     .Take(maxCount)
                     .ToList());
         }
@@ -113,7 +113,11 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
             }
 
             Recorded.Add(outcome);
-            if (outcome.ProviderOperationId is not null)
+            if (outcome.AttemptOutcome == NotificationAttemptOutcome.Failed)
+            {
+                _providerOperations.Remove(outcome.IntentId);
+            }
+            else if (outcome.ProviderOperationId is not null)
             {
                 _providerOperations[outcome.IntentId] = outcome.ProviderOperationId;
             }

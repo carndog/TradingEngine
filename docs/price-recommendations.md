@@ -95,12 +95,12 @@ through manual repair — the checkpoint advance is committed anyway
   acknowledged. Probes resolve `Succeeded` → `Sent` and `Rejected` →
   `Failed`, and a `Running` probe promotes the intent to `Submitted` because
   a running operation is itself durable acknowledgement. An operation ACS
-  does not know (404) resends *only* when the intent still carries the
-  client-supplied operation id — the property that makes a retry
-  repeatable; otherwise the unresolved outcome is retained for
-  reconciliation. An acknowledged operation that later 404s stays
-  `Submitted` and unresolved — it is never re-posted. Explicit client
-  rejections (4xx) fail terminally; 408/429 retry as `Pending`.
+  does not know (404) keeps being polled — the unresolved outcome is
+  retained for reconciliation rather than risk a second POST for a
+  submission that may have been accepted. Retries are preserved only for
+  *known* rejections: a refused send (4xx, 408/429) clears the persisted
+  operation id so the next claim submits again, while explicit client
+  rejections fail terminally.
 - **Send-attempt budget.** `MaxDispatchAttempts` counts send attempts only —
   probing an existing operation does not consume the budget, so an operation
   still running past the limit keeps being probed instead of being

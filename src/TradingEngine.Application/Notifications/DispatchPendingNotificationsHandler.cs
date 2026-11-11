@@ -107,8 +107,6 @@ public sealed class DispatchPendingNotificationsHandler
             cancellationToken);
 
         bool acknowledged = claim.Status == NotificationStatus.Submitted;
-        bool repeatable = claim.ProviderOperationId
-            == intent.IntentId.ToString("D");
 
         switch (probe.Status)
         {
@@ -137,32 +135,12 @@ public sealed class DispatchPendingNotificationsHandler
                     cancellationToken);
 
             case EmailOperationStatus.Unknown:
-                if (acknowledged)
-                {
-                    return await RecordAndMapAsync(
-                        intent,
-                        claimToken,
-                        NotificationStatus.Submitted,
-                        NotificationAttemptOutcome.Unresolved,
-                        probe.ErrorKind ?? "operation_unknown",
-                        operationId,
-                        probe.ProviderStatus,
-                        DispatchItemOutcome.Ambiguous,
-                        cancellationToken);
-                }
-
-                if (repeatable)
-                {
-                    return await SubmitAsync(
-                        intent,
-                        claimToken,
-                        cancellationToken);
-                }
-
                 return await RecordAndMapAsync(
                     intent,
                     claimToken,
-                    NotificationStatus.Ambiguous,
+                    acknowledged
+                        ? NotificationStatus.Submitted
+                        : NotificationStatus.Ambiguous,
                     NotificationAttemptOutcome.Unresolved,
                     probe.ErrorKind ?? "operation_unknown",
                     operationId,

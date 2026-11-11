@@ -574,15 +574,13 @@ public sealed class RecommendationPipelinePersistenceTests
 
         RecordingEmailSender sender = new();
         sender.SendResults.Enqueue(
-            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+            new EmailSendResult(
+                EmailSendOutcome.TransientFailure, null, "http_429"));
+        sender.SendResults.Enqueue(
+            new EmailSendResult(
+                EmailSendOutcome.TransientFailure, null, "http_429"));
         sender.SendResults.Enqueue(
             new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
-        sender.SendResults.Enqueue(
-            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
-        sender.ProbeResults.Enqueue(
-            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
-        sender.ProbeResults.Enqueue(
-            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
         await RunDispatchAsync(sender);
         await RunDispatchAsync(sender);
         await RunDispatchAsync(sender);
@@ -704,6 +702,53 @@ public sealed class RecommendationPipelinePersistenceTests
     }
 
     [Test]
+    public async Task HandleAsync_WhenTimeoutThenNotFoundsThenRestartThenSucceeded_SendsOnce()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"REX-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        sender.SendResults.Enqueue(
+            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+        await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
+        DispatchRunResult lostFirst = await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
+        DispatchRunResult lostSecond = await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        DispatchRunResult recovered = await RunDispatchAsync(sender);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(sender.Probes, Has.Count.EqualTo(3));
+            Assert.That(
+                lostFirst.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+            Assert.That(
+                lostSecond.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+            Assert.That(
+                recovered.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(IntentStatusCount(instrumentId, "Sent"), Is.EqualTo(1));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Unresolved"),
+                Is.EqualTo(2));
+        });
+    }
+
+    [Test]
     public async Task HandleAsync_WhenOperationPollsThreeTimes_RecordsZeroFailures()
     {
         Guid instrumentId = await InsertInstrumentAsync($"POLL-{_suffix}", "Configured");
@@ -769,7 +814,10 @@ public sealed class RecommendationPipelinePersistenceTests
         }
 
         RecordingEmailSender sender = new();
-        for (int index = 0; index < 100; index++)
+        sender.SendResults.Enqueue(
+            new EmailSendResult(
+                EmailSendOutcome.TransientFailure, null, "http_429"));
+        for (int index = 0; index < 160; index++)
         {
             sender.ProbeResults.Enqueue(
                 new EmailOperationProbe(
@@ -778,15 +826,19 @@ public sealed class RecommendationPipelinePersistenceTests
 
         DispatchRunResult first = await RunDispatchAsync(sender);
         DispatchRunResult second = await RunDispatchAsync(sender);
+        await RunDispatchAsync(sender);
 
         Assert.Multiple(() =>
         {
             Assert.That(
                 first.Items[0].IntentId,
                 Is.EqualTo(freshIntentId));
-            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(sender.Sends, Has.Count.EqualTo(2));
             Assert.That(
                 sender.Sends[0].OperationId,
+                Is.EqualTo(freshIntentId));
+            Assert.That(
+                sender.Sends[1].OperationId,
                 Is.EqualTo(freshIntentId));
             Assert.That(
                 sender.Probes,
@@ -799,13 +851,12 @@ public sealed class RecommendationPipelinePersistenceTests
             }
 
             Assert.That(
-                first.Items.Count(
-                    item => item.Outcome == DispatchItemOutcome.InFlight),
-                Is.EqualTo(49));
+                first.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.RetryPending));
             Assert.That(
                 second.Items.Count(
                     item => item.Outcome == DispatchItemOutcome.InFlight),
-                Is.EqualTo(50));
+                Is.EqualTo(49));
         });
     }
 

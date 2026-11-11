@@ -46,11 +46,13 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
                     Exchange = instrument.Exchange
                 })
             .OrderBy(row =>
-                _context.NotificationAttempts.Count(attempt =>
+                _context.NotificationAttempts.Any(attempt =>
                     attempt.NotificationIntentId == row.Intent.Id
                     && (attempt.Outcome == "Submitted"
                         || attempt.Outcome == "Failed"
-                        || attempt.Outcome == "Ambiguous")))
+                        || attempt.Outcome == "Ambiguous"))
+                    ? 1
+                    : 0)
             .ThenBy(row => row.Intent.UpdatedAt)
             .ThenBy(row => row.Intent.ScheduledFor)
             .ThenBy(row => row.Intent.Id)
@@ -235,9 +237,13 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
                 $"""
                 UPDATE NotificationIntents
                 SET Status = {status},
-                    ProviderOperationId = COALESCE(
-                        {outcome.ProviderOperationId},
-                        ProviderOperationId),
+                    ProviderOperationId =
+                        CASE WHEN {attemptOutcome} = 'Failed'
+                            THEN NULL
+                            ELSE COALESCE(
+                                {outcome.ProviderOperationId},
+                                ProviderOperationId)
+                        END,
                     ClaimToken = NULL,
                     ClaimedUntil = NULL,
                     UpdatedAt = {recordedAt}
