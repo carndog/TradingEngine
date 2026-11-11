@@ -59,8 +59,38 @@ param marketDataQuoteCurrencyMap object = {}
 @secure()
 param priceCollectionExchangeSessions object = {}
 
+@description('Enable the saved-price recommendation evaluator hosted service, exposed as the Recommendations__Enabled app setting.')
+param recommendationsEnabled bool = false
+
+@description('Enable the notification dispatch hosted service, exposed as the Notifications__Enabled app setting.')
+param notificationsEnabled bool = false
+
+@description('Azure Communication Services connection string, exposed as the Notifications__Email__ConnectionString app setting. Supplied at deploy time from environment secrets; empty omits the setting. Never commit a live value.')
+@secure()
+param acsEmailConnectionString string = ''
+
+@description('Sender address on the ACS email domain, exposed as the Notifications__Email__SenderAddress app setting, for example DoNotReply@<resource>.azurecomm.net.')
+param acsEmailSenderAddress string = ''
+
+@description('Comma-separated recipient addresses for recommendation emails, flattened into indexed Notifications__Email__RecipientAddresses__* app settings. Supplied at deploy time from environment secrets; an empty value emits no settings. Never commit live values.')
+@secure()
+param acsEmailRecipientAddresses string = ''
+
 @description('Tags applied to the resources.')
 param tags object
+
+var emailRecipientList = filter(
+  map(split(acsEmailRecipientAddresses, ','), entry => trim(entry)),
+  entry => length(entry) > 0)
+
+var emailRecipientSettings = reduce(
+  range(0, length(emailRecipientList)),
+  {},
+  (accumulated, index) => union(
+    accumulated,
+    {
+      'Notifications__Email__RecipientAddresses__${index}': emailRecipientList[index]
+    }))
 
 var exchangeMapSettings = reduce(
   items(marketDataExchangeMap),
@@ -174,7 +204,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions)) {
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || recommendationsEnabled || notificationsEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions) || acsEmailConnectionString != '' || acsEmailSenderAddress != '' || !empty(acsEmailRecipientAddresses)) {
   parent: webApp
   name: 'appsettings'
   properties: union(
@@ -212,6 +242,27 @@ resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (trading
     priceCollectionEnabled
       ? {
           PriceCollection__Enabled: 'true'
+        }
+      : {},
+    acsEmailConnectionString != ''
+      ? {
+          Notifications__Email__ConnectionString: acsEmailConnectionString
+        }
+      : {},
+    acsEmailSenderAddress != ''
+      ? {
+          Notifications__Email__SenderAddress: acsEmailSenderAddress
+        }
+      : {},
+    emailRecipientSettings,
+    recommendationsEnabled
+      ? {
+          Recommendations__Enabled: 'true'
+        }
+      : {},
+    notificationsEnabled
+      ? {
+          Notifications__Enabled: 'true'
         }
       : {}
   )

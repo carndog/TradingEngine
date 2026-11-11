@@ -23,6 +23,7 @@ internal static class PriceCollectionServiceCollectionExtensions
             .Get<PriceCollectionOptions>() ?? new PriceCollectionOptions();
 
         services.AddSingleton(options);
+        services.TryAddSingleton<PriceCollectionTelemetry>();
 
         if (options.Enabled is false)
         {
@@ -66,6 +67,7 @@ internal static class PriceCollectionServiceCollectionExtensions
                 provider.GetRequiredService<IServiceScopeFactory>(),
                 provider.GetRequiredService<TimeProvider>(),
                 provider.GetRequiredService<ILogger<PriceCollectionHostedService>>(),
+                provider.GetRequiredService<PriceCollectionTelemetry>(),
                 options.PollIntervalSeconds));
 
         return services;

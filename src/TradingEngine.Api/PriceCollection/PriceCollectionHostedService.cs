@@ -7,17 +7,20 @@ internal sealed class PriceCollectionHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<PriceCollectionHostedService> _logger;
+    private readonly PriceCollectionTelemetry _telemetry;
     private readonly int _pollIntervalSeconds;
 
     public PriceCollectionHostedService(
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         ILogger<PriceCollectionHostedService> logger,
+        PriceCollectionTelemetry telemetry,
         int pollIntervalSeconds)
     {
         _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
         _pollIntervalSeconds = pollIntervalSeconds;
     }
 
@@ -100,6 +103,7 @@ internal sealed class PriceCollectionHostedService : BackgroundService
                     break;
                 default:
                     failed++;
+                    _telemetry.RecordFailures(1);
                     break;
             }
         }

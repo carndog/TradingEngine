@@ -44,3 +44,12 @@ param tags = {
   environment: 'dev'
   owner: 'jason'
 }
+
+// The saved-price recommendation evaluator, the notification dispatcher, the
+// ACS email connection settings and the pipeline failure alerts are
+// intentionally absent for now: they stay disabled until the issue-11 rollout,
+// when enableRecommendations, enableNotifications and
+// enablePipelineFailureAlerts are switched on and the ACS values are supplied
+// at deploy time from GitHub environment secrets (acsEmailConnectionString,
+// acsEmailSenderAddress and acsEmailRecipientAddresses), which must never be
+// committed to this repository.

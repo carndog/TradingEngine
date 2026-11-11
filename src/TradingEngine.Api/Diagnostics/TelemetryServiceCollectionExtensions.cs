@@ -6,7 +6,9 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using TradingEngine.Api.PriceCollection;
 using TradingEngine.Api.RateLimiting;
+using TradingEngine.Api.Recommendations;
 using TradingEngine.Contracts.Diagnostics;
 
 namespace TradingEngine.Api.Diagnostics;
@@ -135,6 +137,7 @@ internal static class TelemetryServiceCollectionExtensions
     {
         services.ConfigureOpenTelemetryTracerProvider((_, tracerProviderBuilder) =>
             tracerProviderBuilder
+                .AddSource(RecommendationTelemetry.ActivitySourceName)
                 .AddProcessor(new TelemetryEnrichmentProcessor(identity, environmentName))
                 .AddProcessor(new SensitiveDataTelemetryProcessor()));
 
@@ -144,7 +147,10 @@ internal static class TelemetryServiceCollectionExtensions
                 .AddProcessor(new SensitiveDataLogProcessor()));
 
         services.ConfigureOpenTelemetryMeterProvider((_, meterProviderBuilder) =>
-            meterProviderBuilder.AddMeter(RateLimitingTelemetry.MeterName));
+            meterProviderBuilder
+                .AddMeter(RateLimitingTelemetry.MeterName)
+                .AddMeter(RecommendationTelemetry.MeterName)
+                .AddMeter(PriceCollectionTelemetry.MeterName));
 
         services.Configure<AspNetCoreTraceInstrumentationOptions>(options =>
             options.RecordException = false);

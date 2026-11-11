@@ -39,6 +39,26 @@ public sealed class TradingEngineDbContext : DbContext
         get { return Set<PriceCollectionAttemptRow>(); }
     }
 
+    internal DbSet<EvaluationCheckpointRow> RecommendationCheckpoints
+    {
+        get { return Set<EvaluationCheckpointRow>(); }
+    }
+
+    internal DbSet<NotificationIntentRow> NotificationIntents
+    {
+        get { return Set<NotificationIntentRow>(); }
+    }
+
+    internal DbSet<NotificationIntentMatchRow> NotificationIntentMatches
+    {
+        get { return Set<NotificationIntentMatchRow>(); }
+    }
+
+    internal DbSet<NotificationAttemptRow> NotificationAttempts
+    {
+        get { return Set<NotificationAttemptRow>(); }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(TradingEngineDbContext).Assembly);

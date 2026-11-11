@@ -36,6 +36,25 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.ToTable("ChartAnalysisDefinitions", (string)null);
                 });
 
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.EvaluationCheckpointRow", b =>
+                {
+                    b.Property<Guid>("WatchedInstrumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("EstablishedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<DateTime>("LastProcessedScheduledFor")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.HasKey("WatchedInstrumentId");
+
+                    b.ToTable("RecommendationCheckpoints", (string)null);
+                });
+
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRevisionRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -120,6 +139,185 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("UX_MonitoringRules_WatchedInstrumentId");
 
                     b.ToTable("MonitoringRules", (string)null);
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationAttemptRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("AttemptedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("ErrorKind")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("NotificationIntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<string>("ProviderOperationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ProviderStatus")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationIntentId")
+                        .HasDatabaseName("IX_NotificationAttempts_NotificationIntentId");
+
+                    b.ToTable("NotificationAttempts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_NotificationAttempts_Outcome", "[Outcome] IN ('Submitted', 'Failed', 'Ambiguous', 'ResolvedSucceeded', 'ResolvedRejected', 'Unresolved', 'Suppressed')");
+                        });
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ActionId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Condition")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<decimal>("CurrentPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal>("Level")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal>("Lower")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<Guid>("NotificationIntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("PreviousPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal>("Upper")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("ZoneId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationIntentId")
+                        .HasDatabaseName("IX_NotificationIntentMatches_NotificationIntentId");
+
+                    b.ToTable("NotificationIntentMatches", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_NotificationIntentMatches_Condition", "[Condition] IN ('BuyZone', 'SupportLoss', 'Breakout')");
+                        });
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ClaimToken")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ClaimedUntil")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<decimal?>("CurrentAsk")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal?>("CurrentBid")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<Guid>("MonitoringRuleRevisionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("PreviousScheduledFor")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("PriceBasis")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<string>("ProviderOperationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("QuoteCurrency")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime>("ScheduledFor")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<Guid>("WatchedInstrumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "ScheduledFor")
+                        .HasDatabaseName("IX_NotificationIntents_Status_ScheduledFor");
+
+                    b.HasIndex("WatchedInstrumentId", "ScheduledFor")
+                        .IsUnique()
+                        .HasDatabaseName("UX_NotificationIntents_WatchedInstrumentId_ScheduledFor");
+
+                    b.ToTable("NotificationIntents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_NotificationIntents_PriceBasis", "[PriceBasis] IN ('Bid', 'Ask')");
+
+                            t.HasCheckConstraint("CK_NotificationIntents_Reason", "[Reason] IN ('ConditionsTriggered')");
+
+                            t.HasCheckConstraint("CK_NotificationIntents_Status", "[Status] IN ('Pending', 'Ambiguous', 'Sent', 'Failed')");
+                        });
                 });
 
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.PriceCollectionAttemptRow", b =>
@@ -325,6 +523,17 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.Navigation("Instrument");
                 });
 
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.EvaluationCheckpointRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                        .WithMany()
+                        .HasForeignKey("WatchedInstrumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Instrument");
+                });
+
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRevisionRow", b =>
                 {
                     b.HasOne("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", "Rule")
@@ -341,6 +550,39 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
                         .WithOne()
                         .HasForeignKey("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", "WatchedInstrumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Instrument");
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationAttemptRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", "Intent")
+                        .WithMany()
+                        .HasForeignKey("NotificationIntentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Intent");
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", "Intent")
+                        .WithMany("Matches")
+                        .HasForeignKey("NotificationIntentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Intent");
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                        .WithMany()
+                        .HasForeignKey("WatchedInstrumentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -372,6 +614,11 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", b =>
                 {
                     b.Navigation("Revisions");
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", b =>
+                {
+                    b.Navigation("Matches");
                 });
 
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", b =>
