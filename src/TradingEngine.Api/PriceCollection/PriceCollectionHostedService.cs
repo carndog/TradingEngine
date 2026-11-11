@@ -67,6 +67,7 @@ internal sealed class PriceCollectionHostedService : BackgroundService
         }
         catch (Exception exception)
         {
+            _telemetry.RecordFailures(1);
             _logger.LogError(
                 exception,
                 "Price collection run failed unexpectedly; the next scheduled tick will retry.");

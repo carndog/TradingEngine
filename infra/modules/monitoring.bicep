@@ -75,10 +75,10 @@ resource priceCollectionFailureAlert 'Microsoft.Insights/scheduledQueryRules@202
     criteria: {
       allOf: [
         {
-          query: 'customMetrics | where name == "tradingengine.price_collection.failures"'
+          query: 'customMetrics | where name == "tradingengine.price_collection.failures" | summarize TotalFailures = sum(value) | where TotalFailures >= ${pipelineFailureAlertThreshold}'
           timeAggregation: 'Count'
           operator: 'GreaterThanOrEqual'
-          threshold: pipelineFailureAlertThreshold
+          threshold: 1
         }
       ]
     }
@@ -105,10 +105,10 @@ resource notificationFailureAlert 'Microsoft.Insights/scheduledQueryRules@2021-0
     criteria: {
       allOf: [
         {
-          query: 'customMetrics | where name == "tradingengine.notifications.failures"'
+          query: 'customMetrics | where name == "tradingengine.notifications.failures" | summarize TotalFailures = sum(value) | where TotalFailures >= ${pipelineFailureAlertThreshold}'
           timeAggregation: 'Count'
           operator: 'GreaterThanOrEqual'
-          threshold: pipelineFailureAlertThreshold
+          threshold: 1
         }
       ]
     }

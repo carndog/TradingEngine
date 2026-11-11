@@ -74,21 +74,32 @@ through manual repair — the checkpoint advance is committed anyway
 `ErrorKind` (never a raw error payload).
 
 - **Claims.** A worker claims an intent with a token and lease
-  (`ClaimToken`/`ClaimedUntil`); only that token may record the outcome.
-  Expired claims become dispatchable again, so a crashed worker's intents
-  recover without manual work.
+  (`ClaimToken`/`ClaimedUntil`); the lease is calculated at claim time and the
+  claim atomically returns the row's *current* status and provider operation
+  id, so a worker acting on a stale listing reconciles instead of resending.
+  Only the claim token may record the outcome, and expired claims become
+  dispatchable again, so a crashed worker's intents recover without manual
+  work.
 - **Operation id.** The ACS send uses the *intent id* as the client-supplied
-  operation id, so resubmission after an ambiguous outcome cannot create a
-  second ACS operation for the same intent.
+  operation id, persisted on the intent *before* the external call
+  (`TryBeginSubmissionAsync`). A crash after ACS accepts but before the
+  outcome is recorded leaves the intent `Pending` with an operation id; the
+  next claim sees that state and probes rather than resending.
+- **Acceptance is not delivery.** A `Started` response records a `Submitted`
+  attempt and leaves the intent `Ambiguous` with the operation id; the next
+  dispatch probes `EmailSendOperation` until ACS reports `Succeeded`,
+  `Failed` or `Canceled` (a still-running operation reports `InFlight`,
+  never resend).
 - **Ambiguous outcomes.** A timeout, transport error or 5xx after submission
-  marks the intent `Ambiguous` instead of resending. The next dispatch probes
-  `EmailSendOperation` for the recorded operation id: `Succeeded` resolves to
-  `Sent`, `Rejected` resolves to `Failed`, still in-flight or a failed probe
-  stays `Ambiguous`, and only a genuinely unknown operation is resent (with
-  the same operation id). Explicit client rejections (4xx) fail terminally;
-  408/429 retry as `Pending`.
-- **Suppression.** After `MaxDispatchAttempts` the intent is marked `Failed`
-  with a `Suppressed` attempt row, so a poison intent cannot loop forever.
+  marks the intent `Ambiguous` instead of resending. Probes resolve
+  `Succeeded` → `Sent` and `Rejected` → `Failed`; an operation ACS does not
+  know (404) resends with the same operation id; explicit client rejections
+  (4xx) fail terminally; 408/429 retry as `Pending`.
+- **Send-attempt budget.** `MaxDispatchAttempts` counts send attempts only —
+  probing an existing operation does not consume the budget, so an operation
+  still running past the limit keeps being probed instead of being
+  suppressed. Only a further *send* is refused once the budget is exhausted,
+  recording a `Suppressed` attempt row and `Failed` status.
 
 The email renders the instrument symbol and exchange, the observed price at
 the configured basis with its quote currency, each evaluated range (lower –
@@ -131,11 +142,18 @@ so SQL and log telemetry correlate under one trace per run, and run summaries
 log invocation ids and counts.
 
 Bicep alert rules (`enablePipelineFailureAlerts`) watch the two failure
-counters via scheduled queries over `customMetrics` with a configurable
-threshold. Telemetry deliberately carries only instrument ids, counts,
-outcome kinds and provider operation ids — credentials, recipient addresses,
-rule XML and zone contents are never logged; the existing sensitive-data
-processors scrub connection-string material from exceptions.
+counters via scheduled queries that `summarize sum(value)` over
+`customMetrics` — summed increments, not row counts, so several failures
+aggregated into one export row still count fully — against a configurable
+threshold. Run-level exceptions in all three hosted services also record a
+failure increment. Each committed intent is logged with its intent,
+instrument, slot and revision identifiers, and every dispatch outcome logs
+the same four fields, so one crossing can be traced from collection through
+evaluation to the email outcome. Telemetry deliberately carries only
+instrument ids, counts, outcome kinds and provider operation ids —
+credentials, recipient addresses, rule XML and zone contents are never
+logged; the existing sensitive-data processors scrub connection-string
+material from exceptions.
 
 ## Migration
 

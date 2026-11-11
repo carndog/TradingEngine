@@ -7,6 +7,9 @@ public sealed record InstrumentEvaluationResult(
     int Evaluated,
     int NoAction,
     int SkippedNoRevision,
-    int IntentsCreated,
+    IReadOnlyList<CommittedIntent> CommittedIntents,
     Instant? FailedSlot,
-    string? FailureCode);
+    string? FailureCode)
+{
+    public int IntentsCreated => CommittedIntents.Count;
+}

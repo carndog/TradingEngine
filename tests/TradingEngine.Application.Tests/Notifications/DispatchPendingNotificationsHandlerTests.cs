@@ -28,7 +28,7 @@ public sealed class DispatchPendingNotificationsHandlerTests
     }
 
     [Test]
-    public async Task HandleAsync_WhenSendAccepted_RecordsSentSubmission()
+    public async Task HandleAsync_WhenSendAccepted_MarksSubmittedPendingProbe()
     {
         PendingNotification intent = Pending();
         _store.Pending.Add(intent);
@@ -40,13 +40,15 @@ public sealed class DispatchPendingNotificationsHandlerTests
         Assert.Multiple(() =>
         {
             Assert.That(result.Items, Has.Count.EqualTo(1));
-            Assert.That(result.Items[0].Outcome, Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Submitted));
             Assert.That(_sender.Sends, Has.Count.EqualTo(1));
             Assert.That(_sender.Sends[0].OperationId, Is.EqualTo(intent.IntentId));
             Assert.That(_store.Recorded, Has.Count.EqualTo(1));
 
             DispatchOutcome recorded = _store.Recorded[0];
-            Assert.That(recorded.Status, Is.EqualTo(NotificationStatus.Sent));
+            Assert.That(recorded.Status, Is.EqualTo(NotificationStatus.Ambiguous));
             Assert.That(
                 recorded.AttemptOutcome,
                 Is.EqualTo(NotificationAttemptOutcome.Submitted));
@@ -118,7 +120,9 @@ public sealed class DispatchPendingNotificationsHandlerTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(result.Items[0].Outcome, Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Submitted));
             Assert.That(_sender.Sends, Has.Count.EqualTo(1));
             Assert.That(_sender.Sends[0].OperationId, Is.EqualTo(intent.IntentId));
         });
@@ -282,6 +286,89 @@ public sealed class DispatchPendingNotificationsHandlerTests
                 Is.EqualTo(DispatchItemOutcome.Ambiguous));
             Assert.That(
                 _store.Recorded[0].Status,
+                Is.EqualTo(NotificationStatus.Ambiguous));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenPendingWithPersistedOperation_ProbesBeforeResend()
+    {
+        PendingNotification intent = Pending();
+        _store.Pending.Add(intent);
+        string operationId = intent.IntentId.ToString("D");
+        _store.ClaimOverrides[intent.IntentId] = new NotificationClaim(
+            NotificationStatus.Pending,
+            operationId);
+        _sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+
+        DispatchRunResult result = await CreateHandler().HandleAsync(
+            new DispatchPendingNotifications(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items[0].Outcome, Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(_sender.Sends, Is.Empty);
+            Assert.That(_sender.Probes, Has.Count.EqualTo(1));
+            Assert.That(_sender.Probes[0], Is.EqualTo(operationId));
+            Assert.That(
+                _store.Recorded[0].Status,
+                Is.EqualTo(NotificationStatus.Sent));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenClaimReturnsAmbiguousOnStaleCandidate_ProbesNotSends()
+    {
+        PendingNotification intent = Pending();
+        _store.Pending.Add(intent);
+        _store.ClaimOverrides[intent.IntentId] = new NotificationClaim(
+            NotificationStatus.Ambiguous,
+            intent.IntentId.ToString("D"));
+        _sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+
+        DispatchRunResult result = await CreateHandler().HandleAsync(
+            new DispatchPendingNotifications(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items[0].Outcome, Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(_sender.Sends, Is.Empty);
+            Assert.That(_sender.Probes, Has.Count.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenOperationRunningAfterAttemptLimit_StaysAmbiguousWithoutSend()
+    {
+        PendingNotification intent = Pending(
+            NotificationStatus.Ambiguous,
+            attemptCount: 3);
+        _store.Pending.Add(intent);
+        _sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.InFlight, "Running", null));
+
+        DispatchRunResult result = await CreateHandler().HandleAsync(
+            new DispatchPendingNotifications(),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+            Assert.That(_sender.Sends, Is.Empty);
+            Assert.That(
+                _store.Recorded[0].Status,
+                Is.EqualTo(NotificationStatus.Ambiguous));
+            Assert.That(
+                _store.Recorded[0].AttemptOutcome,
+                Is.EqualTo(NotificationAttemptOutcome.Unresolved));
+            Assert.That(
+                _store.Pending[0].Status,
                 Is.EqualTo(NotificationStatus.Ambiguous));
         });
     }

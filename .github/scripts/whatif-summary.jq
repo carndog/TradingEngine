@@ -1,5 +1,5 @@
 def redacted_path($path):
-  if ($path // "") | test("EToro__MarketData__|PriceCollection__ExchangeSessions__")
+  if ($path // "") | test("EToro__MarketData__|PriceCollection__ExchangeSessions__|Notifications__Email__")
   then "(private app setting path redacted)"
   else ($path // "?")
   end;

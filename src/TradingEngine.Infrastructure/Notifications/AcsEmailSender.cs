@@ -90,7 +90,7 @@ public sealed class AcsEmailSender : IEmailSender
 
             string providerStatus = operation.HasValue
                 ? operation.Value.Status.ToString()
-                : "Unknown";
+                : "Running";
 
             return new EmailOperationProbe(
                 MapStatus(operation),
@@ -103,6 +103,14 @@ public sealed class AcsEmailSender : IEmailSender
                 EmailOperationStatus.Unknown,
                 null,
                 "operation_unknown");
+        }
+        catch (RequestFailedException exception) when (
+            exception.Status is >= 200 and < 300)
+        {
+            return new EmailOperationProbe(
+                EmailOperationStatus.Rejected,
+                exception.ErrorCode ?? "Failed",
+                "provider_rejected");
         }
         catch (OperationCanceledException) when (
             cancellationToken.IsCancellationRequested is false)
@@ -130,9 +138,14 @@ public sealed class AcsEmailSender : IEmailSender
 
     private static EmailOperationStatus MapStatus(EmailSendOperation operation)
     {
+        if (operation.HasCompleted is false)
+        {
+            return EmailOperationStatus.InFlight;
+        }
+
         if (operation.HasValue is false)
         {
-            return EmailOperationStatus.Unknown;
+            return EmailOperationStatus.ProbeFailed;
         }
 
         EmailSendStatus status = operation.Value.Status;

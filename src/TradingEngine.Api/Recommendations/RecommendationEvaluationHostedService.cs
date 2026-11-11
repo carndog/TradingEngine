@@ -75,6 +75,7 @@ internal sealed class RecommendationEvaluationHostedService : BackgroundService
         }
         catch (Exception exception)
         {
+            _telemetry.RecordEvaluations(1, "failed");
             _logger.LogError(
                 exception,
                 "Saved-price evaluation run failed unexpectedly; " +
@@ -94,6 +95,18 @@ internal sealed class RecommendationEvaluationHostedService : BackgroundService
                 item.FailureCode is null ? 0 : 1,
                 "failed");
             _telemetry.RecordIntentsCreated(item.IntentsCreated);
+
+            foreach (CommittedIntent committed in item.CommittedIntents)
+            {
+                _logger.LogInformation(
+                    "Committed notification intent {IntentId} for instrument " +
+                    "{InstrumentId} at slot {ScheduledFor} under revision " +
+                    "{MonitoringRuleRevisionId}.",
+                    committed.IntentId,
+                    item.InstrumentId,
+                    committed.ScheduledFor,
+                    committed.MonitoringRuleRevisionId);
+            }
         }
     }
 

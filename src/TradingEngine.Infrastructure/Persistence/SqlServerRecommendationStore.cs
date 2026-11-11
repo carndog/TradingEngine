@@ -293,6 +293,7 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
         TriggeredRecommendation intent = commit.Intent!;
         NotificationIntentRow row = new()
         {
+            Id = intent.IntentId,
             WatchedInstrumentId = intent.InstrumentId,
             ScheduledFor = intent.ScheduledFor,
             PreviousScheduledFor = intent.PreviousScheduledFor,

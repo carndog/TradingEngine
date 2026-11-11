@@ -261,6 +261,7 @@ public sealed class EvaluateSavedPricesHandlerTests
         SeedBaseline(T0, 120m);
         AddObservation(T0.Plus(Duration.FromMinutes(1)), 102m);
         _store.Intents[(InstrumentId, T0.Plus(Duration.FromMinutes(1)))] = new TriggeredRecommendation(
+            Guid.CreateVersion7(),
             InstrumentId,
             T0.Plus(Duration.FromMinutes(1)),
             T0,

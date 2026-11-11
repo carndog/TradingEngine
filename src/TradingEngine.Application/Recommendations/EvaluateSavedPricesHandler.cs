@@ -232,7 +232,7 @@ public sealed class EvaluateSavedPricesHandler
         int evaluated = 0;
         int noAction = 0;
         int skippedNoRevision = 0;
-        int intentsCreated = 0;
+        List<CommittedIntent> committedIntents = [];
         Instant? failedSlot = null;
         string? failureCode = null;
         Instant expected = checkpointSlot;
@@ -306,7 +306,10 @@ public sealed class EvaluateSavedPricesHandler
 
             if (committed == EvaluationCommitOutcome.Committed && intent is not null)
             {
-                intentsCreated++;
+                committedIntents.Add(new CommittedIntent(
+                    intent.IntentId,
+                    intent.ScheduledFor,
+                    intent.MonitoringRuleRevisionId));
             }
         }
 
@@ -315,7 +318,7 @@ public sealed class EvaluateSavedPricesHandler
             evaluated,
             noAction,
             skippedNoRevision,
-            intentsCreated,
+            committedIntents,
             failedSlot,
             failureCode);
     }
@@ -361,6 +364,7 @@ public sealed class EvaluateSavedPricesHandler
         EvaluationResult result)
     {
         return new TriggeredRecommendation(
+            Guid.CreateVersion7(),
             instrumentId,
             result.ObservedAt,
             result.PreviousObservedAt,
@@ -374,7 +378,14 @@ public sealed class EvaluateSavedPricesHandler
 
     private static InstrumentEvaluationResult Idle(Guid instrumentId)
     {
-        return new InstrumentEvaluationResult(instrumentId, 0, 0, 0, 0, null, null);
+        return new InstrumentEvaluationResult(
+            instrumentId,
+            0,
+            0,
+            0,
+            [],
+            null,
+            null);
     }
 
     private static InstrumentEvaluationResult Failed(
@@ -387,7 +398,7 @@ public sealed class EvaluateSavedPricesHandler
             0,
             0,
             0,
-            0,
+            [],
             slot,
             errorCode);
     }

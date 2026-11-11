@@ -7,6 +7,7 @@ namespace TradingEngine.Application.Tests.Notifications;
 internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
 {
     private readonly object _gate = new();
+    private readonly Dictionary<Guid, string?> _providerOperations = [];
 
     public List<PendingNotification> Pending { get; } = [];
 
@@ -15,6 +16,10 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
     public HashSet<Guid> Unclaimable { get; } = [];
 
     public HashSet<Guid> Unrecordable { get; } = [];
+
+    public HashSet<Guid> Unsubmittable { get; } = [];
+
+    public Dictionary<Guid, NotificationClaim> ClaimOverrides { get; } = [];
 
     public Task<IReadOnlyList<PendingNotification>> ListDispatchableAsync(
         int maxCount,
@@ -33,7 +38,7 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
         }
     }
 
-    public Task<bool> TryClaimAsync(
+    public Task<NotificationClaim?> TryClaimAsync(
         Guid intentId,
         Guid claimToken,
         Instant claimedUntil,
@@ -42,7 +47,44 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
     {
         lock (_gate)
         {
-            return Task.FromResult(Unclaimable.Contains(intentId) is false);
+            if (Unclaimable.Contains(intentId))
+            {
+                return Task.FromResult<NotificationClaim?>(null);
+            }
+
+            if (ClaimOverrides.TryGetValue(intentId, out NotificationClaim? overrideClaim))
+            {
+                return Task.FromResult<NotificationClaim?>(overrideClaim);
+            }
+
+            int index = Pending.FindIndex(item => item.IntentId == intentId);
+            if (index < 0)
+            {
+                return Task.FromResult<NotificationClaim?>(null);
+            }
+
+            _providerOperations.TryGetValue(intentId, out string? operationId);
+            return Task.FromResult<NotificationClaim?>(
+                new NotificationClaim(Pending[index].Status, operationId));
+        }
+    }
+
+    public Task<bool> TryBeginSubmissionAsync(
+        Guid intentId,
+        Guid claimToken,
+        string providerOperationId,
+        Instant now,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (Unsubmittable.Contains(intentId))
+            {
+                return Task.FromResult(false);
+            }
+
+            _providerOperations[intentId] = providerOperationId;
+            return Task.FromResult(true);
         }
     }
 
@@ -58,15 +100,25 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
             }
 
             Recorded.Add(outcome);
+            if (outcome.ProviderOperationId is not null)
+            {
+                _providerOperations[outcome.IntentId] = outcome.ProviderOperationId;
+            }
 
             int index = Pending.FindIndex(
                 item => item.IntentId == outcome.IntentId);
             if (index >= 0)
             {
+                bool consumedSendBudget = outcome.AttemptOutcome is
+                    NotificationAttemptOutcome.Submitted
+                    or NotificationAttemptOutcome.Failed
+                    or NotificationAttemptOutcome.Ambiguous;
                 Pending[index] = Pending[index] with
                 {
                     Status = outcome.Status,
-                    AttemptCount = Pending[index].AttemptCount + 1
+                    AttemptCount = consumedSendBudget
+                        ? Pending[index].AttemptCount + 1
+                        : Pending[index].AttemptCount
                 };
             }
 

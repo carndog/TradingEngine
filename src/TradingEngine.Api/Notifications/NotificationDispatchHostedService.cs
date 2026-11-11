@@ -76,6 +76,7 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
         }
         catch (Exception exception)
         {
+            _telemetry.RecordNotificationFailure();
             _logger.LogError(
                 exception,
                 "Notification dispatch run failed unexpectedly; " +
@@ -95,6 +96,16 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
             {
                 _telemetry.RecordNotificationFailure();
             }
+
+            _logger.LogInformation(
+                "Notification intent {IntentId} for instrument {InstrumentId} " +
+                "at slot {ScheduledFor} under revision {MonitoringRuleRevisionId} " +
+                "dispatched: {Outcome}.",
+                item.IntentId,
+                item.InstrumentId,
+                item.ScheduledFor,
+                item.MonitoringRuleRevisionId,
+                outcome);
         }
     }
 

@@ -10,10 +10,17 @@ public interface INotificationIntentStore
         Instant now,
         CancellationToken cancellationToken);
 
-    Task<bool> TryClaimAsync(
+    Task<NotificationClaim?> TryClaimAsync(
         Guid intentId,
         Guid claimToken,
         Instant claimedUntil,
+        Instant now,
+        CancellationToken cancellationToken);
+
+    Task<bool> TryBeginSubmissionAsync(
+        Guid intentId,
+        Guid claimToken,
+        string providerOperationId,
         Instant now,
         CancellationToken cancellationToken);
 

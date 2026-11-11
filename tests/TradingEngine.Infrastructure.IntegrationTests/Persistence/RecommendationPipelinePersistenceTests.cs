@@ -96,6 +96,14 @@ public sealed class RecommendationPipelinePersistenceTests
         RecordingEmailSender sender = new();
         DispatchRunResult dispatch = await RunDispatchAsync(sender);
 
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        DispatchRunResult resolved = await RunDispatchAsync(sender);
+
+        Guid firstIntentId = IntentIdFor(instrumentId, T0.Plus(Duration.FromMinutes(1)));
+
         Assert.Multiple(() =>
         {
             Assert.That(evaluation.Items[0].IntentsCreated, Is.EqualTo(2));
@@ -108,11 +116,31 @@ public sealed class RecommendationPipelinePersistenceTests
 
             Assert.That(dispatch.Items, Has.Count.EqualTo(2));
             Assert.That(
-                dispatch.Items.Count(item => item.Outcome == DispatchItemOutcome.Sent),
+                dispatch.Items.Count(item => item.Outcome == DispatchItemOutcome.Submitted),
                 Is.EqualTo(2));
             Assert.That(sender.Sends, Has.Count.EqualTo(2));
             Assert.That(AttemptCountForStatus(instrumentId, "Submitted"), Is.EqualTo(2));
+
+            Assert.That(sender.Probes, Has.Count.EqualTo(2));
+            Assert.That(sender.Sends, Has.Count.EqualTo(2));
+            Assert.That(
+                resolved.Items.Count(item => item.Outcome == DispatchItemOutcome.Sent),
+                Is.EqualTo(2));
             Assert.That(IntentStatusCount(instrumentId, "Sent"), Is.EqualTo(2));
+
+            CommittedIntent committed = evaluation.Items[0].CommittedIntents
+                .Single(item => item.ScheduledFor == T0.Plus(Duration.FromMinutes(1)));
+            Assert.That(committed.IntentId, Is.EqualTo(firstIntentId));
+            Assert.That(
+                committed.MonitoringRuleRevisionId,
+                Is.EqualTo(RevisionIdFor(instrumentId, T0.Plus(Duration.FromMinutes(1)))));
+            IntentDispatchResult dispatched = dispatch.Items
+                .Single(item => item.IntentId == firstIntentId);
+            Assert.That(dispatched.InstrumentId, Is.EqualTo(instrumentId));
+            Assert.That(dispatched.ScheduledFor, Is.EqualTo(T0.Plus(Duration.FromMinutes(1))));
+            Assert.That(
+                dispatched.MonitoringRuleRevisionId,
+                Is.EqualTo(committed.MonitoringRuleRevisionId));
         });
     }
 
@@ -131,6 +159,12 @@ public sealed class RecommendationPipelinePersistenceTests
 
         RecordingEmailSender sender = new();
         await RunDispatchAsync(sender);
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        await RunDispatchAsync(sender);
+
         EvaluationRunResult replayedEvaluation = await RunEvaluationAsync();
         DispatchRunResult replayedDispatch = await RunDispatchAsync(sender);
 
@@ -169,6 +203,11 @@ public sealed class RecommendationPipelinePersistenceTests
         await Task.WhenAll(first, second);
 
         RecordingEmailSender sender = new();
+        await RunDispatchAsync(sender);
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
         await RunDispatchAsync(sender);
         await RunDispatchAsync(sender);
 
@@ -352,6 +391,7 @@ public sealed class RecommendationPipelinePersistenceTests
                 slot,
                 Instant.FromUtc(2026, 10, 30, 13, 46),
                 new TriggeredRecommendation(
+                    Guid.CreateVersion7(),
                     instrumentId,
                     slot,
                     T0,
@@ -385,8 +425,8 @@ public sealed class RecommendationPipelinePersistenceTests
         Instant now = Instant.FromUtc(2026, 10, 30, 13, 50);
         Instant until = now.Plus(Duration.FromSeconds(120));
 
-        bool claimedFirst;
-        bool claimedSecond;
+        NotificationClaim? claimedFirst;
+        NotificationClaim? claimedSecond;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerNotificationIntentStore store = new(context);
@@ -404,7 +444,7 @@ public sealed class RecommendationPipelinePersistenceTests
                 CancellationToken.None);
         }
 
-        bool claimedAfterExpiry;
+        NotificationClaim? claimedAfterExpiry;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerNotificationIntentStore store = new(context);
@@ -418,9 +458,143 @@ public sealed class RecommendationPipelinePersistenceTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(claimedFirst, Is.True);
-            Assert.That(claimedSecond, Is.False);
-            Assert.That(claimedAfterExpiry, Is.True);
+            Assert.That(claimedFirst, Is.Not.Null);
+            Assert.That(claimedFirst!.Status, Is.EqualTo(NotificationStatus.Pending));
+            Assert.That(claimedSecond, Is.Null);
+            Assert.That(claimedAfterExpiry, Is.Not.Null);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenOutcomeLostAfterAcceptance_ProbesOnRecovery()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"LOST-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            DispatchPendingNotificationsHandler handler = new(
+                new SuppressingOutcomeStore(context),
+                sender,
+                new RecommendationEmailRenderer(),
+                SystemClock.Instance,
+                new NotificationOptions { MaxDispatchAttempts = 3 });
+            DispatchRunResult crashed = await handler.HandleAsync(
+                new DispatchPendingNotifications(),
+                CancellationToken.None);
+            Assert.That(
+                crashed.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.ClaimLost));
+        }
+
+        await ExecuteNonQueryAsync(
+            "UPDATE NotificationIntents SET ClaimedUntil = '2000-01-01T00:00:00.0000000' " +
+            "WHERE WatchedInstrumentId = @id",
+            ("@id", instrumentId));
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        DispatchRunResult recovered = await RunDispatchAsync(sender);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(sender.Probes, Has.Count.EqualTo(1));
+            Assert.That(
+                recovered.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(IntentStatusCount(instrumentId, "Sent"), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task TryClaimAsync_WhenCandidateWentAmbiguous_ReturnsCurrentState()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"STALE-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        sender.SendResults.Enqueue(
+            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+        await RunDispatchAsync(sender);
+
+        Guid intentId = IntentIdFor(instrumentId, T0.Plus(Duration.FromMinutes(1)));
+        Instant now = Instant.FromUtc(2026, 10, 30, 13, 50);
+
+        NotificationClaim? claim;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerNotificationIntentStore store = new(context);
+            claim = await store.TryClaimAsync(
+                intentId,
+                Guid.NewGuid(),
+                now.Plus(Duration.FromSeconds(120)),
+                now,
+                CancellationToken.None);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(claim, Is.Not.Null);
+            Assert.That(claim!.Status, Is.EqualTo(NotificationStatus.Ambiguous));
+            Assert.That(
+                claim.ProviderOperationId,
+                Is.EqualTo(intentId.ToString("D")));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenOperationRunningAfterAttemptLimit_StaysAmbiguous()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"RUN-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        sender.SendResults.Enqueue(
+            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+        sender.SendResults.Enqueue(
+            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+        sender.SendResults.Enqueue(
+            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
+        await RunDispatchAsync(sender);
+        await RunDispatchAsync(sender);
+        await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.InFlight, "Running", null));
+        DispatchRunResult limited = await RunDispatchAsync(sender);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                limited.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+            Assert.That(sender.Sends, Has.Count.EqualTo(3));
+            Assert.That(IntentStatusCount(instrumentId, "Ambiguous"), Is.EqualTo(1));
+            Assert.That(IntentStatusCount(instrumentId, "Failed"), Is.EqualTo(0));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Suppressed"),
+                Is.EqualTo(0));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Unresolved"),
+                Is.EqualTo(1));
         });
     }
 
@@ -728,6 +902,61 @@ public sealed class RecommendationPipelinePersistenceTests
     private string ConnectionStringFor()
     {
         return $"{_connectionString};Database={Database}";
+    }
+
+    private sealed class SuppressingOutcomeStore : INotificationIntentStore
+    {
+        private readonly SqlServerNotificationIntentStore _inner;
+
+        public SuppressingOutcomeStore(TradingEngineDbContext context)
+        {
+            _inner = new SqlServerNotificationIntentStore(context);
+        }
+
+        public Task<IReadOnlyList<PendingNotification>> ListDispatchableAsync(
+            int maxCount,
+            Instant now,
+            CancellationToken cancellationToken)
+        {
+            return _inner.ListDispatchableAsync(maxCount, now, cancellationToken);
+        }
+
+        public Task<NotificationClaim?> TryClaimAsync(
+            Guid intentId,
+            Guid claimToken,
+            Instant claimedUntil,
+            Instant now,
+            CancellationToken cancellationToken)
+        {
+            return _inner.TryClaimAsync(
+                intentId,
+                claimToken,
+                claimedUntil,
+                now,
+                cancellationToken);
+        }
+
+        public Task<bool> TryBeginSubmissionAsync(
+            Guid intentId,
+            Guid claimToken,
+            string providerOperationId,
+            Instant now,
+            CancellationToken cancellationToken)
+        {
+            return _inner.TryBeginSubmissionAsync(
+                intentId,
+                claimToken,
+                providerOperationId,
+                now,
+                cancellationToken);
+        }
+
+        public Task<bool> RecordOutcomeAsync(
+            DispatchOutcome outcome,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(false);
+        }
     }
 
     private sealed class RecordingEmailSender : IEmailSender

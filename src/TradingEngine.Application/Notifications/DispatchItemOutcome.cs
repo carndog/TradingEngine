@@ -8,5 +8,6 @@ public enum DispatchItemOutcome
     Ambiguous = 4,
     Suppressed = 5,
     ClaimLost = 6,
-    ClaimSkipped = 7
+    ClaimSkipped = 7,
+    Submitted = 8
 }

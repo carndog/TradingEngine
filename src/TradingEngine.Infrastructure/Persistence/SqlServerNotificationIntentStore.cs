@@ -1,3 +1,6 @@
+using System.Data;
+using System.Data.Common;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using NodaTime;
@@ -62,7 +65,11 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
 
         List<AttemptCountRow> attemptCounts = await _context.NotificationAttempts
             .AsNoTracking()
-            .Where(attempt => intentIds.Contains(attempt.NotificationIntentId))
+            .Where(attempt =>
+                intentIds.Contains(attempt.NotificationIntentId)
+                && (attempt.Outcome == "Submitted"
+                    || attempt.Outcome == "Failed"
+                    || attempt.Outcome == "Ambiguous"))
             .GroupBy(attempt => attempt.NotificationIntentId)
             .Select(group => new AttemptCountRow
             {
@@ -86,7 +93,7 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
         return pending;
     }
 
-    public async Task<bool> TryClaimAsync(
+    public async Task<NotificationClaim?> TryClaimAsync(
         Guid intentId,
         Guid claimToken,
         Instant claimedUntil,
@@ -100,19 +107,70 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
             .Require(now, nameof(now))
             .ToDateTimeUtc();
 
-        int claimed = await _context.Database.ExecuteSqlAsync(
+        DbConnection connection = _context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using DbCommand command = connection.CreateCommand();
+        command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+        command.CommandText =
+            "UPDATE NotificationIntents " +
+            "SET ClaimToken = @claimToken, " +
+            "    ClaimedUntil = @claimedUntil, " +
+            "    UpdatedAt = @now " +
+            "OUTPUT INSERTED.Status, INSERTED.ProviderOperationId " +
+            "WHERE Id = @intentId " +
+            "    AND Status IN ('Pending', 'Ambiguous') " +
+            "    AND (ClaimedUntil IS NULL OR ClaimedUntil <= @now)";
+        command.Parameters.Add(new SqlParameter("@claimToken", claimToken));
+        command.Parameters.Add(new SqlParameter("@claimedUntil", untilUtc));
+        command.Parameters.Add(new SqlParameter("@now", nowUtc));
+        command.Parameters.Add(new SqlParameter("@intentId", intentId));
+
+        await using DbDataReader reader = await command.ExecuteReaderAsync(
+            cancellationToken);
+        if (await reader.ReadAsync(cancellationToken) is false)
+        {
+            return null;
+        }
+
+        string status = reader.GetString(0);
+        string? providerOperationId = await reader.IsDBNullAsync(1, cancellationToken)
+            ? null
+            : reader.GetString(1);
+
+        return new NotificationClaim(
+            Enum.Parse<NotificationStatus>(status),
+            providerOperationId);
+    }
+
+    public async Task<bool> TryBeginSubmissionAsync(
+        Guid intentId,
+        Guid claimToken,
+        string providerOperationId,
+        Instant now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerOperationId);
+
+        DateTime nowUtc = PersistedInstant
+            .Require(now, nameof(now))
+            .ToDateTimeUtc();
+
+        int updated = await _context.Database.ExecuteSqlAsync(
             $"""
             UPDATE NotificationIntents
-            SET ClaimToken = {claimToken},
-                ClaimedUntil = {untilUtc},
+            SET ProviderOperationId = {providerOperationId},
                 UpdatedAt = {nowUtc}
             WHERE Id = {intentId}
+                AND ClaimToken = {claimToken}
                 AND Status IN ('Pending', 'Ambiguous')
-                AND (ClaimedUntil IS NULL OR ClaimedUntil <= {nowUtc})
             """,
             cancellationToken);
 
-        return claimed > 0;
+        return updated > 0;
     }
 
     public async Task<bool> RecordOutcomeAsync(
