@@ -159,6 +159,7 @@ Logs and metrics from the same run are under **Explore → Loki** (`{service_nam
 | Was an exception thrown? | `exceptions` joined on `operation_Id`; also **Failures** blade |
 | Why did deployment fail? | GitHub Actions workflow run log (build/test/publish/deploy steps); App Service → **Deployment Center → Logs**; `az webapp log deployment show`; subscription **Activity Log** and `az deployment sub show -n <name>` for the Bicep deployment |
 | Container/platform problems? | App Service → **Log stream** (application stdout/stderr on Linux); `az webapp log download` (`/home/LogFiles`: container console output plus HTTP logs) |
+| Did a recommendation/dispatch run fail? | `customMetrics` counters `tradingengine.recommendations.evaluations`, `tradingengine.notifications.dispatch_attempts`, `tradingengine.notifications.failures` and `tradingengine.price_collection.failures`; each run's SQL and logs correlate under the `recommendations.evaluate.run` and `notifications.dispatch.run` operation names |
 
 Deployment logs are platform records of the publish/deploy action; application telemetry is what the running process emits. Check both — a failed zip deploy produces deployment logs but no telemetry, while a crashed process produces application logs and the startup event may be absent.
 
@@ -216,6 +217,17 @@ requests
     customDimensions["application.version"],
     customDimensions["application.commit"],
     customDimensions["deployment.environment"]
+| order by timestamp desc
+```
+
+Pipeline failure counters (the scheduled-query alerts in `infra/modules/monitoring.bicep` watch these):
+
+```kusto
+customMetrics
+| where name in (
+    "tradingengine.price_collection.failures",
+    "tradingengine.notifications.failures")
+| project timestamp, name, value
 | order by timestamp desc
 ```
 

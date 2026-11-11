@@ -29,6 +29,29 @@ jobs:
       - name: Build Bicep
         run: az bicep build --file infra/main.bicep --stdout > /dev/null
 
+      - name: Validate enabled pipeline parameters with synthetic values
+        run: |
+          cat > infra/environments/synthetic-pipeline.bicepparam <<'EOF'
+          using '../main.bicep'
+
+          param environmentName = 'synthetic'
+          param location = 'ukwest'
+          param namingPrefix = 'synthetic'
+          param appServicePlanFreeOfferExpirationTime = '2026-10-15T17:51:00'
+          param tags = { environment: 'synthetic' }
+          param enableRecommendations = true
+          param enableNotifications = true
+          param enablePipelineFailureAlerts = true
+          param acsEmailConnectionString = 'Endpoint=https://synthetic.communication.azure.com/;accesskey=c3ludGhldGljLXN5bnRoZXRpYy1zeW50aGV0aWM='
+          param acsEmailSenderAddress = 'DoNotReply@synthetic.azurecomm.net'
+          param acsEmailRecipientAddresses = 'devnull@synthetic.example'
+          EOF
+          az bicep build-params --file infra/environments/synthetic-pipeline.bicepparam --stdout > /dev/null
+          rm infra/environments/synthetic-pipeline.bicepparam
+          for setting in Notifications__Email__ConnectionString Notifications__Email__SenderAddress Notifications__Email__RecipientAddresses Recommendations__Enabled Notifications__Enabled; do
+            az bicep build --file infra/main.bicep --stdout | grep -q "$setting" || { echo "::error::Compiled template does not emit $setting."; exit 1; }
+          done
+
       - name: Lint Bicep
         run: az bicep lint --file infra/main.bicep
 
@@ -56,6 +79,12 @@ jobs:
       ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
       ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
       PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
+      ACS_EMAIL_CONNECTION_STRING: ${{ secrets.ACS_EMAIL_CONNECTION_STRING }}
+      ACS_EMAIL_SENDER_ADDRESS: ${{ secrets.ACS_EMAIL_SENDER_ADDRESS }}
+      ACS_EMAIL_RECIPIENT_ADDRESSES: ${{ secrets.ACS_EMAIL_RECIPIENT_ADDRESSES }}
+      ENABLE_RECOMMENDATIONS: ${{ vars.ENABLE_RECOMMENDATIONS }}
+      ENABLE_NOTIFICATIONS: ${{ vars.ENABLE_NOTIFICATIONS }}
+      ENABLE_PIPELINE_FAILURE_ALERTS: ${{ vars.ENABLE_PIPELINE_FAILURE_ALERTS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -98,6 +127,12 @@ jobs:
           if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
           if [ -n "$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP" ]; then extra_params+=(--parameters "marketDataQuoteCurrencyMap=$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP"); fi
           if [ -n "$PRICE_COLLECTION_EXCHANGE_SESSIONS" ]; then extra_params+=(--parameters "priceCollectionExchangeSessions=$PRICE_COLLECTION_EXCHANGE_SESSIONS"); fi
+          if [ -n "$ACS_EMAIL_CONNECTION_STRING" ]; then extra_params+=(--parameters "acsEmailConnectionString=$ACS_EMAIL_CONNECTION_STRING"); fi
+          if [ -n "$ACS_EMAIL_SENDER_ADDRESS" ]; then extra_params+=(--parameters "acsEmailSenderAddress=$ACS_EMAIL_SENDER_ADDRESS"); fi
+          if [ -n "$ACS_EMAIL_RECIPIENT_ADDRESSES" ]; then extra_params+=(--parameters "acsEmailRecipientAddresses=$ACS_EMAIL_RECIPIENT_ADDRESSES"); fi
+          if [ "$ENABLE_RECOMMENDATIONS" = "true" ]; then extra_params+=(--parameters "enableRecommendations=true"); fi
+          if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then extra_params+=(--parameters "enableNotifications=true"); fi
+          if [ "$ENABLE_PIPELINE_FAILURE_ALERTS" = "true" ]; then extra_params+=(--parameters "enablePipelineFailureAlerts=true"); fi
           az deployment sub what-if \
             --name "$DEPLOYMENT_NAME" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
@@ -168,6 +203,12 @@ jobs:
       ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
       ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
       PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
+      ACS_EMAIL_CONNECTION_STRING: ${{ secrets.ACS_EMAIL_CONNECTION_STRING }}
+      ACS_EMAIL_SENDER_ADDRESS: ${{ secrets.ACS_EMAIL_SENDER_ADDRESS }}
+      ACS_EMAIL_RECIPIENT_ADDRESSES: ${{ secrets.ACS_EMAIL_RECIPIENT_ADDRESSES }}
+      ENABLE_RECOMMENDATIONS: ${{ vars.ENABLE_RECOMMENDATIONS }}
+      ENABLE_NOTIFICATIONS: ${{ vars.ENABLE_NOTIFICATIONS }}
+      ENABLE_PIPELINE_FAILURE_ALERTS: ${{ vars.ENABLE_PIPELINE_FAILURE_ALERTS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -210,6 +251,12 @@ jobs:
           if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
           if [ -n "$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP" ]; then extra_params+=(--parameters "marketDataQuoteCurrencyMap=$ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP"); fi
           if [ -n "$PRICE_COLLECTION_EXCHANGE_SESSIONS" ]; then extra_params+=(--parameters "priceCollectionExchangeSessions=$PRICE_COLLECTION_EXCHANGE_SESSIONS"); fi
+          if [ -n "$ACS_EMAIL_CONNECTION_STRING" ]; then extra_params+=(--parameters "acsEmailConnectionString=$ACS_EMAIL_CONNECTION_STRING"); fi
+          if [ -n "$ACS_EMAIL_SENDER_ADDRESS" ]; then extra_params+=(--parameters "acsEmailSenderAddress=$ACS_EMAIL_SENDER_ADDRESS"); fi
+          if [ -n "$ACS_EMAIL_RECIPIENT_ADDRESSES" ]; then extra_params+=(--parameters "acsEmailRecipientAddresses=$ACS_EMAIL_RECIPIENT_ADDRESSES"); fi
+          if [ "$ENABLE_RECOMMENDATIONS" = "true" ]; then extra_params+=(--parameters "enableRecommendations=true"); fi
+          if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then extra_params+=(--parameters "enableNotifications=true"); fi
+          if [ "$ENABLE_PIPELINE_FAILURE_ALERTS" = "true" ]; then extra_params+=(--parameters "enablePipelineFailureAlerts=true"); fi
           az deployment sub create \
             --name "$DEPLOYMENT_NAME" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \

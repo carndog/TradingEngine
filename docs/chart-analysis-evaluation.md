@@ -95,9 +95,9 @@ Null `EvaluationInput`, `Definition` or `Current` is a programming defect and th
 
 Spread is contextual evidence for later alerts, not a filter: no spread threshold exists and none is applied to chart-condition detection. `EvaluationResult` preserves `QuoteCurrency`, `CurrentBid` and `CurrentAsk` so the proposed #11 composer can build a `SpreadSnapshot` — including the proposed `(Ask - Bid) / Ask * 100` percentage-of-purchase-price convention — without re-fetching quotes. A missing quote side stays `null`; unavailable is not zero.
 
-## Future integration contract
+## Integration contract
 
-Issue #11 owns what happens to these results: persisting triggered alerts and pending notification intents (not every evaluation or `NoAction`), saving alert intent and processing checkpoint atomically, dispatching notifications separately from durable work, deduplicating intents with stable identity, recovering pending work after restart and treating ambiguous provider sends without promising exactly-once delivery. The separation this document describes — failed `Result` versus successful `NoAction` — is what lets that orchestration record progress honestly.
+Issue #11 implements what happens to these results in [price-recommendations.md](price-recommendations.md): triggered outcomes become durable notification intents, the intent and the processing checkpoint commit atomically, dispatch runs separately from evaluation, intents deduplicate on stable `(instrument, slot)` identity, pending work recovers after restart and ambiguous provider sends resolve through operation probes rather than blind resend. The separation this document describes — failed `Result` versus successful `NoAction` — is what lets that orchestration record progress honestly.
 
 ## Boundary
 

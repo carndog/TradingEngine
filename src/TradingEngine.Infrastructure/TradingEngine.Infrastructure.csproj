@@ -4,6 +4,7 @@
     <InternalsVisibleTo Include="TradingEngine.Infrastructure.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Azure.Communication.Email" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">

@@ -51,8 +51,14 @@ New entries to add for the infrastructure `deploy` job:
 | `AZURE_DATABASE_PROBE_KEY` | Secret | Generated shared key published as the `Diagnostics__DatabaseProbeKey` app setting; gates `/health/database` |
 | `AZURE_ENTRA_AUTH_CLIENT_ID` | Secret | Application (client) ID of the single-tenant Easy Auth app registration |
 | `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` | Secret | JSON array of owner Entra object IDs, e.g. `["<object-id>"]`; becomes the Easy Auth `allowedPrincipals.identities` allowlist |
+| `ACS_EMAIL_CONNECTION_STRING` | Secret | Optional. ACS connection string for recommendation notification email (issue #11); forwarded to `acsEmailConnectionString` when set |
+| `ACS_EMAIL_SENDER_ADDRESS` | Secret | Optional. Sender on the ACS email domain; forwarded to `acsEmailSenderAddress` when set |
+| `ACS_EMAIL_RECIPIENT_ADDRESSES` | Secret | Optional. Comma-separated recipient list; forwarded to `acsEmailRecipientAddresses` when set |
+| `ENABLE_RECOMMENDATIONS` | Variable | Optional. `'true'` enables the saved-price evaluator; unset leaves it off |
+| `ENABLE_NOTIFICATIONS` | Variable | Optional. `'true'` enables the notification dispatcher; unset leaves it off |
+| `ENABLE_PIPELINE_FAILURE_ALERTS` | Variable | Optional. `'true'` creates the collection/notification failure alert rules; unset leaves them off |
 
-The `AZURE_SQL_ENTRA_ADMIN_*` and `AZURE_DATABASE_PROBE_KEY` secrets are required because `provisionAzureSql` is `true` in `dev.bicepparam`, and the `AZURE_ENTRA_AUTH_*` secrets because `configureEntraAuth` is `true`; the deploy job fails fast without them. They are never committed to the repository.
+The `AZURE_SQL_ENTRA_ADMIN_*` and `AZURE_DATABASE_PROBE_KEY` secrets are required because `provisionAzureSql` is `true` in `dev.bicepparam`, and the `AZURE_ENTRA_AUTH_*` secrets because `configureEntraAuth` is `true`; the deploy job fails fast without them. The `ACS_*` secrets and `ENABLE_*` variables are optional — the pipeline stays off until they are set deliberately. They are never committed to the repository.
 
 ### `development-infrastructure-preview` (new — pull-request what-if only)
 
@@ -76,8 +82,14 @@ Secrets and variables:
 | `AZURE_DATABASE_PROBE_KEY` | Secret | Same generated probe key as `development`, so the preview renders the real app-settings change |
 | `AZURE_ENTRA_AUTH_CLIENT_ID` | Secret | Same Easy Auth app registration client ID as `development`, so the preview renders the real `authsettingsV2` change |
 | `AZURE_ENTRA_AUTH_ALLOWED_PRINCIPALS` | Secret | Same owner object-ID JSON array as `development` |
+| `ACS_EMAIL_CONNECTION_STRING` | Secret | Optional. Same ACS connection string as `development`, so the preview renders the real notification app settings |
+| `ACS_EMAIL_SENDER_ADDRESS` | Secret | Optional. Same ACS sender address as `development` |
+| `ACS_EMAIL_RECIPIENT_ADDRESSES` | Secret | Optional. Same comma-separated recipient list as `development` |
+| `ENABLE_RECOMMENDATIONS` | Variable | Optional. `'true'` previews the enabled evaluator; unset previews the off state |
+| `ENABLE_NOTIFICATIONS` | Variable | Optional. `'true'` previews the enabled dispatcher; unset previews the off state |
+| `ENABLE_PIPELINE_FAILURE_ALERTS` | Variable | Optional. `'true'` previews the failure alert rules; unset previews them off |
 
-The `AZURE_SQL_ENTRA_ADMIN_*`, `AZURE_DATABASE_PROBE_KEY` and `AZURE_ENTRA_AUTH_*` entries are **secrets** on the `development-infrastructure-preview` environment and are used by the merge what-if preview so it renders the real SQL administrator, app-settings and Easy Auth configuration. The workflow fails fast if any is absent and never prints their values. They are not committed to the repository.
+The `AZURE_SQL_ENTRA_ADMIN_*`, `AZURE_DATABASE_PROBE_KEY` and `AZURE_ENTRA_AUTH_*` entries are **secrets** on the `development-infrastructure-preview` environment and are used by the merge what-if preview so it renders the real SQL administrator, app-settings and Easy Auth configuration. The `ACS_*` and `ENABLE_*` entries are optional and only change the preview when set. The workflow fails fast if a required entry is absent and never prints secret values; `Notifications__Email__*` app-setting paths are replaced by the redaction label in the what-if summary. They are not committed to the repository.
 
 The environments are the trust boundary that prevents untrusted code from obtaining an Azure token.
 

@@ -77,6 +77,26 @@ param marketDataQuoteCurrencyMap object = {}
 @secure()
 param priceCollectionExchangeSessions object = {}
 
+@description('Enable the saved-price recommendation evaluator hosted service inside the API. Disabled by default; enabling is a deliberate issue-11 decision.')
+param enableRecommendations bool = false
+
+@description('Enable the notification dispatch hosted service inside the API. Disabled by default; enabling is a deliberate issue-11 decision and requires the ACS email settings below.')
+param enableNotifications bool = false
+
+@description('Azure Communication Services connection string applied as the Notifications__Email__ConnectionString app setting. Supplied at deploy time from environment secrets; never commit a live value.')
+@secure()
+param acsEmailConnectionString string = ''
+
+@description('Sender address on the ACS email domain applied as the Notifications__Email__SenderAddress app setting, for example DoNotReply@<resource>.azurecomm.net.')
+param acsEmailSenderAddress string = ''
+
+@description('Comma-separated recipient addresses for recommendation emails, flattened into indexed Notifications__Email__RecipientAddresses__* app settings. Supplied at deploy time from environment secrets; never commit live values.')
+@secure()
+param acsEmailRecipientAddresses string = ''
+
+@description('Enable scheduled-query alert rules for repeated price-collection and notification dispatch failures. Disabled by default as a deliberate enablement decision.')
+param enablePipelineFailureAlerts bool = false
+
 var resourceGroupName = 'rg-${namingPrefix}-${environmentName}'
 var appServicePlanName = 'asp-${namingPrefix}-${environmentName}'
 var webAppName = 'app-${namingPrefix}-${environmentName}-${uniqueString(subscription().subscriptionId, resourceGroupName)}'
@@ -121,6 +141,11 @@ module appService 'modules/app-service.bicep' = {
     marketDataExchangeMap: marketDataExchangeMap
     marketDataQuoteCurrencyMap: marketDataQuoteCurrencyMap
     priceCollectionExchangeSessions: priceCollectionExchangeSessions
+    recommendationsEnabled: enableRecommendations
+    notificationsEnabled: enableNotifications
+    acsEmailConnectionString: acsEmailConnectionString
+    acsEmailSenderAddress: acsEmailSenderAddress
+    acsEmailRecipientAddresses: acsEmailRecipientAddresses
     tags: tags
   }
   dependsOn: [
@@ -137,6 +162,7 @@ module monitoring 'modules/monitoring.bicep' = {
     location: location
     retentionInDays: applicationInsightsRetentionDays
     dailyDataCapGb: logAnalyticsDailyDataCapGb
+    enablePipelineFailureAlerts: enablePipelineFailureAlerts
     tags: tags
   }
   dependsOn: [
