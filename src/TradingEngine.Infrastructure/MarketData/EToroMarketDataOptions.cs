@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace TradingEngine.Infrastructure.MarketData;
 
 public sealed class EToroMarketDataOptions
@@ -32,17 +34,71 @@ public sealed class EToroMarketDataOptions
     public Dictionary<string, Dictionary<string, string>> QuoteCurrencyMap { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
+    public string? QuoteCurrencyMapJson { get; set; }
+
     public void NormalizeMappings()
     {
         ExchangeMap = new Dictionary<string, string[]>(
             ExchangeMap,
             StringComparer.OrdinalIgnoreCase);
-        QuoteCurrencyMap = new Dictionary<string, Dictionary<string, string>>(
-            QuoteCurrencyMap.ToDictionary(
-                pair => pair.Key,
-                pair => new Dictionary<string, string>(
-                    pair.Value,
-                    StringComparer.OrdinalIgnoreCase)),
-            StringComparer.OrdinalIgnoreCase);
+        QuoteCurrencyMap = MergeQuoteCurrencyMap();
+    }
+
+    private Dictionary<string, Dictionary<string, string>> MergeQuoteCurrencyMap()
+    {
+        Dictionary<string, Dictionary<string, string>> merged =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (KeyValuePair<string, Dictionary<string, string>> exchange
+            in ParseQuoteCurrencyMapJson())
+        {
+            merged[exchange.Key] = new Dictionary<string, string>(
+                exchange.Value,
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        foreach (KeyValuePair<string, Dictionary<string, string>> exchange
+            in QuoteCurrencyMap)
+        {
+            if (merged.TryGetValue(
+                    exchange.Key,
+                    out Dictionary<string, string>? symbols) is false)
+            {
+                symbols = new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+                merged[exchange.Key] = symbols;
+            }
+
+            foreach (KeyValuePair<string, string> symbol in exchange.Value)
+            {
+                symbols[symbol.Key] = symbol.Value;
+            }
+        }
+
+        return merged;
+    }
+
+    private IReadOnlyDictionary<string, Dictionary<string, string>>
+        ParseQuoteCurrencyMapJson()
+    {
+        if (string.IsNullOrWhiteSpace(QuoteCurrencyMapJson))
+        {
+            return new Dictionary<string, Dictionary<string, string>>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<
+                    Dictionary<string, Dictionary<string, string>>>(
+                    QuoteCurrencyMapJson)
+                ?? new Dictionary<string, Dictionary<string, string>>();
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException(
+                $"{SectionName}:QuoteCurrencyMapJson must be a JSON object of " +
+                "exchange-to-symbol native-currency entries.",
+                exception);
+        }
     }
 }

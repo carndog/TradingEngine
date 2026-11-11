@@ -60,6 +60,7 @@ Section `EToro:MarketData` (`EToroMarketDataOptions`):
 | `MaxSearchPages` | 5 | Upper bound on instrument-search pages read per resolution. |
 | `ExchangeMap` | `{}` | Per-exchange allow-lists used to disambiguate search results (below). |
 | `QuoteCurrencyMap` | `{}` | Per-exchange+symbol map of the provider listing's native quote currency/unit (below). |
+| `QuoteCurrencyMapJson` | none | Same exchange → symbol → native-currency map expressed as one JSON object value. Used where setting names cannot carry symbol keys verbatim (Linux App Service rewrites `.` to `_` in names); see *Quote-currency verification*. Merged with `QuoteCurrencyMap`; discrete dictionary keys win per symbol. |
 
 Set credentials through user-secrets or environment variables:
 
@@ -104,6 +105,13 @@ Provider responses carry no quote-currency field, so the listing's native curren
   "ETORO": { "BTC": "USD" }
 }
 ```
+
+Two configuration shapes feed the same map:
+
+- `QuoteCurrencyMap` binds from discrete keys (`EToro:MarketData:QuoteCurrencyMap:{exchange}:{symbol}` in JSON files, user-secrets or `__`-separated environment variables). This remains the local-development shape.
+- `QuoteCurrencyMapJson` is a single string value holding the whole map as a JSON object (`{"XTEST":{"DEMO.X":"GBX","DEMO_X":"USD"}}`). It exists because **Linux App Service rewrites `.` to `_` inside app-setting *names*** when surfacing them as environment variables — a flattened `…__XLON__AAL.L` name arrives as `…__XLON__AAL_L` and binds the wrong symbol key, while a JSON *value* carries each symbol identity verbatim, including dots. Setting *values* are transported losslessly on every platform.
+
+Both shapes merge at bind time into one case-insensitive lookup; a discrete `QuoteCurrencyMap` key wins over `QuoteCurrencyMapJson` for the same exchange+symbol. Malformed `QuoteCurrencyMapJson` fails options evaluation at startup. Symbol lookup stays an exact match on the instrument's `Symbol` — no punctuation aliasing — so `DEMO.X` can never borrow `DEMO_X`'s configured currency, and the original symbol is sent to provider search unchanged.
 
 Every request — including ones served by the resolution cache — is checked before any provider call:
 
@@ -157,6 +165,8 @@ $env:EToro__MarketData__ExchangeMap__XNAS__0 = "<observed internal exchange name
 $env:EToro__MarketData__QuoteCurrencyMap__XNAS__MSFT = "USD"
 dotnet run --project tools/TradingEngine.MarketDataSmoke -- XNAS MSFT USD
 ```
+
+To exercise the deployed transport shape instead of discrete keys, set the whole map as one JSON value — `EToro__MarketData__QuoteCurrencyMapJson='{"XNAS":{"MSFT":"USD"}}'` — which binds identically and keeps dotted symbols intact on any OS.
 
 ```bash
 EToro__MarketData__ApiKey=<api-key> \

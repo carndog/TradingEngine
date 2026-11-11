@@ -51,7 +51,7 @@ param etoroMarketDataUserKey string = ''
 @secure()
 param marketDataExchangeMap object = {}
 
-@description('Map of instrument exchange identifier and symbol to the provider native currency, flattened into EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol} app settings. Supplied as a JSON object of objects at deploy time; an empty object emits no settings.')
+@description('Map of instrument exchange identifier and symbol to the provider native currency, emitted as the single EToro__MarketData__QuoteCurrencyMapJson app setting whose value is the JSON object. Carrying the map inside the value preserves symbol keys that contain periods, which Linux App Service flattens to underscores when they appear in setting names. Supplied as a JSON object of objects at deploy time; an empty object emits no setting.')
 @secure()
 param marketDataQuoteCurrencyMap object = {}
 
@@ -76,19 +76,11 @@ var exchangeMapSettings = reduce(
           'EToro__MarketData__ExchangeMap__${exchange.key}__${valueIndex}': string(exchange.value[valueIndex])
         }))))
 
-var quoteCurrencyMapSettings = reduce(
-  items(marketDataQuoteCurrencyMap),
-  {},
-  (accumulated, exchange) => union(
-    accumulated,
-    reduce(
-      items(exchange.value),
-      {},
-      (symbolAccumulated, symbol) => union(
-        symbolAccumulated,
-        {
-          'EToro__MarketData__QuoteCurrencyMap__${exchange.key}__${symbol.key}': string(symbol.value)
-        }))))
+var quoteCurrencyMapSettings = !empty(marketDataQuoteCurrencyMap)
+  ? {
+      EToro__MarketData__QuoteCurrencyMapJson: string(marketDataQuoteCurrencyMap)
+    }
+  : {}
 
 var exchangeSessionSettings = reduce(
   items(priceCollectionExchangeSessions),

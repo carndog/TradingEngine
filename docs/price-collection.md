@@ -160,12 +160,58 @@ The `appsettings` deployment **replaces the whole app-settings collection** on e
 | `ETORO_MARKET_DATA_API_KEY` | `etoroMarketDataApiKey` (`@secure`) | `EToro__MarketData__ApiKey` |
 | `ETORO_MARKET_DATA_USER_KEY` | `etoroMarketDataUserKey` (`@secure`) | `EToro__MarketData__UserKey` |
 | `ETORO_MARKET_DATA_EXCHANGE_MAP` | `marketDataExchangeMap` (`@secure` JSON object) | `EToro__MarketData__ExchangeMap__{exchange}__{index}` |
-| `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` | `marketDataQuoteCurrencyMap` (`@secure` JSON object) | `EToro__MarketData__QuoteCurrencyMap__{exchange}__{symbol}` |
+| `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` | `marketDataQuoteCurrencyMap` (`@secure` JSON object) | `EToro__MarketData__QuoteCurrencyMapJson` (single setting; value is the JSON object) |
 | `PRICE_COLLECTION_EXCHANGE_SESSIONS` | `priceCollectionExchangeSessions` (`@secure` JSON object) | `PriceCollection__ExchangeSessions__{exchange}__…` |
 
 All five parameters are `@secure()` in both `infra/main.bicep` and `infra/modules/app-service.bicep`, so deployment output and what-if previews carry unevaluated `parameters(...)` references rather than resolved keys or values. The what-if job summary additionally prints property *paths only* and redacts any `EToro__MarketData__*`/`PriceCollection__ExchangeSessions__*` path segment; the deploy step runs with `--output none`, so resolved parameter values never reach CI logs.
 
-The map/session secrets hold JSON objects flattened by the template — for example `ETORO_MARKET_DATA_EXCHANGE_MAP={"XNAS":["<provider exchange name>"]}` (string arrays, matching `EToro:MarketData:ExchangeMap`), `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP={"XNAS":{"MSFT":"USD"}}` (exchange → symbol → native currency, matching `EToro:MarketData:QuoteCurrencyMap`), and `PRICE_COLLECTION_EXCHANGE_SESSIONS={"XNAS":{"timeZone":"America/New_York","alwaysOpen":false,"windows":[{"days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"open":"09:30","close":"16:00"}]}}`. Keys must match the `Exchange` values on `WatchedInstruments`.
+The map/session secrets hold JSON objects emitted by the template — for example `ETORO_MARKET_DATA_EXCHANGE_MAP={"XNAS":["<provider exchange name>"]}` (string arrays flattened into indexed settings, matching `EToro:MarketData:ExchangeMap`), `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP={"XNAS":{"MSFT":"USD"}}` (exchange → symbol → native currency, emitted verbatim as the `EToro__MarketData__QuoteCurrencyMapJson` setting *value* and bound by the adapter — not flattened — so symbol keys containing periods survive Linux App Service name mangling; see [eToro market-data adapter](etoro-market-data-adapter.md#quote-currency-verification)), and `PRICE_COLLECTION_EXCHANGE_SESSIONS={"XNAS":{"timeZone":"America/New_York","alwaysOpen":false,"windows":[{"days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"open":"09:30","close":"16:00"}]}}` (flattened). Keys must match the `Exchange` values on `WatchedInstruments`.
+
+#### Quote-currency map rollout order
+
+The `QuoteCurrencyMapJson` transport was introduced because dotted symbols cannot ride in setting *names* on Linux. Roll out in this order:
+
+1. **Deploy the app build** containing `EToroMarketDataOptions.QuoteCurrencyMapJson` binding (this change). The discrete `EToro__MarketData__QuoteCurrencyMap__*` settings still present keep the running shape working.
+2. **Deploy the infrastructure** that switches `marketDataQuoteCurrencyMap` emission to the single `EToro__MarketData__QuoteCurrencyMapJson` setting. The appsettings deployment replaces the whole collection, so the flattened keys disappear in the same step; the new build already reads the JSON value.
+
+Reversing the order strands the map: an old build reads only discrete keys and the new settings emit none, so every quote-currency lookup fails as unconfigured.
+
+#### Post-deployment verification (read-only)
+
+After the next eligible session opens, confirm a newly scheduled slot produced both an `Observed` attempt and a saved observation — the Prices tab reads `PriceObservations` only. Aggregate each table **separately** before joining: joining the raw tables multiplies rows once observations exist, because multiple attempts share one `(WatchedInstrumentId, ScheduledFor)`.
+
+```sql
+DECLARE @since DATETIME2 = '<session-open-utc>';
+
+SELECT w.Symbol, w.Exchange,
+       ISNULL(obs.Observations, 0) AS Observations,
+       obs.LatestObservationScheduledFor,
+       ISNULL(att.Attempts, 0) AS Attempts,
+       ISNULL(att.ObservedAttempts, 0) AS ObservedAttempts,
+       ISNULL(att.FailedAttempts, 0) AS FailedAttempts
+FROM dbo.WatchedInstruments AS w
+LEFT JOIN (
+    SELECT o.WatchedInstrumentId,
+           COUNT_BIG(*) AS Observations,
+           MAX(o.ScheduledFor) AS LatestObservationScheduledFor
+    FROM dbo.PriceObservations AS o
+    WHERE o.ScheduledFor >= @since
+    GROUP BY o.WatchedInstrumentId
+) AS obs ON obs.WatchedInstrumentId = w.Id
+LEFT JOIN (
+    SELECT a.WatchedInstrumentId,
+           COUNT_BIG(*) AS Attempts,
+           SUM(CASE WHEN a.Outcome = 'Observed' THEN 1 ELSE 0 END) AS ObservedAttempts,
+           SUM(CASE WHEN a.Outcome = 'Failed' THEN 1 ELSE 0 END) AS FailedAttempts
+    FROM dbo.PriceCollectionAttempts AS a
+    WHERE a.ScheduledFor >= @since
+    GROUP BY a.WatchedInstrumentId
+) AS att ON att.WatchedInstrumentId = w.Id
+WHERE w.MonitoringState = 'Monitored' AND w.DeletedAt IS NULL
+ORDER BY w.Exchange, w.Symbol;
+```
+
+Success is `ObservedAttempts >= 1` with `Observations >= 1` per affected instrument and the new row visible under **Prices → Saved prices**; earlier `Failed` attempts stay as history and are not rewritten.
 
 **Secure XNAS configuration:** create the five secrets on the GitHub `development` environment (values come from the private deployment context, never committed). `ETORO_MARKET_DATA_API_KEY`/`USER_KEY` are the read-only market-data credentials; `ETORO_MARKET_DATA_EXCHANGE_MAP` maps `XNAS` to the provider exchange name(s) discovered through the search endpoint; `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` maps each XNAS symbol to its native listing currency; `PRICE_COLLECTION_EXCHANGE_SESSIONS` carries the XNAS regular session (America/New_York 09:30–16:00 weekdays). Once the secrets exist, every `Deploy development infrastructure` run — including what-if previews — keeps the settings in place; removing a secret removes the setting on the next deploy, by design.
 
