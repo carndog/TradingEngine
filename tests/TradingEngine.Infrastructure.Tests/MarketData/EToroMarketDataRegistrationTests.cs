@@ -117,6 +117,237 @@ public sealed class EToroMarketDataRegistrationTests
         });
     }
 
+    [Test]
+    public async Task AddEtoroMarketData_WithJsonQuoteCurrencyMap_PreservesSymbolIdentities()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4242, "DEMO.X", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4343, "DEMO_X", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4343, "20.5", "20.6", "2026-10-30T14:31:12Z", "realtime")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4545, "DEMO", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4545, "30.5", "30.6", "2026-10-30T14:31:12Z", "realtime")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4646, "LOCAL", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4646, "40.5", "40.6", "2026-10-30T14:31:12Z", "realtime")));
+        using ServiceProvider provider = BuildQuoteProvider(
+            handler,
+            new Dictionary<string, string?>
+            {
+                ["EToro:MarketData:ApiKey"] = "test-api-key",
+                ["EToro:MarketData:UserKey"] = "test-user-key",
+                ["EToro:MarketData:ExchangeMap:XTEST:0"] = "Test Exchange",
+                ["EToro:MarketData:QuoteCurrencyMap:XTEST:LOCAL"] = "CHF",
+                ["EToro:MarketData:QuoteCurrencyMapJson"] =
+                    "{\"XTEST\":{\"DEMO.X\":\"GBX\",\"DEMO_X\":\"USD\",\"DEMO\":\"EUR\"}}"
+            });
+        IMarketDataProvider marketData = provider
+            .GetRequiredService<IMarketDataProvider>();
+
+        Result<MarketQuote> dotted = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO.X", "GBX"),
+            CancellationToken.None);
+        Result<MarketQuote> underscored = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO_X", "USD"),
+            CancellationToken.None);
+        Result<MarketQuote> plain = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO", "EUR"),
+            CancellationToken.None);
+        Result<MarketQuote> local = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "LOCAL", "CHF"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dotted.IsSuccess, Is.True);
+            Assert.That(dotted.Value.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(underscored.IsSuccess, Is.True);
+            Assert.That(underscored.Value.ProviderInstrumentId, Is.EqualTo(4343));
+            Assert.That(plain.IsSuccess, Is.True);
+            Assert.That(plain.Value.ProviderInstrumentId, Is.EqualTo(4545));
+            Assert.That(local.IsSuccess, Is.True);
+            Assert.That(local.Value.ProviderInstrumentId, Is.EqualTo(4646));
+            Assert.That(handler.Requests, Has.Count.EqualTo(8));
+            Assert.That(
+                handler.Requests[0].RequestUri!.ToString(),
+                Does.Contain("internalSymbolFull=DEMO.X"));
+            Assert.That(
+                handler.Requests[2].RequestUri!.ToString(),
+                Does.Contain("internalSymbolFull=DEMO_X"));
+            Assert.That(
+                handler.Requests[4].RequestUri!.ToString(),
+                Does.Contain("internalSymbolFull=DEMO&"));
+            Assert.That(
+                handler.Requests[6].RequestUri!.ToString(),
+                Does.Contain("internalSymbolFull=LOCAL"));
+        });
+    }
+
+    [Test]
+    public async Task AddEtoroMarketData_WithFlattenedAndJsonShapes_BindsBothSymbols()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4242, "DEMO.X", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4242, "10.5", "10.6", "2026-10-30T14:31:12Z", "realtime")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4343, "DEMO_X", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.RatesBody(
+            (4343, "20.5", "20.6", "2026-10-30T14:31:12Z", "realtime")));
+        using ServiceProvider provider = BuildQuoteProvider(
+            handler,
+            new Dictionary<string, string?>
+            {
+                ["EToro:MarketData:ApiKey"] = "test-api-key",
+                ["EToro:MarketData:UserKey"] = "test-user-key",
+                ["EToro:MarketData:ExchangeMap:XTEST:0"] = "Test Exchange",
+                ["EToro:MarketData:QuoteCurrencyMap:XTEST:DEMO_X"] = "USD",
+                ["EToro:MarketData:QuoteCurrencyMapJson"] =
+                    "{\"XTEST\":{\"DEMO.X\":\"GBX\",\"DEMO_X\":\"USD\"}}"
+            });
+        IMarketDataProvider marketData = provider
+            .GetRequiredService<IMarketDataProvider>();
+
+        Result<MarketQuote> dotted = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO.X", "GBX"),
+            CancellationToken.None);
+        Result<MarketQuote> underscored = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO_X", "USD"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dotted.IsSuccess, Is.True);
+            Assert.That(dotted.Value.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(underscored.IsSuccess, Is.True);
+            Assert.That(underscored.Value.ProviderInstrumentId, Is.EqualTo(4343));
+            Assert.That(
+                handler.Requests[0].RequestUri!.ToString(),
+                Does.Contain("internalSymbolFull=DEMO.X"));
+            Assert.That(
+                handler.Requests[2].RequestUri!.ToString(),
+                Does.Contain("internalSymbolFull=DEMO_X"));
+        });
+    }
+
+    [Test]
+    public async Task AddEtoroMarketData_WithJsonQuoteCurrencyMapMissingSymbol_FailsBeforeHttp()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        using ServiceProvider provider = BuildQuoteProvider(
+            handler,
+            new Dictionary<string, string?>
+            {
+                ["EToro:MarketData:ApiKey"] = "test-api-key",
+                ["EToro:MarketData:UserKey"] = "test-user-key",
+                ["EToro:MarketData:ExchangeMap:XTEST:0"] = "Test Exchange",
+                ["EToro:MarketData:QuoteCurrencyMapJson"] =
+                    "{\"XTEST\":{\"DEMO.X\":\"GBX\"}}"
+            });
+        IMarketDataProvider marketData = provider
+            .GetRequiredService<IMarketDataProvider>();
+
+        Result<MarketQuote> result = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO_X", "USD"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.quote_currency_unconfigured"));
+            Assert.That(handler.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task AddEtoroMarketData_WithJsonQuoteCurrencyMapConflict_FailsBeforeHttp()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        using ServiceProvider provider = BuildQuoteProvider(
+            handler,
+            new Dictionary<string, string?>
+            {
+                ["EToro:MarketData:ApiKey"] = "test-api-key",
+                ["EToro:MarketData:UserKey"] = "test-user-key",
+                ["EToro:MarketData:ExchangeMap:XTEST:0"] = "Test Exchange",
+                ["EToro:MarketData:QuoteCurrencyMapJson"] =
+                    "{\"XTEST\":{\"DEMO.X\":\"GBX\"}}"
+            });
+        IMarketDataProvider marketData = provider
+            .GetRequiredService<IMarketDataProvider>();
+
+        Result<MarketQuote> result = await marketData.GetCurrentQuoteAsync(
+            new MarketInstrumentIdentity("XTEST", "DEMO.X", "USD"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo("market_data.quote_currency_conflict"));
+            Assert.That(
+                result.Error.Extensions?["providerCurrency"],
+                Is.EqualTo("GBX"));
+            Assert.That(
+                result.Error.Extensions?["requestedCurrency"],
+                Is.EqualTo("USD"));
+            Assert.That(handler.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void AddEtoroMarketData_WithMalformedQuoteCurrencyMapJson_FailsOptionsEvaluation()
+    {
+        using ServiceProvider provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["EToro:MarketData:ApiKey"] = "test-api-key",
+            ["EToro:MarketData:UserKey"] = "test-user-key",
+            ["EToro:MarketData:QuoteCurrencyMapJson"] = "{not json"
+        });
+
+        Assert.That(
+            () => _ = provider
+                .GetRequiredService<IOptions<EToroMarketDataOptions>>()
+                .Value,
+            Throws.InvalidOperationException);
+    }
+
+    [Test]
+    public void AddEtoroMarketData_WithNonStringCurrencyInJson_FailsWithoutSymbolLeak()
+    {
+        using ServiceProvider provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["EToro:MarketData:ApiKey"] = "test-api-key",
+            ["EToro:MarketData:UserKey"] = "test-user-key",
+            ["EToro:MarketData:QuoteCurrencyMapJson"] =
+                "{\"XTEST\":{\"DEMO.X\":123}}"
+        });
+
+        InvalidOperationException exception = Assert
+            .Throws<InvalidOperationException>(
+                () => _ = provider
+                    .GetRequiredService<IOptions<EToroMarketDataOptions>>()
+                    .Value)!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception.Message, Does.Contain("QuoteCurrencyMapJson"));
+            Assert.That(exception.ToString(), Does.Not.Contain("XTEST"));
+            Assert.That(exception.ToString(), Does.Not.Contain("DEMO.X"));
+        });
+    }
+
     private static ServiceProvider BuildProvider(IReadOnlyDictionary<string, string?> values)
     {
         IConfiguration configuration = new ConfigurationBuilder()
@@ -124,6 +355,25 @@ public sealed class EToroMarketDataRegistrationTests
             .Build();
         ServiceCollection services = new();
         services.AddEtoroMarketData(configuration);
+        return services.BuildServiceProvider();
+    }
+
+    private static ServiceProvider BuildQuoteProvider(
+        ScriptedHttpMessageHandler handler,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(values)
+            .Build();
+        ServiceCollection services = new();
+        FakeClock clock = new(Instant.FromUtc(2026, 10, 30, 12, 0, 0));
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<TimeProvider>(
+            new ManualTimeProvider(
+                delay => clock.Advance(Duration.FromTimeSpan(delay))));
+        services.AddEtoroMarketData(configuration);
+        services.ConfigureHttpClientDefaults(
+            builder => builder.ConfigurePrimaryHttpMessageHandler(() => handler));
         return services.BuildServiceProvider();
     }
 }
