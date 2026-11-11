@@ -51,6 +51,7 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
                     && (attempt.Outcome == "Submitted"
                         || attempt.Outcome == "Failed"
                         || attempt.Outcome == "Ambiguous")))
+            .ThenBy(row => row.Intent.UpdatedAt)
             .ThenBy(row => row.Intent.ScheduledFor)
             .ThenBy(row => row.Intent.Id)
             .Take(maxCount)

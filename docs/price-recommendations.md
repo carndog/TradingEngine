@@ -93,10 +93,13 @@ through manual repair — the checkpoint advance is committed anyway
 - **Ambiguous outcomes.** A timeout, transport error or 5xx after submission
   marks the intent `Ambiguous` — the submission is *uncertain*, not
   acknowledged. Probes resolve `Succeeded` → `Sent` and `Rejected` →
-  `Failed`. An operation ACS does not know (404) resends *only* when the
-  submission was never acknowledged and the same client-supplied operation
-  id makes the retry repeatable; an acknowledged operation that later 404s
-  stays `Submitted` and unresolved — it is never re-posted. Explicit client
+  `Failed`, and a `Running` probe promotes the intent to `Submitted` because
+  a running operation is itself durable acknowledgement. An operation ACS
+  does not know (404) resends *only* when the intent still carries the
+  client-supplied operation id — the property that makes a retry
+  repeatable; otherwise the unresolved outcome is retained for
+  reconciliation. An acknowledged operation that later 404s stays
+  `Submitted` and unresolved — it is never re-posted. Explicit client
   rejections (4xx) fail terminally; 408/429 retry as `Pending`.
 - **Send-attempt budget.** `MaxDispatchAttempts` counts send attempts only —
   probing an existing operation does not consume the budget, so an operation
@@ -106,9 +109,11 @@ through manual repair — the checkpoint advance is committed anyway
   Only a further *send* is refused once the budget is exhausted, recording a
   `Suppressed` attempt row and `Failed` status.
 - **Fair scheduling.** Dispatchable intents list ordered by consumed send
-  budget: a fresh `Pending` intent outranks in-flight operations being
-  polled, so an unresolved backlog cannot starve new recommendations out of
-  their first send within a batch-capped run.
+  budget, then by `UpdatedAt` ascending: a fresh `Pending` intent outranks
+  in-flight operations, and within the polling tier the least-recently
+  touched intents poll first — the batch cap rotates coverage so no
+  unresolved operation is skipped indefinitely while new recommendations
+  still send promptly.
 
 The email renders the instrument symbol and exchange, the observed price at
 the configured basis with its quote currency, each evaluated range (lower –

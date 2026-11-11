@@ -107,9 +107,8 @@ public sealed class DispatchPendingNotificationsHandler
             cancellationToken);
 
         bool acknowledged = claim.Status == NotificationStatus.Submitted;
-        NotificationStatus unresolvedStatus = acknowledged
-            ? NotificationStatus.Submitted
-            : NotificationStatus.Ambiguous;
+        bool repeatable = claim.ProviderOperationId
+            == intent.IntentId.ToString("D");
 
         switch (probe.Status)
         {
@@ -152,13 +151,30 @@ public sealed class DispatchPendingNotificationsHandler
                         cancellationToken);
                 }
 
-                return await SubmitAsync(intent, claimToken, cancellationToken);
+                if (repeatable)
+                {
+                    return await SubmitAsync(
+                        intent,
+                        claimToken,
+                        cancellationToken);
+                }
+
+                return await RecordAndMapAsync(
+                    intent,
+                    claimToken,
+                    NotificationStatus.Ambiguous,
+                    NotificationAttemptOutcome.Unresolved,
+                    probe.ErrorKind ?? "operation_unknown",
+                    operationId,
+                    probe.ProviderStatus,
+                    DispatchItemOutcome.Ambiguous,
+                    cancellationToken);
 
             case EmailOperationStatus.InFlight:
                 return await RecordAndMapAsync(
                     intent,
                     claimToken,
-                    unresolvedStatus,
+                    NotificationStatus.Submitted,
                     NotificationAttemptOutcome.Unresolved,
                     null,
                     null,
@@ -170,7 +186,9 @@ public sealed class DispatchPendingNotificationsHandler
                 return await RecordAndMapAsync(
                     intent,
                     claimToken,
-                    unresolvedStatus,
+                    acknowledged
+                        ? NotificationStatus.Submitted
+                        : NotificationStatus.Ambiguous,
                     NotificationAttemptOutcome.Unresolved,
                     probe.ErrorKind ?? probe.ProviderStatus ?? "in_flight",
                     null,

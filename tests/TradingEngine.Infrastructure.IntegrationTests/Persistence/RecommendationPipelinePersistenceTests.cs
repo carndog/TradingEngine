@@ -597,13 +597,67 @@ public sealed class RecommendationPipelinePersistenceTests
                 limited.Items[0].Outcome,
                 Is.EqualTo(DispatchItemOutcome.InFlight));
             Assert.That(sender.Sends, Has.Count.EqualTo(3));
-            Assert.That(IntentStatusCount(instrumentId, "Ambiguous"), Is.EqualTo(1));
+            Assert.That(IntentStatusCount(instrumentId, "Submitted"), Is.EqualTo(1));
+            Assert.That(IntentStatusCount(instrumentId, "Ambiguous"), Is.EqualTo(0));
             Assert.That(IntentStatusCount(instrumentId, "Failed"), Is.EqualTo(0));
             Assert.That(
                 AttemptCountForStatus(instrumentId, "Suppressed"),
                 Is.EqualTo(0));
             Assert.That(
                 AttemptCountForStatus(instrumentId, "Unresolved"),
+                Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenTimeoutThenRunningThenNotFoundThenSucceeded_SendsOnce()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"TMO-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        sender.SendResults.Enqueue(
+            new EmailSendResult(EmailSendOutcome.Ambiguous, null, "timeout"));
+        await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.InFlight, "Running", null));
+        DispatchRunResult running = await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
+        DispatchRunResult lost = await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        DispatchRunResult recovered = await RunDispatchAsync(sender);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(sender.Probes, Has.Count.EqualTo(3));
+            Assert.That(
+                running.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.InFlight));
+            Assert.That(
+                lost.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+            Assert.That(
+                recovered.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(IntentStatusCount(instrumentId, "Sent"), Is.EqualTo(1));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Submitted"),
+                Is.EqualTo(0));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Unresolved"),
+                Is.EqualTo(2));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "ResolvedSucceeded"),
                 Is.EqualTo(1));
         });
     }
@@ -708,32 +762,50 @@ public sealed class RecommendationPipelinePersistenceTests
         Guid freshIntentId = IntentIdFor(
             instrumentId,
             T0.Plus(Duration.FromMinutes(1)));
+        List<Guid> olderIntentIds = new(50);
         for (int index = 0; index < 50; index++)
         {
-            await SeedUnresolvedIntentAsync(instrumentId, index);
+            olderIntentIds.Add(await SeedUnresolvedIntentAsync(instrumentId, index));
         }
 
         RecordingEmailSender sender = new();
-        for (int index = 0; index < 50; index++)
+        for (int index = 0; index < 100; index++)
         {
             sender.ProbeResults.Enqueue(
                 new EmailOperationProbe(
                     EmailOperationStatus.InFlight, "Running", null));
         }
 
-        DispatchRunResult result = await RunDispatchAsync(sender);
+        DispatchRunResult first = await RunDispatchAsync(sender);
+        DispatchRunResult second = await RunDispatchAsync(sender);
 
         Assert.Multiple(() =>
         {
-            Assert.That(result.Items, Has.Count.EqualTo(50));
             Assert.That(
-                result.Items[0].IntentId,
+                first.Items[0].IntentId,
                 Is.EqualTo(freshIntentId));
             Assert.That(sender.Sends, Has.Count.EqualTo(1));
             Assert.That(
                 sender.Sends[0].OperationId,
                 Is.EqualTo(freshIntentId));
-            Assert.That(sender.Probes, Has.Count.EqualTo(49));
+            Assert.That(
+                sender.Probes,
+                Contains.Item(freshIntentId.ToString("D")));
+            foreach (Guid olderId in olderIntentIds)
+            {
+                Assert.That(
+                    sender.Probes,
+                    Contains.Item(olderId.ToString("D")));
+            }
+
+            Assert.That(
+                first.Items.Count(
+                    item => item.Outcome == DispatchItemOutcome.InFlight),
+                Is.EqualTo(49));
+            Assert.That(
+                second.Items.Count(
+                    item => item.Outcome == DispatchItemOutcome.InFlight),
+                Is.EqualTo(50));
         });
     }
 
@@ -806,7 +878,9 @@ public sealed class RecommendationPipelinePersistenceTests
         });
     }
 
-    private async Task SeedUnresolvedIntentAsync(Guid instrumentId, int index)
+    private async Task<Guid> SeedUnresolvedIntentAsync(
+        Guid instrumentId,
+        int index)
     {
         Guid intentId = Guid.NewGuid();
         Guid revisionId = RevisionIdFor(
@@ -818,7 +892,7 @@ public sealed class RecommendationPipelinePersistenceTests
             "Reason, PriceBasis, QuoteCurrency, Status, ProviderOperationId, " +
             "CreatedAt, UpdatedAt) " +
             "VALUES (@intentId, @instrumentId, @slot, @rev, " +
-            "'ConditionsTriggered', 'Bid', 'USD', 'Ambiguous', @operationId, " +
+            "'ConditionsTriggered', 'Bid', 'USD', 'Submitted', @operationId, " +
             "'2026-10-30T14:00:00', '2026-10-30T14:00:00'); " +
             "INSERT INTO NotificationAttempts " +
             "(Id, NotificationIntentId, AttemptedAt, Outcome, " +
@@ -830,6 +904,7 @@ public sealed class RecommendationPipelinePersistenceTests
             ("@slot", T0.Plus(Duration.FromMinutes(index + 10)).ToDateTimeUtc()),
             ("@rev", revisionId),
             ("@operationId", intentId.ToString("D")));
+        return intentId;
     }
 
     private async Task<EvaluationRunResult> RunEvaluationAsync()
