@@ -17,10 +17,11 @@ public interface INotificationIntentStore
         Instant now,
         CancellationToken cancellationToken);
 
-    Task<bool> TryBeginSubmissionAsync(
+    Task<BeginSubmissionResult> TryBeginSubmissionAsync(
         Guid intentId,
         Guid claimToken,
         string providerOperationId,
+        int maxAttempts,
         Instant now,
         CancellationToken cancellationToken);
 

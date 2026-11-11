@@ -156,7 +156,8 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
                 observation.ScheduledFor,
                 observation.Bid,
                 observation.Ask,
-                observation.QuoteCurrency))
+                observation.QuoteCurrency,
+                observation.InvocationId))
             .ToListAsync(cancellationToken);
 
         return observations;
@@ -303,6 +304,7 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
             QuoteCurrency = intent.QuoteCurrency,
             CurrentBid = intent.CurrentBid,
             CurrentAsk = intent.CurrentAsk,
+            CollectionInvocationId = intent.CollectionInvocationId,
             Status = "Pending",
             CreatedAt = commit.CommittedAt,
             UpdatedAt = commit.CommittedAt
@@ -332,7 +334,8 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
             row.ScheduledFor,
             row.Bid,
             row.Ask,
-            row.QuoteCurrency);
+            row.QuoteCurrency,
+            row.InvocationId);
     }
 
     private static bool IsIntentUniqueViolation(DbUpdateException exception)

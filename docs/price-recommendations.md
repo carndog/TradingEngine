@@ -86,20 +86,29 @@ through manual repair — the checkpoint advance is committed anyway
   outcome is recorded leaves the intent `Pending` with an operation id; the
   next claim sees that state and probes rather than resending.
 - **Acceptance is not delivery.** A `Started` response records a `Submitted`
-  attempt and leaves the intent `Ambiguous` with the operation id; the next
-  dispatch probes `EmailSendOperation` until ACS reports `Succeeded`,
-  `Failed` or `Canceled` (a still-running operation reports `InFlight`,
-  never resend).
+  attempt and leaves the intent `Submitted` — acknowledged by the provider
+  but not yet terminal. The next dispatch probes `EmailSendOperation` until
+  ACS reports `Succeeded`, `Failed` or `Canceled`; a still-running operation
+  reports the `InFlight` outcome, which records no failure.
 - **Ambiguous outcomes.** A timeout, transport error or 5xx after submission
-  marks the intent `Ambiguous` instead of resending. Probes resolve
-  `Succeeded` → `Sent` and `Rejected` → `Failed`; an operation ACS does not
-  know (404) resends with the same operation id; explicit client rejections
-  (4xx) fail terminally; 408/429 retry as `Pending`.
+  marks the intent `Ambiguous` — the submission is *uncertain*, not
+  acknowledged. Probes resolve `Succeeded` → `Sent` and `Rejected` →
+  `Failed`. An operation ACS does not know (404) resends *only* when the
+  submission was never acknowledged and the same client-supplied operation
+  id makes the retry repeatable; an acknowledged operation that later 404s
+  stays `Submitted` and unresolved — it is never re-posted. Explicit client
+  rejections (4xx) fail terminally; 408/429 retry as `Pending`.
 - **Send-attempt budget.** `MaxDispatchAttempts` counts send attempts only —
   probing an existing operation does not consume the budget, so an operation
   still running past the limit keeps being probed instead of being
-  suppressed. Only a further *send* is refused once the budget is exhausted,
-  recording a `Suppressed` attempt row and `Failed` status.
+  suppressed. The count is re-evaluated in SQL under the claim when a send
+  begins, so a worker holding a stale candidate cannot send past the limit.
+  Only a further *send* is refused once the budget is exhausted, recording a
+  `Suppressed` attempt row and `Failed` status.
+- **Fair scheduling.** Dispatchable intents list ordered by consumed send
+  budget: a fresh `Pending` intent outranks in-flight operations being
+  polled, so an unresolved backlog cannot starve new recommendations out of
+  their first send within a batch-capped run.
 
 The email renders the instrument symbol and exchange, the observed price at
 the configured basis with its quote currency, each evaluated range (lower –

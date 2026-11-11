@@ -40,7 +40,8 @@ public sealed class RecommendationEmailRendererTests
                     100.25m)
             ],
             NotificationStatus.Pending,
-            0);
+            0,
+            null);
 
         RecommendationEmail email = new RecommendationEmailRenderer().Render(intent);
 

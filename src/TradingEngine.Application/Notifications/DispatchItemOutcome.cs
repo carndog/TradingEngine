@@ -9,5 +9,6 @@ public enum DispatchItemOutcome
     Suppressed = 5,
     ClaimLost = 6,
     ClaimSkipped = 7,
-    Submitted = 8
+    Submitted = 8,
+    InFlight = 9
 }

@@ -134,6 +134,12 @@ public sealed class RecommendationPipelinePersistenceTests
             Assert.That(
                 committed.MonitoringRuleRevisionId,
                 Is.EqualTo(RevisionIdFor(instrumentId, T0.Plus(Duration.FromMinutes(1)))));
+            Assert.That(
+                committed.CollectionInvocationId,
+                Is.EqualTo(
+                    ObservationInvocationIdFor(
+                        instrumentId,
+                        T0.Plus(Duration.FromMinutes(1)))));
             IntentDispatchResult dispatched = dispatch.Items
                 .Single(item => item.IntentId == firstIntentId);
             Assert.That(dispatched.InstrumentId, Is.EqualTo(instrumentId));
@@ -141,6 +147,9 @@ public sealed class RecommendationPipelinePersistenceTests
             Assert.That(
                 dispatched.MonitoringRuleRevisionId,
                 Is.EqualTo(committed.MonitoringRuleRevisionId));
+            Assert.That(
+                dispatched.CollectionInvocationId,
+                Is.EqualTo(committed.CollectionInvocationId));
         });
     }
 
@@ -400,7 +409,8 @@ public sealed class RecommendationPipelinePersistenceTests
                     "USD",
                     100m,
                     101m,
-                    [])),
+                    [],
+                    null)),
             CancellationToken.None);
 
         Assert.Multiple(() =>
@@ -585,7 +595,7 @@ public sealed class RecommendationPipelinePersistenceTests
         {
             Assert.That(
                 limited.Items[0].Outcome,
-                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+                Is.EqualTo(DispatchItemOutcome.InFlight));
             Assert.That(sender.Sends, Has.Count.EqualTo(3));
             Assert.That(IntentStatusCount(instrumentId, "Ambiguous"), Is.EqualTo(1));
             Assert.That(IntentStatusCount(instrumentId, "Failed"), Is.EqualTo(0));
@@ -596,6 +606,230 @@ public sealed class RecommendationPipelinePersistenceTests
                 AttemptCountForStatus(instrumentId, "Unresolved"),
                 Is.EqualTo(1));
         });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenAcceptedThenNotFoundThenRecovered_SendsOnce()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"NOT-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Unknown, null, null));
+        DispatchRunResult lost = await RunDispatchAsync(sender);
+
+        sender.ProbeResults.Enqueue(
+            new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        DispatchRunResult recovered = await RunDispatchAsync(sender);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(sender.Probes, Has.Count.EqualTo(2));
+            Assert.That(
+                lost.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Ambiguous));
+            Assert.That(
+                recovered.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Sent));
+            Assert.That(IntentStatusCount(instrumentId, "Sent"), Is.EqualTo(1));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Unresolved"),
+                Is.EqualTo(1));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "ResolvedSucceeded"),
+                Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenOperationPollsThreeTimes_RecordsZeroFailures()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"POLL-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender sender = new();
+        await RunDispatchAsync(sender);
+
+        DispatchRunResult[] polls = new DispatchRunResult[3];
+        for (int index = 0; index < 3; index++)
+        {
+            sender.ProbeResults.Enqueue(
+                new EmailOperationProbe(
+                    EmailOperationStatus.InFlight, "Running", null));
+            polls[index] = await RunDispatchAsync(sender);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                polls.Select(poll => poll.Items[0].Outcome),
+                Is.All.EqualTo(DispatchItemOutcome.InFlight));
+            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(sender.Probes, Has.Count.EqualTo(3));
+            Assert.That(IntentStatusCount(instrumentId, "Submitted"), Is.EqualTo(1));
+            Assert.That(IntentStatusCount(instrumentId, "Failed"), Is.EqualTo(0));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Unresolved"),
+                Is.EqualTo(3));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Failed"),
+                Is.EqualTo(0));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Ambiguous"),
+                Is.EqualTo(0));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Suppressed"),
+                Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenUnresolvedPrecedeFreshIntent_SubmitsNewIntentFirst()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"FAIR-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        Guid freshIntentId = IntentIdFor(
+            instrumentId,
+            T0.Plus(Duration.FromMinutes(1)));
+        for (int index = 0; index < 50; index++)
+        {
+            await SeedUnresolvedIntentAsync(instrumentId, index);
+        }
+
+        RecordingEmailSender sender = new();
+        for (int index = 0; index < 50; index++)
+        {
+            sender.ProbeResults.Enqueue(
+                new EmailOperationProbe(
+                    EmailOperationStatus.InFlight, "Running", null));
+        }
+
+        DispatchRunResult result = await RunDispatchAsync(sender);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Items, Has.Count.EqualTo(50));
+            Assert.That(
+                result.Items[0].IntentId,
+                Is.EqualTo(freshIntentId));
+            Assert.That(sender.Sends, Has.Count.EqualTo(1));
+            Assert.That(
+                sender.Sends[0].OperationId,
+                Is.EqualTo(freshIntentId));
+            Assert.That(sender.Probes, Has.Count.EqualTo(49));
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenWorkersShareStaleCandidate_EnforcesAttemptLimitUnderClaim()
+    {
+        Guid instrumentId = await InsertInstrumentAsync($"LMT-{_suffix}", "Configured");
+        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, 120m);
+        await RunEvaluationAsync();
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
+        await RunEvaluationAsync();
+
+        RecordingEmailSender workerA = new();
+        for (int index = 0; index < 3; index++)
+        {
+            workerA.SendResults.Enqueue(
+                new EmailSendResult(
+                    EmailSendOutcome.TransientFailure, null, "http_429"));
+            await RunDispatchAsync(workerA);
+        }
+
+        Guid intentId = IntentIdFor(
+            instrumentId,
+            T0.Plus(Duration.FromMinutes(1)));
+
+        BeginSubmissionResult staleClaim;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerNotificationIntentStore store = new(context);
+            Guid claimToken = Guid.NewGuid();
+            NotificationClaim? claim = await store.TryClaimAsync(
+                intentId,
+                claimToken,
+                Instant.FromUtc(2026, 10, 30, 14, 0, 0),
+                Instant.FromUtc(2026, 10, 30, 13, 58, 0),
+                CancellationToken.None);
+            Assert.That(claim, Is.Not.Null);
+            staleClaim = await store.TryBeginSubmissionAsync(
+                intentId,
+                claimToken,
+                intentId.ToString("D"),
+                3,
+                Instant.FromUtc(2026, 10, 30, 13, 58, 0),
+                CancellationToken.None);
+        }
+
+        await ExecuteNonQueryAsync(
+            "UPDATE NotificationIntents SET ClaimToken = NULL, " +
+            "ClaimedUntil = '2000-01-01T00:00:00.0000000' WHERE Id = @id",
+            ("@id", intentId));
+
+        RecordingEmailSender workerB = new();
+        DispatchRunResult second = await RunDispatchAsync(workerB);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(workerA.Sends, Has.Count.EqualTo(3));
+            Assert.That(workerB.Sends, Is.Empty);
+            Assert.That(
+                second.Items[0].Outcome,
+                Is.EqualTo(DispatchItemOutcome.Suppressed));
+            Assert.That(
+                staleClaim,
+                Is.EqualTo(BeginSubmissionResult.AttemptsExhausted));
+            Assert.That(IntentStatusCount(instrumentId, "Failed"), Is.EqualTo(1));
+            Assert.That(
+                AttemptCountForStatus(instrumentId, "Suppressed"),
+                Is.EqualTo(1));
+        });
+    }
+
+    private async Task SeedUnresolvedIntentAsync(Guid instrumentId, int index)
+    {
+        Guid intentId = Guid.NewGuid();
+        Guid revisionId = RevisionIdFor(
+            instrumentId,
+            T0.Plus(Duration.FromMinutes(1)));
+        await ExecuteNonQueryAsync(
+            "INSERT INTO NotificationIntents " +
+            "(Id, WatchedInstrumentId, ScheduledFor, MonitoringRuleRevisionId, " +
+            "Reason, PriceBasis, QuoteCurrency, Status, ProviderOperationId, " +
+            "CreatedAt, UpdatedAt) " +
+            "VALUES (@intentId, @instrumentId, @slot, @rev, " +
+            "'ConditionsTriggered', 'Bid', 'USD', 'Ambiguous', @operationId, " +
+            "'2026-10-30T14:00:00', '2026-10-30T14:00:00'); " +
+            "INSERT INTO NotificationAttempts " +
+            "(Id, NotificationIntentId, AttemptedAt, Outcome, " +
+            "ProviderOperationId, RecordedAt) " +
+            "VALUES (NEWID(), @intentId, '2026-10-30T14:00:00', 'Submitted', " +
+            "@operationId, '2026-10-30T14:00:00')",
+            ("@intentId", intentId),
+            ("@instrumentId", instrumentId),
+            ("@slot", T0.Plus(Duration.FromMinutes(index + 10)).ToDateTimeUtc()),
+            ("@rev", revisionId),
+            ("@operationId", intentId.ToString("D")));
     }
 
     private async Task<EvaluationRunResult> RunEvaluationAsync()
@@ -820,6 +1054,19 @@ public sealed class RecommendationPipelinePersistenceTests
         return (Guid)command.ExecuteScalar()!;
     }
 
+    private Guid? ObservationInvocationIdFor(Guid instrumentId, Instant slot)
+    {
+        using SqlConnection connection = new(ConnectionStringFor());
+        connection.Open();
+        using SqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT InvocationId FROM PriceObservations " +
+            "WHERE WatchedInstrumentId = @id AND ScheduledFor = @slot";
+        command.Parameters.AddWithValue("@id", instrumentId);
+        command.Parameters.AddWithValue("@slot", slot.ToDateTimeUtc());
+        return command.ExecuteScalar() as Guid?;
+    }
+
     private Guid IntentIdFor(Guid instrumentId, Instant slot)
     {
         using SqlConnection connection = new(ConnectionStringFor());
@@ -936,10 +1183,11 @@ public sealed class RecommendationPipelinePersistenceTests
                 cancellationToken);
         }
 
-        public Task<bool> TryBeginSubmissionAsync(
+        public Task<BeginSubmissionResult> TryBeginSubmissionAsync(
             Guid intentId,
             Guid claimToken,
             string providerOperationId,
+            int maxAttempts,
             Instant now,
             CancellationToken cancellationToken)
         {
@@ -947,6 +1195,7 @@ public sealed class RecommendationPipelinePersistenceTests
                 intentId,
                 claimToken,
                 providerOperationId,
+                maxAttempts,
                 now,
                 cancellationToken);
         }

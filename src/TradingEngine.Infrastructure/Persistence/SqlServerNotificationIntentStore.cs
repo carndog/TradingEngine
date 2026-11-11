@@ -30,7 +30,9 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
         List<DispatchableIntent> rows = await _context.NotificationIntents
             .AsNoTracking()
             .Where(intent =>
-                (intent.Status == "Pending" || intent.Status == "Ambiguous")
+                (intent.Status == "Pending"
+                    || intent.Status == "Ambiguous"
+                    || intent.Status == "Submitted")
                 && (intent.ClaimedUntil == null || intent.ClaimedUntil <= now))
             .Join(
                 _context.WatchedInstruments.Where(
@@ -43,7 +45,13 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
                     Symbol = instrument.Symbol,
                     Exchange = instrument.Exchange
                 })
-            .OrderBy(row => row.Intent.ScheduledFor)
+            .OrderBy(row =>
+                _context.NotificationAttempts.Count(attempt =>
+                    attempt.NotificationIntentId == row.Intent.Id
+                    && (attempt.Outcome == "Submitted"
+                        || attempt.Outcome == "Failed"
+                        || attempt.Outcome == "Ambiguous")))
+            .ThenBy(row => row.Intent.ScheduledFor)
             .ThenBy(row => row.Intent.Id)
             .Take(maxCount)
             .ToListAsync(cancellationToken);
@@ -122,7 +130,7 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
             "    UpdatedAt = @now " +
             "OUTPUT INSERTED.Status, INSERTED.ProviderOperationId " +
             "WHERE Id = @intentId " +
-            "    AND Status IN ('Pending', 'Ambiguous') " +
+            "    AND Status IN ('Pending', 'Ambiguous', 'Submitted') " +
             "    AND (ClaimedUntil IS NULL OR ClaimedUntil <= @now)";
         command.Parameters.Add(new SqlParameter("@claimToken", claimToken));
         command.Parameters.Add(new SqlParameter("@claimedUntil", untilUtc));
@@ -146,31 +154,63 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
             providerOperationId);
     }
 
-    public async Task<bool> TryBeginSubmissionAsync(
+    public async Task<BeginSubmissionResult> TryBeginSubmissionAsync(
         Guid intentId,
         Guid claimToken,
         string providerOperationId,
+        int maxAttempts,
         Instant now,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerOperationId);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxAttempts, 1);
 
         DateTime nowUtc = PersistedInstant
             .Require(now, nameof(now))
             .ToDateTimeUtc();
 
-        int updated = await _context.Database.ExecuteSqlAsync(
-            $"""
-            UPDATE NotificationIntents
-            SET ProviderOperationId = {providerOperationId},
-                UpdatedAt = {nowUtc}
-            WHERE Id = {intentId}
-                AND ClaimToken = {claimToken}
-                AND Status IN ('Pending', 'Ambiguous')
-            """,
-            cancellationToken);
+        DbConnection connection = _context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
 
-        return updated > 0;
+        await using DbCommand command = connection.CreateCommand();
+        command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+        command.CommandText =
+            "IF (SELECT COUNT(*) FROM NotificationAttempts " +
+            "    WHERE NotificationIntentId = @intentId " +
+            "        AND Outcome IN ('Submitted', 'Failed', 'Ambiguous')) " +
+            "    >= @maxAttempts " +
+            "    SELECT -1 " +
+            "ELSE " +
+            "BEGIN " +
+            "    UPDATE NotificationIntents " +
+            "    SET ProviderOperationId = @providerOperationId, " +
+            "        UpdatedAt = @now " +
+            "    WHERE Id = @intentId " +
+            "        AND ClaimToken = @claimToken " +
+            "        AND Status IN ('Pending', 'Ambiguous', 'Submitted') " +
+            "    SELECT @@ROWCOUNT " +
+            "END";
+        command.Parameters.Add(new SqlParameter("@intentId", intentId));
+        command.Parameters.Add(new SqlParameter("@claimToken", claimToken));
+        command.Parameters.Add(
+            new SqlParameter("@providerOperationId", providerOperationId));
+        command.Parameters.Add(new SqlParameter("@maxAttempts", maxAttempts));
+        command.Parameters.Add(new SqlParameter("@now", nowUtc));
+
+        object? result = await command.ExecuteScalarAsync(cancellationToken);
+        int rows = result is null ? 0 : (int)result;
+
+        if (rows < 0)
+        {
+            return BeginSubmissionResult.AttemptsExhausted;
+        }
+
+        return rows > 0
+            ? BeginSubmissionResult.Began
+            : BeginSubmissionResult.ClaimLost;
     }
 
     public async Task<bool> RecordOutcomeAsync(
@@ -294,7 +334,8 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
             intent.CurrentAsk,
             conditions,
             Enum.Parse<NotificationStatus>(intent.Status),
-            attemptCount);
+            attemptCount,
+            intent.CollectionInvocationId);
     }
 
     private sealed class DispatchableIntent

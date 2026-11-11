@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using TradingEngine.Application.Notifications;
 
 namespace TradingEngine.Api.Recommendations;
 
@@ -69,6 +70,13 @@ internal sealed class RecommendationTelemetry : IDisposable
     internal void RecordNotificationFailure()
     {
         _notificationFailures.Add(1);
+    }
+
+    internal static bool IsFailureOutcome(DispatchItemOutcome outcome)
+    {
+        return outcome is DispatchItemOutcome.Failed
+            or DispatchItemOutcome.Ambiguous
+            or DispatchItemOutcome.Suppressed;
     }
 
     public void Dispose()

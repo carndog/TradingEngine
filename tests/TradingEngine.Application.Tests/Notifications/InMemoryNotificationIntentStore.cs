@@ -32,7 +32,9 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
                 Pending
                     .Where(item =>
                         item.Status is NotificationStatus.Pending
-                            or NotificationStatus.Ambiguous)
+                            or NotificationStatus.Ambiguous
+                            or NotificationStatus.Submitted)
+                    .OrderBy(item => item.AttemptCount)
                     .Take(maxCount)
                     .ToList());
         }
@@ -69,10 +71,11 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
         }
     }
 
-    public Task<bool> TryBeginSubmissionAsync(
+    public Task<BeginSubmissionResult> TryBeginSubmissionAsync(
         Guid intentId,
         Guid claimToken,
         string providerOperationId,
+        int maxAttempts,
         Instant now,
         CancellationToken cancellationToken)
     {
@@ -80,11 +83,21 @@ internal sealed class InMemoryNotificationIntentStore : INotificationIntentStore
         {
             if (Unsubmittable.Contains(intentId))
             {
-                return Task.FromResult(false);
+                return Task.FromResult(BeginSubmissionResult.ClaimLost);
+            }
+
+            int sendAttempts = Recorded.Count(record =>
+                record.IntentId == intentId
+                && record.AttemptOutcome is NotificationAttemptOutcome.Submitted
+                    or NotificationAttemptOutcome.Failed
+                    or NotificationAttemptOutcome.Ambiguous);
+            if (sendAttempts >= maxAttempts)
+            {
+                return Task.FromResult(BeginSubmissionResult.AttemptsExhausted);
             }
 
             _providerOperations[intentId] = providerOperationId;
-            return Task.FromResult(true);
+            return Task.FromResult(BeginSubmissionResult.Began);
         }
     }
 

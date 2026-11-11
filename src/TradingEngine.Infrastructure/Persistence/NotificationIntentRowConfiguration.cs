@@ -54,6 +54,8 @@ internal sealed class NotificationIntentRowConfiguration
         builder.Property(row => row.CurrentAsk)
             .HasPrecision(38, 18);
 
+        builder.Property(row => row.CollectionInvocationId);
+
         builder.Property(row => row.Status)
             .IsRequired()
             .HasMaxLength(16)
@@ -90,7 +92,7 @@ internal sealed class NotificationIntentRowConfiguration
 
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_NotificationIntents_Status",
-            "[Status] IN ('Pending', 'Ambiguous', 'Sent', 'Failed')"));
+            "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed')"));
 
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_NotificationIntents_PriceBasis",

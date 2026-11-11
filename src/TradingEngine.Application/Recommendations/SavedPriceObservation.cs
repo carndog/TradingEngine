@@ -6,4 +6,5 @@ public sealed record SavedPriceObservation(
     Instant ScheduledFor,
     decimal? Bid,
     decimal? Ask,
-    string QuoteCurrency);
+    string QuoteCurrency,
+    Guid InvocationId);

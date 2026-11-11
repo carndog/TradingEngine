@@ -79,7 +79,7 @@ public sealed class DispatchPendingNotificationsHandler
             return Item(intent, DispatchItemOutcome.ClaimSkipped, null);
         }
 
-        bool submissionPersisted = claim.Status == NotificationStatus.Ambiguous
+        bool submissionPersisted = claim.Status != NotificationStatus.Pending
             || claim.ProviderOperationId is not null;
         if (submissionPersisted)
         {
@@ -105,6 +105,11 @@ public sealed class DispatchPendingNotificationsHandler
         EmailOperationProbe probe = await _sender.GetOperationStatusAsync(
             operationId,
             cancellationToken);
+
+        bool acknowledged = claim.Status == NotificationStatus.Submitted;
+        NotificationStatus unresolvedStatus = acknowledged
+            ? NotificationStatus.Submitted
+            : NotificationStatus.Ambiguous;
 
         switch (probe.Status)
         {
@@ -133,13 +138,39 @@ public sealed class DispatchPendingNotificationsHandler
                     cancellationToken);
 
             case EmailOperationStatus.Unknown:
+                if (acknowledged)
+                {
+                    return await RecordAndMapAsync(
+                        intent,
+                        claimToken,
+                        NotificationStatus.Submitted,
+                        NotificationAttemptOutcome.Unresolved,
+                        probe.ErrorKind ?? "operation_unknown",
+                        operationId,
+                        probe.ProviderStatus,
+                        DispatchItemOutcome.Ambiguous,
+                        cancellationToken);
+                }
+
                 return await SubmitAsync(intent, claimToken, cancellationToken);
+
+            case EmailOperationStatus.InFlight:
+                return await RecordAndMapAsync(
+                    intent,
+                    claimToken,
+                    unresolvedStatus,
+                    NotificationAttemptOutcome.Unresolved,
+                    null,
+                    null,
+                    probe.ProviderStatus,
+                    DispatchItemOutcome.InFlight,
+                    cancellationToken);
 
             default:
                 return await RecordAndMapAsync(
                     intent,
                     claimToken,
-                    NotificationStatus.Ambiguous,
+                    unresolvedStatus,
                     NotificationAttemptOutcome.Unresolved,
                     probe.ErrorKind ?? probe.ProviderStatus ?? "in_flight",
                     null,
@@ -154,32 +185,34 @@ public sealed class DispatchPendingNotificationsHandler
         Guid claimToken,
         CancellationToken cancellationToken)
     {
-        if (intent.AttemptCount >= _options.MaxDispatchAttempts)
-        {
-            return await RecordAndMapAsync(
-                intent,
-                claimToken,
-                NotificationStatus.Failed,
-                NotificationAttemptOutcome.Suppressed,
-                "max_attempts_exceeded",
-                null,
-                null,
-                DispatchItemOutcome.Suppressed,
-                cancellationToken);
-        }
-
-        bool began = await _store.TryBeginSubmissionAsync(
+        BeginSubmissionResult began = await _store.TryBeginSubmissionAsync(
             intent.IntentId,
             claimToken,
             intent.IntentId.ToString("D"),
+            _options.MaxDispatchAttempts,
             _clock.GetCurrentInstant(),
             cancellationToken);
-        if (began is false)
-        {
-            return Item(intent, DispatchItemOutcome.ClaimLost, null);
-        }
 
-        return await SendAsync(intent, claimToken, cancellationToken);
+        switch (began)
+        {
+            case BeginSubmissionResult.Began:
+                return await SendAsync(intent, claimToken, cancellationToken);
+
+            case BeginSubmissionResult.AttemptsExhausted:
+                return await RecordAndMapAsync(
+                    intent,
+                    claimToken,
+                    NotificationStatus.Failed,
+                    NotificationAttemptOutcome.Suppressed,
+                    "max_attempts_exceeded",
+                    null,
+                    null,
+                    DispatchItemOutcome.Suppressed,
+                    cancellationToken);
+
+            default:
+                return Item(intent, DispatchItemOutcome.ClaimLost, null);
+        }
     }
 
     private async Task<IntentDispatchResult> SendAsync(
@@ -215,7 +248,7 @@ public sealed class DispatchPendingNotificationsHandler
                 return await RecordAndMapAsync(
                     intent,
                     claimToken,
-                    NotificationStatus.Ambiguous,
+                    NotificationStatus.Submitted,
                     NotificationAttemptOutcome.Submitted,
                     null,
                     operationId,
@@ -302,6 +335,7 @@ public sealed class DispatchPendingNotificationsHandler
             intent.InstrumentId,
             intent.ScheduledFor,
             intent.MonitoringRuleRevisionId,
+            intent.CollectionInvocationId,
             outcome,
             errorKind);
     }

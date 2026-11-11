@@ -90,9 +90,7 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
         {
             string outcome = item.Outcome.ToString().ToLowerInvariant();
             _telemetry.RecordDispatchOutcome(outcome);
-            if (item.Outcome is DispatchItemOutcome.Failed
-                or DispatchItemOutcome.Ambiguous
-                or DispatchItemOutcome.Suppressed)
+            if (RecommendationTelemetry.IsFailureOutcome(item.Outcome))
             {
                 _telemetry.RecordNotificationFailure();
             }
@@ -100,11 +98,12 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
             _logger.LogInformation(
                 "Notification intent {IntentId} for instrument {InstrumentId} " +
                 "at slot {ScheduledFor} under revision {MonitoringRuleRevisionId} " +
-                "dispatched: {Outcome}.",
+                "from collection {CollectionInvocationId} dispatched: {Outcome}.",
                 item.IntentId,
                 item.InstrumentId,
                 item.ScheduledFor,
                 item.MonitoringRuleRevisionId,
+                item.CollectionInvocationId,
                 outcome);
         }
     }
@@ -115,6 +114,7 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
         int retryPending = 0;
         int failed = 0;
         int ambiguous = 0;
+        int inFlight = 0;
         int other = 0;
 
         foreach (IntentDispatchResult item in result.Items)
@@ -134,6 +134,9 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
                 case DispatchItemOutcome.Ambiguous:
                     ambiguous++;
                     break;
+                case DispatchItemOutcome.InFlight:
+                    inFlight++;
+                    break;
                 default:
                     other++;
                     break;
@@ -143,12 +146,13 @@ internal sealed class NotificationDispatchHostedService : BackgroundService
         _logger.LogInformation(
             "Notification dispatch run {InvocationId} completed: {Sent} sent, " +
             "{RetryPending} retry-pending, {Failed} failed, {Ambiguous} ambiguous, " +
-            "{Other} skipped.",
+            "{InFlight} in-flight, {Other} skipped.",
             result.InvocationId,
             sent,
             retryPending,
             failed,
             ambiguous,
+            inFlight,
             other);
     }
 }

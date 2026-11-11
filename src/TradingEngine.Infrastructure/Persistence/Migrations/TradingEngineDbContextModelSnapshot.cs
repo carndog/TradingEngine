@@ -251,6 +251,9 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("ClaimedUntil")
                         .HasColumnType("datetime2(7)");
 
+                    b.Property<Guid?>("CollectionInvocationId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2(7)");
 
@@ -316,7 +319,7 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_NotificationIntents_Reason", "[Reason] IN ('ConditionsTriggered')");
 
-                            t.HasCheckConstraint("CK_NotificationIntents_Status", "[Status] IN ('Pending', 'Ambiguous', 'Sent', 'Failed')");
+                            t.HasCheckConstraint("CK_NotificationIntents_Status", "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed')");
                         });
                 });
 

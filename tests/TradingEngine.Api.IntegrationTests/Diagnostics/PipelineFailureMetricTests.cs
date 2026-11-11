@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using TradingEngine.Api.PriceCollection;
 using TradingEngine.Api.Recommendations;
+using TradingEngine.Application.Notifications;
 
 namespace TradingEngine.Api.IntegrationTests.Diagnostics;
 
@@ -39,6 +40,34 @@ public sealed class PipelineFailureMetricTests
         listener.RecordObservableInstruments();
 
         Assert.That(summed, Is.GreaterThanOrEqualTo(3));
+    }
+
+    [Test]
+    public void IsFailureOutcome_WhenInFlight_ReturnsFalse()
+    {
+        Assert.That(
+            RecommendationTelemetry.IsFailureOutcome(DispatchItemOutcome.InFlight),
+            Is.False);
+    }
+
+    [Test]
+    public void IsFailureOutcome_WhenGenuineFailures_ReturnsTrue()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                RecommendationTelemetry.IsFailureOutcome(
+                    DispatchItemOutcome.Ambiguous),
+                Is.True);
+            Assert.That(
+                RecommendationTelemetry.IsFailureOutcome(
+                    DispatchItemOutcome.Failed),
+                Is.True);
+            Assert.That(
+                RecommendationTelemetry.IsFailureOutcome(
+                    DispatchItemOutcome.Suppressed),
+                Is.True);
+        });
     }
 
     private static MeterListener Listen(

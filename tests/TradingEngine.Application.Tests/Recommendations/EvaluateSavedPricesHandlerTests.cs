@@ -270,7 +270,8 @@ public sealed class EvaluateSavedPricesHandlerTests
             "USD",
             100m,
             101m,
-            []);
+            [],
+            null);
 
         EvaluationRunResult result = await CreateHandler().HandleAsync(
             new EvaluateSavedPrices(),
@@ -376,7 +377,12 @@ public sealed class EvaluateSavedPricesHandlerTests
         decimal? bid,
         decimal? ask = null)
     {
-        return new SavedPriceObservation(slot, bid, ask ?? bid + 1m, "USD");
+        return new SavedPriceObservation(
+            slot,
+            bid,
+            ask ?? bid + 1m,
+            "USD",
+            Guid.NewGuid());
     }
 
     private static EvaluableInstrument Instrument()

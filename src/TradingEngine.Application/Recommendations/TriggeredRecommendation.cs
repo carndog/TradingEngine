@@ -13,4 +13,5 @@ public sealed record TriggeredRecommendation(
     string QuoteCurrency,
     decimal? CurrentBid,
     decimal? CurrentAsk,
-    IReadOnlyList<TriggeredCondition> Matches);
+    IReadOnlyList<TriggeredCondition> Matches,
+    Guid? CollectionInvocationId);

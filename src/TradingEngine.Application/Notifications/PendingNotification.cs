@@ -17,4 +17,5 @@ public sealed record PendingNotification(
     decimal? CurrentAsk,
     IReadOnlyList<TriggeredCondition> Matches,
     NotificationStatus Status,
-    int AttemptCount);
+    int AttemptCount,
+    Guid? CollectionInvocationId);

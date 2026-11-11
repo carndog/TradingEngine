@@ -24,6 +24,8 @@ internal sealed class NotificationIntentRow
 
     public decimal? CurrentAsk { get; set; }
 
+    public Guid? CollectionInvocationId { get; set; }
+
     public string Status { get; set; } = string.Empty;
 
     public string? ProviderOperationId { get; set; }

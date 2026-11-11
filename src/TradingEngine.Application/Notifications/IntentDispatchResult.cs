@@ -7,5 +7,6 @@ public sealed record IntentDispatchResult(
     Guid InstrumentId,
     Instant ScheduledFor,
     Guid MonitoringRuleRevisionId,
+    Guid? CollectionInvocationId,
     DispatchItemOutcome Outcome,
     string? ErrorKind);

@@ -268,7 +268,10 @@ public sealed class EvaluateSavedPricesHandler
                 ranEvaluation = true;
                 if (evaluation.Value.Outcome == EvaluationOutcome.Triggered)
                 {
-                    intent = MapIntent(instrument.Id, evaluation.Value);
+                    intent = MapIntent(
+                        instrument.Id,
+                        observation.InvocationId,
+                        evaluation.Value);
                     triggeredHere = true;
                 }
             }
@@ -309,7 +312,8 @@ public sealed class EvaluateSavedPricesHandler
                 committedIntents.Add(new CommittedIntent(
                     intent.IntentId,
                     intent.ScheduledFor,
-                    intent.MonitoringRuleRevisionId));
+                    intent.MonitoringRuleRevisionId,
+                    intent.CollectionInvocationId));
             }
         }
 
@@ -361,6 +365,7 @@ public sealed class EvaluateSavedPricesHandler
 
     private static TriggeredRecommendation MapIntent(
         Guid instrumentId,
+        Guid collectionInvocationId,
         EvaluationResult result)
     {
         return new TriggeredRecommendation(
@@ -373,7 +378,8 @@ public sealed class EvaluateSavedPricesHandler
             result.QuoteCurrency,
             result.CurrentBid,
             result.CurrentAsk,
-            result.Matches);
+            result.Matches,
+            collectionInvocationId);
     }
 
     private static InstrumentEvaluationResult Idle(Guid instrumentId)

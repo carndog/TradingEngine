@@ -101,11 +101,13 @@ internal sealed class RecommendationEvaluationHostedService : BackgroundService
                 _logger.LogInformation(
                     "Committed notification intent {IntentId} for instrument " +
                     "{InstrumentId} at slot {ScheduledFor} under revision " +
-                    "{MonitoringRuleRevisionId}.",
+                    "{MonitoringRuleRevisionId} from collection " +
+                    "{CollectionInvocationId}.",
                     committed.IntentId,
                     item.InstrumentId,
                     committed.ScheduledFor,
-                    committed.MonitoringRuleRevisionId);
+                    committed.MonitoringRuleRevisionId,
+                    committed.CollectionInvocationId);
             }
         }
     }
