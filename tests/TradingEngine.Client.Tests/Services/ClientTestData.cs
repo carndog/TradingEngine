@@ -28,6 +28,45 @@ internal static class ClientTestData
             token);
     }
 
+    internal static ListingDto Listing(
+        string unitState = "unconfirmed",
+        string? nativeQuoteCurrency = "GBX",
+        string? unitSource = null,
+        bool deploymentConfigured = false,
+        string? concurrencyToken = "listing-tok-1",
+        string? resolutionState = "resolved",
+        string? provider = "eToro")
+    {
+        return new ListingDto(
+            resolutionState,
+            null,
+            provider,
+            provider is null ? null : 4242,
+            provider is null ? null : "XTEST",
+            provider is null ? null : "Test Exchange",
+            provider is null ? null : "Synthetic Instrument",
+            unitState,
+            nativeQuoteCurrency,
+            unitSource,
+            deploymentConfigured,
+            concurrencyToken);
+    }
+
+    internal static CollectionStatusDto Collection(
+        string status,
+        DateTimeOffset? lastObservedAt = null,
+        string? lastAttemptErrorCode = null)
+    {
+        return new CollectionStatusDto(
+            status,
+            null,
+            null,
+            lastObservedAt,
+            null,
+            lastAttemptErrorCode is null ? "Observed" : "Failed",
+            lastAttemptErrorCode);
+    }
+
     internal static MonitoringRuleRevisionDto Revision(
         Guid id,
         string kind = "draft",

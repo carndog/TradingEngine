@@ -55,6 +55,83 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.ToTable("RecommendationCheckpoints", (string)null);
                 });
 
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.ListingConfigurationRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ConfirmedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("ConfirmedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Exchange")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime>("LastChangedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("NativeQuoteCurrency")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ProviderExchangeName")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("ProviderInstrumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ProviderSymbol")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("UnitSource")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Exchange", "Symbol")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ListingConfigurations_Exchange_Symbol");
+
+                    b.ToTable("ListingConfigurations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ListingConfigurations_ChangeTimestamps", "[LastChangedAt] >= [ConfirmedAt]");
+
+                            t.HasCheckConstraint("CK_ListingConfigurations_UnitSource", "[UnitSource] IN ('Administrator', 'ProviderMetadata')");
+                        });
+                });
+
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRevisionRow", b =>
                 {
                     b.Property<Guid>("Id")

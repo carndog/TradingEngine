@@ -28,6 +28,10 @@ public static class MarketDataErrors
         "market_data.quote_currency_conflict",
         "The configured provider quote currency conflicts with the requested quote currency.");
 
+    public static readonly Error QuoteCurrencySourceConflict = Error.Conflict(
+        "market_data.quote_currency_source_conflict",
+        "The persisted listing configuration conflicts with the deployment-configured quote currency mapping.");
+
     public static readonly Error SearchPaginationIncomplete = Error.PreconditionFailed(
         "market_data.search_pagination_incomplete",
         "The provider did not return all search result pages within the permitted bounds.");

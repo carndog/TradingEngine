@@ -876,6 +876,139 @@ public sealed class EToroMarketDataProviderTests
         });
     }
 
+    [Test]
+    public async Task ResolveListingAsync_WhenSingleMatch_ReturnsResolvedListing()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4242, "DEMO", 5, "Test Exchange")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Value.Provider, Is.EqualTo("eToro"));
+            Assert.That(result.Value.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(result.Value.ProviderSymbol, Is.EqualTo("DEMO"));
+            Assert.That(result.Value.ProviderExchangeName, Is.EqualTo("Test Exchange"));
+            Assert.That(result.Value.ProviderExchangeId, Is.EqualTo(5));
+            Assert.That(result.Value.NativeQuoteCurrency, Is.Null);
+            Assert.That(handler.Requests, Has.Count.EqualTo(1));
+            Assert.That(
+                handler.Requests[0].RequestUri!.ToString(),
+                Does.Contain("/api/v1/market-data/search"));
+        });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WhenNoMatch_ReturnsUnresolved()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (9001, "OTHER", 5, "Test Exchange")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.InstrumentMappingUnresolved.Code));
+        });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WhenMatchOnUnmappedVenue_ReturnsUnresolved()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4242, "DEMO", 7, "Other Exchange")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.InstrumentMappingUnresolved.Code));
+        });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WhenMultipleMatches_ReturnsAmbiguous()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody(
+            (4242, "DEMO", 5, "Test Exchange"),
+            (4243, "DEMO", 5, "Test Exchange")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.InstrumentMappingAmbiguous.Code));
+        });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WithoutExchangeMapping_ReturnsUnconfigured()
+    {
+        _options.ExchangeMap = new Dictionary<string, string[]>(
+            StringComparer.OrdinalIgnoreCase);
+        ScriptedHttpMessageHandler handler = new();
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.ExchangeMappingUnconfigured.Code));
+            Assert.That(handler.Requests, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void ResolveListingAsync_WithoutConfiguredCredentials_ThrowsInvalidOperation()
+    {
+        _options.ApiKey = string.Empty;
+        _options.UserKey = string.Empty;
+        ScriptedHttpMessageHandler handler = new();
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                async () => await provider.ResolveListingAsync(
+                    new MarketListingQuery("XTEST", "DEMO"),
+                    CancellationToken.None),
+                Throws.TypeOf<InvalidOperationException>());
+            Assert.That(handler.Requests, Is.Empty);
+        });
+    }
+
     private EToroMarketDataProvider CreateProvider(ScriptedHttpMessageHandler handler)
     {
         return CreateProvider(handler, new ProviderRateGate(_clock, _timeProvider));
@@ -893,6 +1026,9 @@ public sealed class EToroMarketDataProviderTests
             Options.Create(_options),
             rateGate,
             new EToroInstrumentIdCache(_clock),
+            new CompositeNativeQuoteUnitMap(
+                new NullListingConfigurationStore(),
+                Options.Create(_options)),
             _clock,
             _timeProvider,
             NullLogger<EToroMarketDataProvider>.Instance);

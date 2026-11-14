@@ -20,17 +20,26 @@ public sealed class WatchedInstrumentEndpointTests
 {
     private WebApplicationFactory<Program> _factory = null!;
     private StubWatchedInstrumentStore _store = null!;
+    private StubListingConfigurationStore _listings = null!;
+    private StubMarketDataProvider _provider = null!;
 
     [SetUp]
     public void SetUp()
     {
         _store = new StubWatchedInstrumentStore();
+        _listings = new StubListingConfigurationStore();
+        _provider = new StubMarketDataProvider();
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.UseSetting("PriceCollection:ExchangeSessions:XTEST:AlwaysOpen", "true");
                 builder.ConfigureServices(services =>
-                    services.AddSingleton<IWatchedInstrumentStore>(_store));
+                {
+                    services.AddSingleton<IWatchedInstrumentStore>(_store);
+                    services.AddSingleton<IListingConfigurationStore>(_listings);
+                    services.AddSingleton<IMarketDataProvider>(_provider);
+                });
             });
     }
 
@@ -85,7 +94,8 @@ public sealed class WatchedInstrumentEndpointTests
         HttpClient client = _factory.CreateClient();
         RegisterWatchedInstrumentRequest request = CreateRequest() with
         {
-            MonitoringState = "monitored"
+            MonitoringState = "monitored",
+            NativeQuoteCurrency = "gbp"
         };
 
         HttpResponseMessage response = await client.PostAsJsonAsync(

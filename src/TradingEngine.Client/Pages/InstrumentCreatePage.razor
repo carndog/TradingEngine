@@ -30,6 +30,11 @@
                    aria-label="Quote currency" placeholder="e.g. USD">
         </label>
         <label>
+            Native quote unit (optional)
+            <input @bind="_nativeUnit" @bind:event="oninput" maxlength="10"
+                   aria-label="Native quote unit" placeholder="e.g. GBX">
+        </label>
+        <label>
             Monitoring state
             <select @bind="_monitoringState" @bind:event="oninput" aria-label="Monitoring state">
                 <option value="configured">Configured</option>
@@ -41,8 +46,19 @@
             <input type="number" min="1" max="3600" @bind="_interval" @bind:event="oninput"
                    aria-label="Sampling interval seconds">
         </label>
+        <div class="te-inline-actions" role="group" aria-label="Sampling interval presets">
+            @foreach (int preset in SamplingPresets)
+            {
+                <button type="button" class="te-tag"
+                        aria-pressed="@(_interval == preset)"
+                        @onclick="() => _interval = preset">@PresetLabel(preset)</button>
+            }
+        </div>
     </div>
-    <p class="te-note">The first monitoring-rule revision becomes effective at registration time.</p>
+    <p class="te-note">Confirm the provider's native quote unit when it differs from a standard
+        currency code — for example GBX when the provider quotes in pence. Leave it blank to
+        register the instrument unconfirmed and confirm the unit later from Settings.
+        The first monitoring-rule revision becomes effective at registration time.</p>
 </section>
 
 <div class="te-editor">
@@ -83,9 +99,12 @@
     private ApiError? _error;
     private bool _busy;
     private bool _completed;
+    private static readonly int[] SamplingPresets = [60, 300, 900];
+
     private string _symbol = string.Empty;
     private string _exchange = string.Empty;
     private string _quoteCurrency = string.Empty;
+    private string _nativeUnit = string.Empty;
     private string _monitoringState = "configured";
     private int _interval = 60;
     private readonly CancellationTokenSource _lifetime = new();
@@ -97,6 +116,7 @@
         && (_symbol.Length > 0
             || _exchange.Length > 0
             || _quoteCurrency.Length > 0
+            || _nativeUnit.Length > 0
             || _monitoringState != "configured"
             || _interval != 60
             || _definition.SameContent(_definitionBaseline) is false);
@@ -119,6 +139,11 @@
     {
     }
 
+    private static string PresetLabel(int seconds)
+    {
+        return seconds % 60 == 0 ? $"{seconds / 60} min" : $"{seconds} s";
+    }
+
     private async Task RegisterAsync()
     {
         _busy = true;
@@ -133,7 +158,8 @@
             _monitoringState,
             definition.PriceScale,
             definition.SupportZones,
-            definition.ResistanceZones);
+            definition.ResistanceZones,
+            string.IsNullOrWhiteSpace(_nativeUnit) ? null : _nativeUnit);
 
         ApiResult<WatchedInstrumentResponse> result;
         try

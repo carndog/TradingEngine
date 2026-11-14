@@ -24,7 +24,12 @@ public sealed class FetchSiteGuardEndpointTests
             {
                 builder.UseSyntheticConnectionString();
                 builder.ConfigureServices(services =>
-                    services.AddSingleton<IWatchedInstrumentStore>(_store));
+                {
+                    services.AddSingleton<IWatchedInstrumentStore>(_store);
+                    services.AddSingleton<IListingConfigurationStore>(
+                        new StubListingConfigurationStore());
+                    services.AddSingleton<IMarketDataProvider>(new StubMarketDataProvider());
+                });
             });
     }
 

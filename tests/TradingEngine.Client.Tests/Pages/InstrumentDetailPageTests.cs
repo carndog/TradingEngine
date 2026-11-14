@@ -32,10 +32,12 @@ public sealed class InstrumentDetailPageTests
         Guid instrumentId,
         string symbol,
         MonitoringRuleTimelineResponse timeline,
-        MonitoringRuleDraftsResponse drafts)
+        MonitoringRuleDraftsResponse drafts,
+        WatchedInstrumentSettingsResponse? settings = null)
     {
         handler.Enqueue(StubHttpMessageHandler.Json(
-            HttpStatusCode.OK, ClientTestData.JsonOf(ClientTestData.Settings(instrumentId, symbol))));
+            HttpStatusCode.OK, ClientTestData.JsonOf(
+                settings ?? ClientTestData.Settings(instrumentId, symbol))));
         handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK, ClientTestData.JsonOf(timeline)));
         handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK, ClientTestData.JsonOf(drafts)));
         handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.NotFound, "{}"));
@@ -108,6 +110,82 @@ public sealed class InstrumentDetailPageTests
             Assert.That(paths, Does.Contain($"/api/watched-instruments/{InstrumentA}/price-observations"));
             Assert.That(handler.Methods, Is.All.EqualTo(HttpMethod.Get));
         });
+    }
+
+    [Test]
+    public void Render_WhenAwaitingFirstObservation_ShowsCollectionStatus()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        EnqueueInstrumentLoad(
+            handler,
+            InstrumentA,
+            "XTEST",
+            ClientTestData.Timeline("tok-1"),
+            ClientTestData.Drafts("tok-1"),
+            ClientTestData.Settings(InstrumentA, "XTEST") with
+            {
+                Collection = ClientTestData.Collection("awaiting-first-observation")
+            });
+        using BunitContext ctx = CreateContext(handler, clock);
+
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+
+        cut.WaitForAssertion(
+            () => Assert.That(
+                cut.Markup,
+                Does.Contain("Collection: waiting for the first observation")),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public void Render_WhenCollecting_ShowsLastObservedTime()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        EnqueueInstrumentLoad(
+            handler,
+            InstrumentA,
+            "XTEST",
+            ClientTestData.Timeline("tok-1"),
+            ClientTestData.Drafts("tok-1"),
+            ClientTestData.Settings(InstrumentA, "XTEST") with
+            {
+                Collection = ClientTestData.Collection(
+                    "collecting",
+                    DateTimeOffset.Parse("2026-10-05T08:59:00Z"))
+            });
+        using BunitContext ctx = CreateContext(handler, clock);
+
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Collection: collecting")),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public void Render_WithoutCollectionStatus_OmitsCollectionLine()
+    {
+        ManualUiClock clock = new(DateTimeOffset.Parse("2026-10-05T09:00:00Z"));
+        StubHttpMessageHandler handler = new();
+        EnqueueInstrumentLoad(
+            handler,
+            InstrumentA,
+            "XTEST",
+            ClientTestData.Timeline("tok-1"),
+            ClientTestData.Drafts("tok-1"));
+        using BunitContext ctx = CreateContext(handler, clock);
+
+        IRenderedComponent<InstrumentDetailPage> cut = ctx.Render<InstrumentDetailPage>(
+            parameters => parameters.Add(component => component.Id, InstrumentA));
+
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("XTEST")),
+            TimeSpan.FromSeconds(2));
+        Assert.That(cut.Markup, Does.Not.Contain("Collection:"));
     }
 
     private static HttpResponseMessage RouteInstrumentRequest(string path)

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using NodaTime;
+using TradingEngine.Api.IntegrationTests.PriceObservations;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Contracts.WatchedInstruments;
@@ -23,17 +24,35 @@ public sealed class WatchedInstrumentSettingsEndpointTests
 
     private WebApplicationFactory<Program> _factory = null!;
     private StubWatchedInstrumentStore _store = null!;
+    private StubListingConfigurationStore _listings = null!;
+    private StubMarketDataProvider _provider = null!;
+    private StubPriceObservationStore _observations = null!;
+    private StubPriceObservationHistoryReader _history = null!;
 
     [SetUp]
     public void SetUp()
     {
         _store = new StubWatchedInstrumentStore();
+        _listings = new StubListingConfigurationStore();
+        _provider = new StubMarketDataProvider();
+        _observations = new StubPriceObservationStore();
+        _history = new StubPriceObservationHistoryReader();
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.UseSetting(
+                    "EToro:MarketData:QuoteCurrencyMap:XTEST:DEMO-2",
+                    "GBP");
+                builder.UseSetting("PriceCollection:ExchangeSessions:XTEST:AlwaysOpen", "true");
                 builder.ConfigureServices(services =>
-                    services.AddSingleton<IWatchedInstrumentStore>(_store));
+                {
+                    services.AddSingleton<IWatchedInstrumentStore>(_store);
+                    services.AddSingleton<IListingConfigurationStore>(_listings);
+                    services.AddSingleton<IMarketDataProvider>(_provider);
+                    services.AddSingleton<IPriceObservationStore>(_observations);
+                    services.AddSingleton<IPriceObservationHistoryReader>(_history);
+                });
             });
     }
 
