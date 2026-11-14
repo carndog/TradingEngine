@@ -285,10 +285,10 @@ public sealed class MonitoringRuleConstraintTests
             January2,
             CreateDefinition());
 
-        Result<Guid> added = await store.AddAsync(registration, CancellationToken.None);
+        Result<WatchedInstrumentRegistrationReceipt> added = await store.AddAsync(registration, CancellationToken.None);
         Assert.That(added.IsSuccess, Is.True);
 
-        return added.Value;
+        return added.Value.InstrumentId;
     }
 
     private async Task<Guid> ReadRuleIdAsync(Guid instrumentId)

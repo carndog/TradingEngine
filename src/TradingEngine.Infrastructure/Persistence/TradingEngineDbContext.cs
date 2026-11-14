@@ -14,6 +14,11 @@ public sealed class TradingEngineDbContext : DbContext
         get { return Set<WatchedInstrumentRow>(); }
     }
 
+    internal DbSet<ListingConfigurationRow> ListingConfigurations
+    {
+        get { return Set<ListingConfigurationRow>(); }
+    }
+
     internal DbSet<ChartAnalysisDefinitionRow> ChartAnalysisDefinitions
     {
         get { return Set<ChartAnalysisDefinitionRow>(); }

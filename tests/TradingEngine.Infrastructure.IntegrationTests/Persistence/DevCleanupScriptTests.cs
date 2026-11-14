@@ -145,7 +145,7 @@ public sealed class DevCleanupScriptTests
 
         await using TradingEngineDbContext context = CreateContext();
         SqlServerWatchedInstrumentStore store = new(context, _serializer);
-        return (await store.AddAsync(registration, CancellationToken.None)).Value;
+        return (await store.AddAsync(registration, CancellationToken.None)).Value.InstrumentId;
     }
 
     private async Task SeedDraftRevisionAsync(Guid instrumentId)

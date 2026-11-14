@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NodaTime;
+using TradingEngine.Application.Listings;
+using TradingEngine.Application.MarketData;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Contracts.WatchedInstruments;
@@ -20,17 +22,26 @@ public sealed class WatchedInstrumentEndpointTests
 {
     private WebApplicationFactory<Program> _factory = null!;
     private StubWatchedInstrumentStore _store = null!;
+    private StubListingConfigurationStore _listings = null!;
+    private StubMarketDataProvider _provider = null!;
 
     [SetUp]
     public void SetUp()
     {
         _store = new StubWatchedInstrumentStore();
+        _listings = new StubListingConfigurationStore();
+        _provider = new StubMarketDataProvider();
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSyntheticConnectionString();
+                builder.UseSetting("PriceCollection:ExchangeSessions:XTEST:AlwaysOpen", "true");
                 builder.ConfigureServices(services =>
-                    services.AddSingleton<IWatchedInstrumentStore>(_store));
+                {
+                    services.AddSingleton<IWatchedInstrumentStore>(_store);
+                    services.AddSingleton<IListingConfigurationStore>(_listings);
+                    services.AddSingleton<IMarketDataProvider>(_provider);
+                });
             });
     }
 
@@ -80,12 +91,120 @@ public sealed class WatchedInstrumentEndpointTests
     }
 
     [Test]
+    public async Task PostWatchedInstrument_WhenProviderUnavailableAndConfigured_ReturnsCreatedWithUnavailableResolution()
+    {
+        _provider.ListingResponder = (_, _) =>
+            Task.FromResult<Result<MarketListing>>(
+                MarketDataErrors.ProviderUnavailable);
+        HttpClient client = _factory.CreateClient();
+        RegisterWatchedInstrumentRequest request = CreateRequest();
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            request);
+        WatchedInstrumentResponse? body = await response.Content
+            .ReadFromJsonAsync<WatchedInstrumentResponse>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+            Assert.That(body, Is.Not.Null);
+            Assert.That(body!.MonitoringState, Is.EqualTo("configured"));
+            Assert.That(body.Listing, Is.Not.Null);
+            Assert.That(
+                body.Listing!.ResolutionState,
+                Is.EqualTo("unavailable"));
+            Assert.That(
+                body.Listing.ResolutionDetailCode,
+                Is.EqualTo("market_data.provider_unavailable"));
+            Assert.That(body.Listing.UnitState, Is.EqualTo("unconfirmed"));
+            Assert.That(_store.AddedRegistration, Is.Not.Null);
+        });
+    }
+
+    [Test]
+    public async Task PostWatchedInstrument_WhenProviderUnavailableAndMonitored_ReturnsPreconditionFailed()
+    {
+        _provider.ListingResponder = (_, _) =>
+            Task.FromResult<Result<MarketListing>>(
+                MarketDataErrors.ProviderUnavailable);
+        HttpClient client = _factory.CreateClient();
+        RegisterWatchedInstrumentRequest request = CreateRequest() with
+        {
+            MonitoringState = "monitored",
+            NativeQuoteCurrency = "gbp"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            request);
+        ProblemDetails? problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                response.StatusCode,
+                Is.EqualTo(HttpStatusCode.PreconditionFailed));
+            Assert.That(problem, Is.Not.Null);
+            Assert.That(
+                ProblemCode(problem),
+                Is.EqualTo("market_data.provider_unavailable"));
+            Assert.That(_store.AddedRegistration, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task PostWatchedInstrument_WhenReadinessFails_StagesNoListingOrInstrument()
+    {
+        _listings.Seed(new ListingConfigurationSnapshot(
+            InstrumentListing.Restore(
+                "XOTHER",
+                "DEMO-2",
+                "eToro",
+                4242,
+                "DEMO-2",
+                "Test Exchange",
+                "Demo Two",
+                "GBP",
+                ListingUnitSource.Administrator,
+                "test-admin",
+                Instant.FromUtc(2026, 1, 2, 9, 30),
+                Instant.FromUtc(2026, 1, 2, 9, 30)).Value,
+            [5, 5, 5, 5, 5, 5, 5, 5]));
+        HttpClient client = _factory.CreateClient();
+        RegisterWatchedInstrumentRequest request = CreateRequest() with
+        {
+            Exchange = "xother",
+            MonitoringState = "monitored",
+            NativeQuoteCurrency = "gbp"
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            request);
+        ProblemDetails? problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                response.StatusCode,
+                Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(
+                ProblemCode(problem),
+                Is.EqualTo("price_collection.exchange_session_unconfigured"));
+            Assert.That(_store.AddedRegistration, Is.Null);
+            Assert.That(_listings.SavedUpserts, Is.Empty);
+        });
+    }
+
+    [Test]
     public async Task PostWatchedInstrument_WithMonitoredState_ReturnsMonitoredResponse()
     {
         HttpClient client = _factory.CreateClient();
         RegisterWatchedInstrumentRequest request = CreateRequest() with
         {
-            MonitoringState = "monitored"
+            MonitoringState = "monitored",
+            NativeQuoteCurrency = "gbp"
         };
 
         HttpResponseMessage response = await client.PostAsJsonAsync(

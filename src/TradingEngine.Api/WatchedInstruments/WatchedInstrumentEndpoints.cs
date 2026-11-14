@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using NodaTime;
+using TradingEngine.Application.Listings;
+using TradingEngine.Application.PriceCollection;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Application.WatchedInstruments.Delete;
 using TradingEngine.Application.WatchedInstruments.Read;
 using TradingEngine.Application.WatchedInstruments.Register;
 using TradingEngine.Application.WatchedInstruments.Search;
 using TradingEngine.Application.WatchedInstruments.Settings;
+using TradingEngine.Application.WatchedInstruments.Status;
 using TradingEngine.Contracts.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.MonitoringRules;
@@ -29,6 +32,7 @@ internal static class WatchedInstrumentEndpoints
         group.MapGet("/{id:guid}", GetAsync);
         group.MapGet("/{id:guid}/settings", GetSettingsAsync);
         group.MapPut("/{id:guid}/settings", PutSettingsAsync);
+        group.MapPut("/{id:guid}/listing", PutListingAsync);
         group.MapPost("/bulk-delete", BulkDeleteAsync);
 
         return group;
@@ -37,6 +41,7 @@ internal static class WatchedInstrumentEndpoints
     private static async Task<Results<Created<WatchedInstrumentResponse>, ProblemHttpResult>> RegisterAsync(
         RegisterWatchedInstrumentRequest? request,
         RegisterWatchedInstrumentHandler handler,
+        HttpContext context,
         CancellationToken cancellationToken)
     {
         if (request is null)
@@ -65,17 +70,25 @@ internal static class WatchedInstrumentEndpoints
             request.QuoteCurrency ?? string.Empty,
             request.SamplingIntervalSeconds,
             monitoringState.Value,
-            definition.Value);
+            definition.Value,
+            RequestActor.Resolve(context),
+            request.NativeQuoteCurrency);
 
-        Result<WatchedInstrument> registered = await handler.HandleAsync(command, cancellationToken);
+        Result<WatchedInstrumentRegistrationOutcome> registered =
+            await handler.HandleAsync(command, cancellationToken);
         if (registered.IsFailure)
         {
             return ApiProblemDetails.Problem(registered.Error);
         }
 
-        WatchedInstrumentResponse response = ToResponse(registered.Value, definition.Value);
+        WatchedInstrumentResponse response = ToResponse(
+            registered.Value.Instrument,
+            definition.Value) with
+        {
+            Listing = ToListingDto(registered.Value.Listing)
+        };
 
-        return TypedResults.Created($"{GroupPath}/{registered.Value.Id}", response);
+        return TypedResults.Created($"{GroupPath}/{registered.Value.Instrument.Id}", response);
     }
 
     private static async Task<Results<Ok<WatchedInstrumentResponse>, ProblemHttpResult>> GetAsync(
@@ -221,6 +234,41 @@ internal static class WatchedInstrumentEndpoints
         return TypedResults.Ok(ToSettingsResponse(saved.Value));
     }
 
+    private static async Task<IResult> PutListingAsync(
+        Guid id,
+        ConfirmListingUnitRequest? request,
+        ConfirmListingUnitHandler handler,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            return ApiProblemDetails.Problem(WatchedInstrumentErrors.RequestRequired);
+        }
+
+        (byte[]? token, Error? tokenError) = ConcurrencyTokens.ExpectedToken(
+            context.Request,
+            InstrumentListingErrors.ConcurrencyTokenInvalid);
+        if (tokenError is not null)
+        {
+            return ApiProblemDetails.Problem(tokenError);
+        }
+
+        Result<ListingStatusInfo> confirmed = await handler.HandleAsync(
+            new ConfirmListingUnit(
+                id,
+                request.NativeQuoteCurrency,
+                token,
+                RequestActor.Resolve(context)),
+            cancellationToken);
+        if (confirmed.IsFailure)
+        {
+            return ApiProblemDetails.Problem(confirmed.Error);
+        }
+
+        return TypedResults.Ok(ToListingDto(confirmed.Value));
+    }
+
     private static async Task<IResult> BulkDeleteAsync(
         BulkDeleteWatchedInstrumentsRequest? request,
         BulkDeleteWatchedInstrumentsHandler handler,
@@ -326,7 +374,88 @@ internal static class WatchedInstrumentEndpoints
             ToOffset(instrument.LastChangedAt),
             ConcurrencyTokens.FormatToken(snapshot.ConcurrencyToken),
             snapshot.Display.DecimalPlaces,
-            FormatPriceDisplayUnit(snapshot.Display.Unit));
+            FormatPriceDisplayUnit(snapshot.Display.Unit),
+            snapshot.Listing is null ? null : ToListingDto(snapshot.Listing),
+            snapshot.Collection is null ? null : ToCollectionDto(snapshot.Collection));
+    }
+
+    private static ListingDto ToListingDto(ListingStatusInfo info)
+    {
+        return new ListingDto(
+            info.ResolutionState is null ? null : FormatResolutionState(info.ResolutionState.Value),
+            info.ResolutionDetailCode,
+            info.Listing?.Provider,
+            info.Listing?.ProviderInstrumentId,
+            info.Listing?.ProviderSymbol,
+            info.Listing?.ProviderExchangeName,
+            info.Listing?.DisplayName,
+            FormatUnitState(info.UnitState),
+            info.NativeQuoteCurrency,
+            info.UnitSource is null ? null : FormatUnitSource(info.UnitSource.Value),
+            info.DeploymentConfigured,
+            info.ConcurrencyToken is null
+                ? null
+                : ConcurrencyTokens.FormatToken(info.ConcurrencyToken));
+    }
+
+    private static CollectionStatusDto ToCollectionDto(CollectionStatusInfo info)
+    {
+        return new CollectionStatusDto(
+            FormatCollectionStatus(info.Status),
+            info.ReasonCode,
+            info.Reason,
+            info.LastObservedAt is null ? null : ToOffset(info.LastObservedAt.Value),
+            info.LastAttemptAt is null ? null : ToOffset(info.LastAttemptAt.Value),
+            info.LastAttemptOutcome?.ToString(),
+            info.LastAttemptErrorCode);
+    }
+
+    private static string FormatResolutionState(ListingResolutionState state)
+    {
+        return state switch
+        {
+            ListingResolutionState.Resolved => "resolved",
+            ListingResolutionState.NotFound => "not-found",
+            ListingResolutionState.Ambiguous => "ambiguous",
+            ListingResolutionState.UnsupportedVenue => "unsupported-venue",
+            _ => "unavailable"
+        };
+    }
+
+    private static string FormatUnitState(ListingUnitState state)
+    {
+        return state switch
+        {
+            ListingUnitState.Confirmed => "confirmed",
+            ListingUnitState.Deployment => "deployment",
+            ListingUnitState.Conflict => "conflict",
+            _ => "unconfirmed"
+        };
+    }
+
+    private static string FormatUnitSource(ListingUnitSource source)
+    {
+        return source switch
+        {
+            ListingUnitSource.ProviderMetadata => "provider-metadata",
+            ListingUnitSource.Deployment => "deployment",
+            _ => "administrator"
+        };
+    }
+
+    private static string FormatCollectionStatus(InstrumentCollectionStatus status)
+    {
+        return status switch
+        {
+            InstrumentCollectionStatus.NotMonitored => "not-monitored",
+            InstrumentCollectionStatus.CollectorDisabled => "collector-disabled",
+            InstrumentCollectionStatus.UnsupportedVenue => "unsupported-venue",
+            InstrumentCollectionStatus.NativeUnitUnconfirmed => "native-unit-unconfirmed",
+            InstrumentCollectionStatus.NativeUnitConflict => "native-unit-conflict",
+            InstrumentCollectionStatus.SessionClosed => "session-closed",
+            InstrumentCollectionStatus.AwaitingFirstObservation => "awaiting-first-observation",
+            _ => "collecting"
+        };
     }
 
     private static Result<PriceDisplayUnit> MapPriceDisplayUnit(string value)

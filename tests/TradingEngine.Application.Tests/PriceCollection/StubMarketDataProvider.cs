@@ -20,6 +20,30 @@ internal sealed class StubMarketDataProvider : IMarketDataProvider
 
     public Instant RetrievedAt { get; set; }
 
+    public Func<MarketListingQuery, CancellationToken, Task<Result<MarketListing>>>?
+        ListingResponder { get; set; }
+
+    public Task<Result<MarketListing>> ResolveListingAsync(
+        MarketListingQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (ListingResponder is not null)
+        {
+            return ListingResponder(query, cancellationToken);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return Task.FromResult<Result<MarketListing>>(new MarketListing(
+            "eToro",
+            4242,
+            query.Symbol,
+            "Test Exchange",
+            5,
+            $"{query.Symbol} Synthetic",
+            null));
+    }
+
     public Task<Result<MarketQuote>> GetCurrentQuoteAsync(
         MarketInstrumentIdentity instrument,
         CancellationToken cancellationToken)

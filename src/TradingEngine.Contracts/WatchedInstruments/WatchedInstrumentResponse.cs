@@ -11,4 +11,5 @@ public sealed record WatchedInstrumentResponse(
     DateTimeOffset LastChangedAt,
     int PriceScale,
     IReadOnlyList<ChartZoneDto> SupportZones,
-    IReadOnlyList<ChartZoneDto> ResistanceZones);
+    IReadOnlyList<ChartZoneDto> ResistanceZones,
+    ListingDto? Listing = null);

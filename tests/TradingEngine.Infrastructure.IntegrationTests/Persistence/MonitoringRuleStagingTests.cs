@@ -369,10 +369,10 @@ public sealed class MonitoringRuleStagingTests
 
         await using TradingEngineDbContext context = CreateContext();
         SqlServerWatchedInstrumentStore store = new(context, _serializer);
-        Result<Guid> result = await store.AddAsync(registration, CancellationToken.None);
+        Result<WatchedInstrumentRegistrationReceipt> result = await store.AddAsync(registration, CancellationToken.None);
         Assert.That(result.IsSuccess, Is.True);
 
-        return result.Value;
+        return result.Value.InstrumentId;
     }
 
     private async Task<Guid> SeedTimelineAsync(

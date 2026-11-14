@@ -96,7 +96,7 @@ Resolved IDs are cached in-memory for `ResolutionCacheSeconds` (eToro IDs are do
 
 ### Quote-currency verification
 
-Provider responses carry no quote-currency field, so the listing's native currency/unit is established through explicit configuration rather than inferred from symbol suffixes:
+Provider responses carry no quote-currency field, so the listing's native currency/unit is established through explicit configuration rather than inferred from symbol suffixes. Every quote and readiness check resolves the unit through `INativeQuoteUnitMap` — a composite that consults the persisted `ListingConfigurations` row for the `(Exchange, Symbol)` first and falls back to the deployment map below; a disagreement between the two fails closed with `market_data.quote_currency_source_conflict` (see [price collection — per-listing native quote-unit configuration](price-collection.md#per-listing-native-quote-unit-configuration)). Administrators confirm new listings through the portal (`PUT /api/watched-instruments/{id}/listing`) without touching deployment settings; the deployment map remains the source for listings configured before the persisted model existed.
 
 ```json
 "QuoteCurrencyMap": {
@@ -115,8 +115,9 @@ Both shapes merge at bind time into one case-insensitive lookup; a discrete `Quo
 
 Every request — including ones served by the resolution cache — is checked before any provider call:
 
-- No `QuoteCurrencyMap` entry for `exchange` + `symbol` → `market_data.quote_currency_unconfigured`.
-- Configured native currency differs from the requested `QuoteCurrency` → `market_data.quote_currency_conflict` (`requestedCurrency`/`providerCurrency` attached as error extensions).
+- No `QuoteCurrencyMap` entry for `exchange` + `symbol` (and no persisted `ListingConfigurations` row) → `market_data.quote_currency_unconfigured`.
+- Persisted row and deployment map disagree → `market_data.quote_currency_source_conflict` (`persistedCurrency`/`deploymentCurrency` attached as error extensions).
+- Resolved native currency differs from the requested `QuoteCurrency` → `market_data.quote_currency_conflict` (`requestedCurrency`/`providerCurrency` attached as error extensions).
 
 Only when the configured native currency equals the requested one does the call proceed; the `MarketQuote` currency label then describes the provider's actual listing units. No FX conversion is ever performed — a conflicting request fails rather than relabel prices.
 

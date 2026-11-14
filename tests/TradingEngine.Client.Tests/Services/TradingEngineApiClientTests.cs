@@ -535,6 +535,64 @@ public sealed class TradingEngineApiClientTests
         Assert.That(invalidated, Is.EqualTo(0));
     }
 
+    [Test]
+    public async Task ConfirmListingUnitAsync_WhenSuccess_SendsPutWithIfMatchAndBody()
+    {
+        Guid id = Guid.Parse("4b6e8f2a-1c3d-4e5f-9a8b-7c6d5e4f3a2b");
+        (string? Path, string? Body, string? IfMatch) captured = (null, null, null);
+        _handler.Enqueue(async (request, _) =>
+        {
+            captured = (
+                request.RequestUri!.AbsolutePath,
+                await request.Content!.ReadAsStringAsync(),
+                request.Headers.TryGetValues("If-Match", out IEnumerable<string>? values)
+                    ? string.Join(",", values)
+                    : null);
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                """{"unitState":"confirmed","nativeQuoteCurrency":"GBX","unitSource":"administrator"}""");
+        });
+
+        ApiResult<ListingDto> result = await _client.ConfirmListingUnitAsync(
+            id,
+            new ConfirmListingUnitRequest("GBX"),
+            "listing-tok-1");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(result.Value!.UnitState, Is.EqualTo("confirmed"));
+            Assert.That(result.Value.NativeQuoteCurrency, Is.EqualTo("GBX"));
+            Assert.That(
+                captured.Path,
+                Is.EqualTo($"/api/watched-instruments/{id}/listing"));
+            Assert.That(captured.Body, Does.Contain("\"nativeQuoteCurrency\":\"GBX\""));
+            Assert.That(captured.IfMatch, Is.EqualTo("\"listing-tok-1\""));
+        });
+    }
+
+    [Test]
+    public async Task ConfirmListingUnitAsync_WhenConflict_ReturnsProblemCode()
+    {
+        _handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.Conflict,
+            """{"title":"Conflict","status":409,"code":"market_data.quote_currency_conflict","detail":"conflict"}"""));
+
+        ApiResult<ListingDto> result = await _client.ConfirmListingUnitAsync(
+            Guid.NewGuid(),
+            new ConfirmListingUnitRequest("USD"),
+            null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error!.Code,
+                Is.EqualTo("market_data.quote_currency_conflict"));
+            Assert.That(result.Error.Status, Is.EqualTo(409));
+        });
+    }
+
     private static TradingEngineApiClient CreateClient(
         StubHttpMessageHandler handler,
         TimeSpan? requestTimeout = null,
