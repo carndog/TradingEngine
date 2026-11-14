@@ -18,7 +18,8 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     private const string SearchPath = "api/v1/market-data/search";
     private const string RatesPath = "api/v2/market-data/rates";
     private const string SearchFields =
-        "instrumentId,internalSymbolFull,internalExchangeId,internalExchangeName,exchangeID";
+        "instrumentId,internalSymbolFull,internalExchangeId,internalExchangeName," +
+        "exchangeID,internalInstrumentDisplayName";
     private const string RequestIdHeader = "x-request-id";
     private const string ApiKeyHeader = "x-api-key";
     private const string UserKeyHeader = "x-user-key";
@@ -34,6 +35,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     private readonly EToroMarketDataOptions _options;
     private readonly ProviderRateGate _rateGate;
     private readonly EToroInstrumentIdCache _instrumentIdCache;
+    private readonly INativeQuoteUnitMap _quoteUnits;
     private readonly IClock _clock;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<EToroMarketDataProvider> _logger;
@@ -43,6 +45,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         IOptions<EToroMarketDataOptions> options,
         ProviderRateGate rateGate,
         EToroInstrumentIdCache instrumentIdCache,
+        INativeQuoteUnitMap quoteUnits,
         IClock clock,
         TimeProvider timeProvider,
         ILogger<EToroMarketDataProvider> logger)
@@ -52,6 +55,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         _rateGate = rateGate ?? throw new ArgumentNullException(nameof(rateGate));
         _instrumentIdCache = instrumentIdCache
             ?? throw new ArgumentNullException(nameof(instrumentIdCache));
+        _quoteUnits = quoteUnits ?? throw new ArgumentNullException(nameof(quoteUnits));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -64,7 +68,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         ArgumentNullException.ThrowIfNull(instrument);
         RequireCredentials();
 
-        Error? currencyError = CheckQuoteCurrency(instrument);
+        Error? currencyError = await CheckQuoteCurrencyAsync(instrument, cancellationToken);
         if (currencyError is not null)
         {
             return currencyError;
@@ -83,6 +87,92 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         }
 
         return await GetRateQuoteAsync(instrument, resolved.Value, deadline, cancellationToken);
+    }
+
+    public async Task<Result<MarketListing>> ResolveListingAsync(
+        MarketListingQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (CredentialsConfigured() is false)
+        {
+            return MarketDataErrors.ProviderCredentialsUnconfigured;
+        }
+
+        if (_options.ExchangeMap.TryGetValue(query.Exchange, out string[]? mappings) is false
+            || mappings.Length == 0)
+        {
+            return MarketDataErrors.ExchangeMappingUnconfigured
+                .WithExtension("exchange", query.Exchange)
+                .WithExtension("symbol", query.Symbol);
+        }
+
+        Instant deadline = _clock.GetCurrentInstant()
+            .Plus(Duration.FromTimeSpan(MaxExecutionTime()));
+
+        Result<List<EToroSearchItem>> search;
+        try
+        {
+            search = await SearchAllPagesAsync(
+                query.Exchange,
+                query.Symbol,
+                deadline,
+                cancellationToken);
+        }
+        catch (TimeoutException exception)
+        {
+            return Unavailable(query, exception);
+        }
+        catch (EToroMarketDataException exception)
+        {
+            return Unavailable(query, exception);
+        }
+        catch (InvalidDataException exception)
+        {
+            return Unavailable(query, exception);
+        }
+        catch (HttpRequestException exception)
+        {
+            return Unavailable(query, exception);
+        }
+
+        if (search.IsFailure)
+        {
+            return search.Error;
+        }
+
+        EToroSearchItem[] matches = ResolveMatches(
+            query.Exchange,
+            query.Symbol,
+            search.Value,
+            mappings);
+        if (matches.Length == 0)
+        {
+            return MarketDataErrors.InstrumentMappingUnresolved
+                .WithExtension("exchange", query.Exchange)
+                .WithExtension("symbol", query.Symbol);
+        }
+
+        if (matches.Length > 1)
+        {
+            return MarketDataErrors.InstrumentMappingAmbiguous
+                .WithExtension("exchange", query.Exchange)
+                .WithExtension("symbol", query.Symbol)
+                .WithExtension(
+                    "candidateInstrumentIds",
+                    matches.Select(match => match.InstrumentId!.Value).ToArray());
+        }
+
+        EToroSearchItem match = matches[0];
+        return new MarketListing(
+            ProviderName,
+            match.InstrumentId!.Value,
+            match.InternalSymbolFull ?? query.Symbol,
+            match.InternalExchangeName,
+            match.InternalExchangeId ?? match.ExchangeId,
+            match.InternalInstrumentDisplayName,
+            null);
     }
 
     private async Task<Result<long>> ResolveInstrumentIdAsync(
@@ -107,6 +197,25 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 .WithExtension("symbol", instrument.Symbol);
         }
 
+        Result<List<EToroSearchItem>> search = await SearchAllPagesAsync(
+            instrument.Exchange,
+            instrument.Symbol,
+            deadline,
+            cancellationToken);
+        if (search.IsFailure)
+        {
+            return search.Error;
+        }
+
+        return ResolveFromSearch(instrument, search.Value, mappings);
+    }
+
+    private async Task<Result<List<EToroSearchItem>>> SearchAllPagesAsync(
+        string exchange,
+        string symbol,
+        Instant deadline,
+        CancellationToken cancellationToken)
+    {
         List<EToroSearchItem> items = [];
         HashSet<long> observedIds = [];
         int totalItems = int.MaxValue;
@@ -114,7 +223,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         for (int page = 1; page <= _options.MaxSearchPages; page++)
         {
             EToroProviderResponse response = await SendWithBoundedRetriesAsync(
-                SearchUri(instrument.Symbol, page, _options.SearchPageSize),
+                SearchUri(symbol, page, _options.SearchPageSize),
                 deadline,
                 cancellationToken);
 
@@ -159,13 +268,31 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         if (observedIds.Count < totalItems)
         {
             return MarketDataErrors.SearchPaginationIncomplete
-                .WithExtension("exchange", instrument.Exchange)
-                .WithExtension("symbol", instrument.Symbol)
+                .WithExtension("exchange", exchange)
+                .WithExtension("symbol", symbol)
                 .WithExtension("totalItems", totalItems)
                 .WithExtension("distinctItemsReceived", observedIds.Count);
         }
 
-        return ResolveFromSearch(instrument, items, mappings);
+        return items;
+    }
+
+    private static EToroSearchItem[] ResolveMatches(
+        string exchange,
+        string symbol,
+        List<EToroSearchItem> items,
+        string[] mappings)
+    {
+        return items
+            .Where(item => string.Equals(
+                item.InternalSymbolFull,
+                symbol,
+                StringComparison.OrdinalIgnoreCase))
+            .Where(item => MatchesExchange(item, mappings))
+            .Where(item => item.InstrumentId.HasValue)
+            .GroupBy(item => item.InstrumentId!.Value)
+            .Select(group => group.First())
+            .ToArray();
     }
 
     private Result<long> ResolveFromSearch(
@@ -173,40 +300,38 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         List<EToroSearchItem> items,
         string[] mappings)
     {
-        long[] matches = items
-            .Where(item => string.Equals(
-                item.InternalSymbolFull,
-                instrument.Symbol,
-                StringComparison.OrdinalIgnoreCase))
-            .Where(item => MatchesExchange(item, mappings))
-            .Select(item => item.InstrumentId)
-            .OfType<long>()
-            .Distinct()
+        EToroSearchItem[] matches = ResolveMatches(
+            instrument.Exchange,
+            instrument.Symbol,
+            items,
+            mappings);
+        long[] matchIds = matches
+            .Select(match => match.InstrumentId!.Value)
             .ToArray();
 
-        if (matches.Length == 0)
+        if (matchIds.Length == 0)
         {
             return MarketDataErrors.InstrumentMappingUnresolved
                 .WithExtension("exchange", instrument.Exchange)
                 .WithExtension("symbol", instrument.Symbol);
         }
 
-        if (matches.Length > 1)
+        if (matchIds.Length > 1)
         {
             return MarketDataErrors.InstrumentMappingAmbiguous
                 .WithExtension("exchange", instrument.Exchange)
                 .WithExtension("symbol", instrument.Symbol)
-                .WithExtension("candidateInstrumentIds", matches);
+                .WithExtension("candidateInstrumentIds", matchIds);
         }
 
         _instrumentIdCache.Store(
             instrument.Exchange,
             instrument.Symbol,
             instrument.QuoteCurrency,
-            matches[0],
+            matchIds[0],
             TimeSpan.FromSeconds(_options.ResolutionCacheSeconds));
 
-        return matches[0];
+        return matchIds[0];
     }
 
     private async Task<Result<MarketQuote>> GetRateQuoteAsync(
@@ -387,13 +512,30 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             $"&fields={SearchFields}&pageNumber={page}&pageSize={pageSize}");
     }
 
-    private Error? CheckQuoteCurrency(MarketInstrumentIdentity instrument)
+    private async Task<Error?> CheckQuoteCurrencyAsync(
+        MarketInstrumentIdentity instrument,
+        CancellationToken cancellationToken)
     {
-        if (_options.QuoteCurrencyMap.TryGetValue(
-                instrument.Exchange,
-                out Dictionary<string, string>? symbols) is false
-            || symbols.TryGetValue(instrument.Symbol, out string? nativeCurrency) is false
-            || string.IsNullOrWhiteSpace(nativeCurrency))
+        Result<NativeQuoteUnitResolution> resolved = await _quoteUnits.ResolveAsync(
+            instrument.Exchange,
+            instrument.Symbol,
+            cancellationToken);
+        if (resolved.IsFailure)
+        {
+            return resolved.Error;
+        }
+
+        NativeQuoteUnitResolution resolution = resolved.Value;
+        if (resolution.SourceConflict)
+        {
+            return MarketDataErrors.QuoteCurrencySourceConflict
+                .WithExtension("exchange", instrument.Exchange)
+                .WithExtension("symbol", instrument.Symbol)
+                .WithExtension("persistedCurrency", resolution.Persisted?.Listing.NativeQuoteCurrency)
+                .WithExtension("deploymentCurrency", resolution.DeploymentCurrency);
+        }
+
+        if (resolution.NativeQuoteCurrency is null)
         {
             return MarketDataErrors.QuoteCurrencyUnconfigured
                 .WithExtension("exchange", instrument.Exchange)
@@ -402,7 +544,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         }
 
         if (string.Equals(
-                nativeCurrency,
+                resolution.NativeQuoteCurrency,
                 instrument.QuoteCurrency,
                 StringComparison.OrdinalIgnoreCase) is false)
         {
@@ -410,7 +552,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 .WithExtension("exchange", instrument.Exchange)
                 .WithExtension("symbol", instrument.Symbol)
                 .WithExtension("requestedCurrency", instrument.QuoteCurrency)
-                .WithExtension("providerCurrency", nativeCurrency);
+                .WithExtension("providerCurrency", resolution.NativeQuoteCurrency);
         }
 
         return null;
@@ -630,8 +772,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
 
     private void RequireCredentials()
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiKey)
-            || string.IsNullOrWhiteSpace(_options.UserKey))
+        if (CredentialsConfigured() is false)
         {
             throw new InvalidOperationException(
                 "The eToro market-data credentials are not configured. Set " +
@@ -639,6 +780,24 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 $"{EToroMarketDataOptions.SectionName}:UserKey through a secure " +
                 "configuration source.");
         }
+    }
+
+    private bool CredentialsConfigured()
+    {
+        return string.IsNullOrWhiteSpace(_options.ApiKey) is false
+            && string.IsNullOrWhiteSpace(_options.UserKey) is false;
+    }
+
+    private Error Unavailable(MarketListingQuery query, Exception exception)
+    {
+        _logger.LogWarning(
+            exception,
+            "eToro listing resolution for {Exchange}/{Symbol} failed.",
+            query.Exchange,
+            query.Symbol);
+        return MarketDataErrors.ProviderUnavailable
+            .WithExtension("exchange", query.Exchange)
+            .WithExtension("symbol", query.Symbol);
     }
 
     private static async Task<EToroProviderResponse> CaptureAsync(

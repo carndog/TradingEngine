@@ -13,6 +13,7 @@ public sealed class CollectDuePricesHandler
     private readonly IMonitoredInstrumentSource _source;
     private readonly IPriceObservationStore _store;
     private readonly IMarketDataProvider _marketData;
+    private readonly INativeQuoteUnitMap _quoteUnits;
     private readonly ISamplingPolicy _samplingPolicy;
     private readonly IMarketSessionPolicy _sessionPolicy;
     private readonly IClock _clock;
@@ -23,6 +24,7 @@ public sealed class CollectDuePricesHandler
         IMonitoredInstrumentSource source,
         IPriceObservationStore store,
         IMarketDataProvider marketData,
+        INativeQuoteUnitMap quoteUnits,
         ISamplingPolicy samplingPolicy,
         IMarketSessionPolicy sessionPolicy,
         IClock clock,
@@ -32,6 +34,7 @@ public sealed class CollectDuePricesHandler
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _marketData = marketData ?? throw new ArgumentNullException(nameof(marketData));
+        _quoteUnits = quoteUnits ?? throw new ArgumentNullException(nameof(quoteUnits));
         _samplingPolicy = samplingPolicy
             ?? throw new ArgumentNullException(nameof(samplingPolicy));
         _sessionPolicy = sessionPolicy
@@ -263,6 +266,26 @@ public sealed class CollectDuePricesHandler
                 cancellationToken);
         }
 
+        string? unitError = await ResolveUnitErrorAsync(
+            instrument,
+            budgetToken,
+            cancellationToken);
+        if (unitError is not null)
+        {
+            return await RecordOutcomeAsync(
+                instrument,
+                scheduledFor,
+                latestAttempt,
+                attemptedAt,
+                invocationId,
+                PriceCollectionOutcome.Failed,
+                unitError,
+                null,
+                null,
+                budgetToken,
+                cancellationToken);
+        }
+
         MarketInstrumentIdentity identity = new(
             instrument.Exchange,
             instrument.Symbol,
@@ -367,6 +390,52 @@ public sealed class CollectDuePricesHandler
             quote?.ProviderRequestId,
             budgetToken,
             cancellationToken);
+    }
+
+    private async Task<string?> ResolveUnitErrorAsync(
+        MonitoredInstrument instrument,
+        CancellationToken budgetToken,
+        CancellationToken cancellationToken)
+    {
+        Result<NativeQuoteUnitResolution> resolved;
+        try
+        {
+            resolved = await _quoteUnits.ResolveAsync(
+                instrument.Exchange,
+                instrument.Symbol,
+                budgetToken);
+        }
+        catch (OperationCanceledException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return PriceCollectionErrors.DeadlineExceeded.Code;
+        }
+
+        if (resolved.IsFailure)
+        {
+            return resolved.Error.Code;
+        }
+
+        NativeQuoteUnitResolution resolution = resolved.Value;
+        if (resolution.SourceConflict)
+        {
+            return MarketDataErrors.QuoteCurrencySourceConflict.Code;
+        }
+
+        if (resolution.NativeQuoteCurrency is null)
+        {
+            return MarketDataErrors.QuoteCurrencyUnconfigured.Code;
+        }
+
+        if (string.Equals(
+                resolution.NativeQuoteCurrency,
+                instrument.QuoteCurrency,
+                StringComparison.Ordinal) is false)
+        {
+            return MarketDataErrors.QuoteCurrencyConflict.Code;
+        }
+
+        return null;
     }
 
     private async Task<PriceCollectionItemResult> RecordObservationAsync(

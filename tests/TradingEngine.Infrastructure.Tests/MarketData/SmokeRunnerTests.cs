@@ -148,6 +148,9 @@ public sealed class SmokeRunnerTests
             Options.Create(_options),
             new ProviderRateGate(_clock, _timeProvider),
             new EToroInstrumentIdCache(_clock),
+            new CompositeNativeQuoteUnitMap(
+                new NullListingConfigurationStore(),
+                Options.Create(_options)),
             _clock,
             _timeProvider,
             NullLogger<EToroMarketDataProvider>.Instance);

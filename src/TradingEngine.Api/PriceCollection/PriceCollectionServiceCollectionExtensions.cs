@@ -24,6 +24,8 @@ internal static class PriceCollectionServiceCollectionExtensions
 
         services.AddSingleton(options);
         services.TryAddSingleton<PriceCollectionTelemetry>();
+        services.AddSingleton<IMarketSessionPolicy>(
+            new WeeklyScheduleMarketSessionPolicy(BuildSessions(options)));
 
         if (options.Enabled is false)
         {
@@ -44,8 +46,6 @@ internal static class PriceCollectionServiceCollectionExtensions
                 "collector is enabled.");
         }
 
-        services.AddSingleton<IMarketSessionPolicy>(
-            new WeeklyScheduleMarketSessionPolicy(BuildSessions(options)));
         services.AddSingleton<ISamplingPolicy>(SamplingPolicyResolver.Resolve(
             options.SamplingPolicy,
             options.ProviderRateLimit,
@@ -55,6 +55,7 @@ internal static class PriceCollectionServiceCollectionExtensions
                 provider.GetRequiredService<IMonitoredInstrumentSource>(),
                 provider.GetRequiredService<IPriceObservationStore>(),
                 provider.GetRequiredService<IMarketDataProvider>(),
+                provider.GetRequiredService<INativeQuoteUnitMap>(),
                 provider.GetRequiredService<ISamplingPolicy>(),
                 provider.GetRequiredService<IMarketSessionPolicy>(),
                 provider.GetRequiredService<IClock>(),

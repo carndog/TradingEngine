@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage;
 using NodaTime;
+using TradingEngine.Application.Listings;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Time;
 using TradingEngine.Application.WatchedInstruments;
@@ -17,6 +18,7 @@ namespace TradingEngine.Infrastructure.Persistence;
 public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
 {
     private const string BusinessKeyIndexName = "UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency";
+    private const string ListingKeyIndexName = "UX_ListingConfigurations_Exchange_Symbol";
     private const string RegistrationCreatedBy = "watched-instrument-registration";
 
     private readonly TradingEngineDbContext _context;
@@ -30,11 +32,28 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
     }
 
-    public async Task<Result<Guid>> AddAsync(
+    public async Task<Result<WatchedInstrumentRegistrationReceipt>> AddAsync(
         WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(registration);
+
+        ListingConfigurationRow? listingRow = null;
+        if (registration.Listing is not null)
+        {
+            Result<ListingConfigurationRow> staged =
+                await SqlServerListingConfigurationStore.StageSaveAsync(
+                    _context,
+                    registration.Listing,
+                    registration.ListingConcurrencyToken,
+                    cancellationToken);
+            if (staged.IsFailure)
+            {
+                return staged.Error;
+            }
+
+            listingRow = staged.Value;
+        }
 
         WatchedInstrumentFields fields = registration.Fields;
         Instant createdAt = PersistedInstant.Require(
@@ -80,12 +99,24 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception))
         {
+            if (IsListingKeyViolation(exception))
+            {
+                return InstrumentListingErrors.ConcurrentChange;
+            }
+
             return IsBusinessKeyViolation(exception)
                 ? WatchedInstrumentErrors.DuplicateBusinessKey
                 : WatchedInstrumentErrors.DuplicateId;
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            return InstrumentListingErrors.ConcurrentChange;
+        }
 
-        return row.Id;
+        ListingConfigurationSnapshot? listing = listingRow is null
+            ? null
+            : SqlServerListingConfigurationStore.Snapshot(listingRow).Value;
+        return new WatchedInstrumentRegistrationReceipt(row.Id, listing);
     }
 
     public async Task<Result<WatchedInstrumentConfiguration>> GetAsync(
@@ -388,5 +419,11 @@ public sealed class SqlServerWatchedInstrumentStore : IWatchedInstrumentStore
     {
         return exception.InnerException is SqlException sqlException
             && sqlException.Message.Contains(BusinessKeyIndexName, StringComparison.Ordinal);
+    }
+
+    private static bool IsListingKeyViolation(DbUpdateException exception)
+    {
+        return exception.InnerException is SqlException sqlException
+            && sqlException.Message.Contains(ListingKeyIndexName, StringComparison.Ordinal);
     }
 }

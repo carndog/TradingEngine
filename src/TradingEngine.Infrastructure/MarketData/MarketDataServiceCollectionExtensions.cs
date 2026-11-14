@@ -30,6 +30,8 @@ public static class MarketDataServiceCollectionExtensions
         services.TryAddSingleton<IClock>(SystemClock.Instance);
         services.AddSingleton<ProviderRateGate>();
         services.AddSingleton<EToroInstrumentIdCache>();
+        services.TryAddScoped<IListingConfigurationStore, NullListingConfigurationStore>();
+        services.TryAddScoped<INativeQuoteUnitMap, CompositeNativeQuoteUnitMap>();
         services.AddHttpClient<IMarketDataProvider, EToroMarketDataProvider>(
             (provider, client) =>
             {

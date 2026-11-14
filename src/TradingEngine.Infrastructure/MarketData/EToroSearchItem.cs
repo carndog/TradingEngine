@@ -18,4 +18,7 @@ internal sealed class EToroSearchItem
 
     [JsonPropertyName("exchangeID")]
     public int? ExchangeId { get; set; }
+
+    [JsonPropertyName("internalInstrumentDisplayName")]
+    public string? InternalInstrumentDisplayName { get; set; }
 }

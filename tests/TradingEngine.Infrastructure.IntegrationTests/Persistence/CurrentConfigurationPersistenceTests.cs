@@ -49,7 +49,7 @@ public sealed class CurrentConfigurationPersistenceTests
             "gbp",
             MonitoringState.Monitored);
 
-        Result<Guid> added;
+        Result<WatchedInstrumentRegistrationReceipt> added;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -62,7 +62,7 @@ public sealed class CurrentConfigurationPersistenceTests
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
             Result<WatchedInstrumentConfiguration> retrieved = await store.GetAsync(
-                added.Value,
+                added.Value.InstrumentId,
                 registration.CreatedAt,
                 CancellationToken.None);
 
@@ -70,7 +70,7 @@ public sealed class CurrentConfigurationPersistenceTests
             WatchedInstrument restored = retrieved.Value.Instrument;
             Assert.Multiple(() =>
             {
-                Assert.That(restored.Id, Is.EqualTo(added.Value));
+                Assert.That(restored.Id, Is.EqualTo(added.Value.InstrumentId));
                 Assert.That(restored.Symbol, Is.EqualTo("DEMO-2"));
                 Assert.That(restored.Exchange, Is.EqualTo("XTEST"));
                 Assert.That(restored.QuoteCurrency, Is.EqualTo("GBP"));
@@ -88,7 +88,7 @@ public sealed class CurrentConfigurationPersistenceTests
     [Test]
     public async Task AddAsync_AssignsSameGeneratedIdToBothRows()
     {
-        Result<Guid> added;
+        Result<WatchedInstrumentRegistrationReceipt> added;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -98,7 +98,7 @@ public sealed class CurrentConfigurationPersistenceTests
         }
 
         Assert.That(added.IsSuccess, Is.True);
-        Assert.That(added.Value, Is.Not.EqualTo(Guid.Empty));
+        Assert.That(added.Value.InstrumentId, Is.Not.EqualTo(Guid.Empty));
 
         int instrumentRows;
         int ruleRows;
@@ -107,15 +107,15 @@ public sealed class CurrentConfigurationPersistenceTests
         {
             instrumentRows = await context.Database
                 .SqlQuery<int>(
-                    $"SELECT COUNT(*) AS [Value] FROM WatchedInstruments WHERE Id = {added.Value}")
+                    $"SELECT COUNT(*) AS [Value] FROM WatchedInstruments WHERE Id = {added.Value.InstrumentId}")
                 .SingleAsync();
             ruleRows = await context.Database
                 .SqlQuery<int>(
-                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRules WHERE WatchedInstrumentId = {added.Value}")
+                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRules WHERE WatchedInstrumentId = {added.Value.InstrumentId}")
                 .SingleAsync();
             revisionRows = await context.Database
                 .SqlQuery<int>(
-                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions r JOIN MonitoringRules m ON r.MonitoringRuleId = m.Id WHERE m.WatchedInstrumentId = {added.Value}")
+                    $"SELECT COUNT(*) AS [Value] FROM MonitoringRuleRevisions r JOIN MonitoringRules m ON r.MonitoringRuleId = m.Id WHERE m.WatchedInstrumentId = {added.Value.InstrumentId}")
                 .SingleAsync();
         }
 
@@ -130,8 +130,8 @@ public sealed class CurrentConfigurationPersistenceTests
     [Test]
     public async Task AddAsync_ConsecutiveAdds_GenerateSqlServerOrderedIds()
     {
-        Result<Guid> first;
-        Result<Guid> second;
+        Result<WatchedInstrumentRegistrationReceipt> first;
+        Result<WatchedInstrumentRegistrationReceipt> second;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -147,7 +147,7 @@ public sealed class CurrentConfigurationPersistenceTests
         {
             Assert.That(first.IsSuccess, Is.True);
             Assert.That(second.IsSuccess, Is.True);
-            Assert.That(second.Value, Is.Not.EqualTo(first.Value));
+            Assert.That(second.Value.InstrumentId, Is.Not.EqualTo(first.Value.InstrumentId));
         });
 
         List<Guid> ordered = new();
@@ -157,8 +157,8 @@ public sealed class CurrentConfigurationPersistenceTests
             await using SqlCommand command = connection.CreateCommand();
             command.CommandText =
                 "SELECT [Value] FROM (VALUES (@first), (@second)) AS ids([Value]) ORDER BY [Value]";
-            command.Parameters.AddWithValue("@first", first.Value);
-            command.Parameters.AddWithValue("@second", second.Value);
+            command.Parameters.AddWithValue("@first", first.Value.InstrumentId);
+            command.Parameters.AddWithValue("@second", second.Value.InstrumentId);
 
             await using SqlDataReader reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -167,7 +167,7 @@ public sealed class CurrentConfigurationPersistenceTests
             }
         }
 
-        Assert.That(ordered, Is.EqualTo(new[] { first.Value, second.Value }));
+        Assert.That(ordered, Is.EqualTo(new[] { first.Value.InstrumentId, second.Value.InstrumentId }));
     }
 
     [Test]
@@ -192,7 +192,7 @@ public sealed class CurrentConfigurationPersistenceTests
     [Test]
     public async Task AddAsync_WithDuplicateBusinessKey_ReturnsConflictAndLeavesNoPartialRow()
     {
-        Result<Guid> firstAdd;
+        Result<WatchedInstrumentRegistrationReceipt> firstAdd;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -201,7 +201,7 @@ public sealed class CurrentConfigurationPersistenceTests
                 CancellationToken.None);
         }
 
-        Result<Guid> secondAdd;
+        Result<WatchedInstrumentRegistrationReceipt> secondAdd;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -260,7 +260,7 @@ public sealed class CurrentConfigurationPersistenceTests
             "JPY",
             MonitoringState.Configured);
 
-        Result<Guid> added;
+        Result<WatchedInstrumentRegistrationReceipt> added;
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
@@ -276,7 +276,7 @@ public sealed class CurrentConfigurationPersistenceTests
             "SELECT CONVERT(nvarchar(max), r.DefinitionXml) FROM MonitoringRuleRevisions r " +
             "JOIN MonitoringRules m ON r.MonitoringRuleId = m.Id " +
             "WHERE m.WatchedInstrumentId = @id";
-        command.Parameters.AddWithValue("@id", added.Value);
+        command.Parameters.AddWithValue("@id", added.Value.InstrumentId);
 
         string? storedXml = (string?)await command.ExecuteScalarAsync();
 

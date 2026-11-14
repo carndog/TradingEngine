@@ -9,4 +9,6 @@ public sealed record RegisterWatchedInstrument(
     string QuoteCurrency,
     int SamplingIntervalSeconds,
     MonitoringState MonitoringState,
-    ChartAnalysisDefinition Definition);
+    ChartAnalysisDefinition Definition,
+    string ConfirmedBy,
+    string? NativeQuoteCurrency = null);

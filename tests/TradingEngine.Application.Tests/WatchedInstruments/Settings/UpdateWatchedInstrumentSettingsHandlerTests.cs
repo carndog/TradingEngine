@@ -1,8 +1,12 @@
 using NodaTime;
 using NodaTime.Testing;
+using TradingEngine.Application.PriceCollection;
+using TradingEngine.Application.Tests.Listings;
+using TradingEngine.Application.Tests.PriceCollection;
 using TradingEngine.Application.Tests.WatchedInstruments.Register;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Application.WatchedInstruments.Settings;
+using TradingEngine.Application.WatchedInstruments.Status;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.Results;
 
@@ -20,9 +24,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     public async Task HandleAsync_WithoutToken_ReturnsPreconditionRequired()
     {
         CapturingWatchedInstrumentStore store = new();
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -48,9 +50,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Configured, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -76,9 +76,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -103,9 +101,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -131,9 +127,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Configured, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -157,9 +151,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -182,9 +174,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -207,9 +197,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -234,9 +222,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = WatchedInstrumentErrors.SettingsNotFound;
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -259,9 +245,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -291,9 +275,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
         {
             Display = new PriceDisplayPreferences(0, PriceDisplayUnit.Native)
         };
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -316,9 +298,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -343,9 +323,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -368,9 +346,7 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
     {
         CapturingWatchedInstrumentStore store = new();
         store.GetSettingsResult = CreateSnapshot(MonitoringState.Monitored, 60);
-        UpdateWatchedInstrumentSettingsHandler handler = new(
-            store,
-            new FakeClock(Now));
+        UpdateWatchedInstrumentSettingsHandler handler = CreateHandler(store);
 
         Result<WatchedInstrumentSettingsSnapshot> result = await handler.HandleAsync(
             new UpdateWatchedInstrumentSettings(
@@ -400,5 +376,27 @@ public sealed class UpdateWatchedInstrumentSettingsHandlerTests
             Instant.FromUtc(2026, 1, 2, 9, 30)).Value;
 
         return new WatchedInstrumentSettingsSnapshot(instrument, Token);
+    }
+
+    private static UpdateWatchedInstrumentSettingsHandler CreateHandler(
+        CapturingWatchedInstrumentStore store,
+        StubNativeQuoteUnitMap? quoteUnits = null,
+        StubMarketSessionPolicy? sessionPolicy = null)
+    {
+        StubNativeQuoteUnitMap units = quoteUnits ?? StubNativeQuoteUnitMap.Configured("GBP");
+        StubMarketSessionPolicy sessions = sessionPolicy ?? new StubMarketSessionPolicy();
+        FakeClock clock = new(Now);
+        return new UpdateWatchedInstrumentSettingsHandler(
+            store,
+            clock,
+            new MonitoringReadinessEvaluator(units, sessions, clock),
+            new ListingStatusEvaluator(units),
+            new CollectionStatusEvaluator(
+                units,
+                sessions,
+                new CapturingPriceObservationStore(),
+                new StubPriceObservationHistoryReader(),
+                new PriceCollectionOptions { Enabled = true },
+                clock));
     }
 }

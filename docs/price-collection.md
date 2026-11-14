@@ -50,6 +50,28 @@ Session outcomes:
 | `Closed` | `SkippedMarketClosed` — a recorded skip, not a failure |
 | `Unconfigured` | `Failed` with `price_collection.exchange_session_unconfigured` — a configuration problem, distinct from market-closed |
 
+### Per-listing native quote-unit configuration
+
+A monitored instrument collects prices in the listing's *native* quote unit — the unit the provider actually quotes in (for example `GBX` for pence-priced listings, distinct from any display preference). The authoritative source is `INativeQuoteUnitMap`, resolved per `(Exchange, Symbol)` from two inputs in a fixed order:
+
+1. `ListingConfigurations` — a persisted per-listing row confirmed by an administrator (or by provider metadata where a provider supplies it) through `PUT /api/watched-instruments/{id}/listing`. It carries the provider identity (`Provider`, `ProviderInstrumentId`, `ProviderSymbol`, `ProviderExchangeName`, `DisplayName`), the confirmed `NativeQuoteCurrency`, a `UnitSource` provenance (`Administrator`/`ProviderMetadata`), and a `rowversion` concurrency token guarded by `If-Match`.
+2. `EToro:MarketData:QuoteCurrencyMap` / `QuoteCurrencyMapJson` — the deployment-configured map that predates the persisted model.
+
+Resolution outcomes are deterministic:
+
+| Sources | Result |
+| --- | --- |
+| Persisted row only, or persisted agreeing with deployment | Confirmed native unit from the persisted row |
+| Deployment map only | Deployment-configured unit (`UnitSource` reported as `Deployment`) |
+| Persisted row and deployment map disagree | `market_data.quote_currency_source_conflict` — an explicit conflict; nothing is collected or relabelled |
+| Neither | `market_data.quote_currency_unconfigured` |
+
+Registration and the `PUT …/listing` confirmation resolve the listing through `IMarketDataProvider.ResolveListingAsync` server-side, distinguishing `resolved`, `not-found`, `ambiguous`, `unsupported-venue` and `unavailable`. An instrument may remain `Configured` in any of these states, but a transition to `Monitored` — at registration or through settings — is rejected unless the session is configured and the native unit resolves unambiguously to the instrument's `QuoteCurrency`.
+
+The collector performs the same composite resolution **before every quote request**: an unconfigured unit, a source conflict, or a unit mismatch records a `Failed` attempt with the `market_data.*` code above rather than collecting under a guessed or mismatched currency. Persisted rows are read from SQL on every resolution, so a newly confirmed listing is visible to the running collector with no redeployment or restart. Once a listing is confirmed, its unit cannot be relabelled — an update requesting a different `NativeQuoteCurrency` for the same `(Exchange, Symbol)` fails with `instrument_listing.unit_conflict`.
+
+Settings responses expose both sections: `listing` (resolution state, provider identity, unit state, deployment presence, concurrency token) and `collection` (`not-monitored`, `collector-disabled`, `unsupported-venue`, `native-unit-unconfirmed`, `native-unit-conflict`, `session-closed`, `awaiting-first-observation`, `collecting`, with last-observation and last-attempt details).
+
 ### Outcomes
 
 Every processed instrument produces exactly one `PriceCollectionAttempts` row with an `Outcome` enforced by a SQL check constraint:
@@ -87,7 +109,17 @@ The observation and its `Observed` attempt are inserted in one transaction: if e
 
 ## Persistence
 
-Migration `20261105194347_PriceCollection` is additive — two new tables, no changes to existing ones.
+Migration `20261114133340_ListingConfigurations` adds the listing table below; earlier migration `20261105194347_PriceCollection` added the two collection tables. Both are additive — no changes to existing rows.
+
+`ListingConfigurations` (unique on `Exchange + Symbol`, `rowversion` concurrency token):
+
+| Column | Notes |
+| --- | --- |
+| `Exchange`, `Symbol` | Logical key matching `WatchedInstruments` normalization (uppercased) |
+| `Provider`, `ProviderInstrumentId`, `ProviderSymbol`, `ProviderExchangeName`, `DisplayName` | Provider listing identity resolved at confirmation — the collector never re-searches |
+| `NativeQuoteCurrency` | Confirmed native quote unit, 3–10 letters/digits, uppercased |
+| `UnitSource` | `Administrator` or `ProviderMetadata`, check-constrained |
+| `ConfirmedBy`, `ConfirmedAt`, `LastChangedAt` | Provenance; `LastChangedAt >= ConfirmedAt` check-constrained |
 
 `PriceObservations` (unique on `WatchedInstrumentId + ScheduledFor`):
 
@@ -204,7 +236,9 @@ Each returned `MatchedSlotUtc` is a slot whose collection attempt succeeded *and
 
 **Secure XNAS configuration:** create the five secrets on the GitHub `development` environment (values come from the private deployment context, never committed). `ETORO_MARKET_DATA_API_KEY`/`USER_KEY` are the read-only market-data credentials; `ETORO_MARKET_DATA_EXCHANGE_MAP` maps `XNAS` to the provider exchange name(s) discovered through the search endpoint; `ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP` maps each XNAS symbol to its native listing currency; `PRICE_COLLECTION_EXCHANGE_SESSIONS` carries the XNAS regular session (America/New_York 09:30–16:00 weekdays). Once the secrets exist, every `Deploy development infrastructure` run — including what-if previews — keeps the settings in place; removing a secret removes the setting on the next deploy, by design.
 
-**Apply the migration** — additive `20261105194347_PriceCollection`. Migrations never run at app startup; the runtime identity holds only `db_datareader`/`db_datawriter`. Apply it under the migration identity as documented in the [Azure SQL operations runbook](azure-sql-operations-runbook.md): **Actions → Migrate development database → Run workflow** from `main` after merge, which builds `efbundle` and applies it over `Authentication=Active Directory Default` (OIDC). Locally, `dotnet ef database update --project src/TradingEngine.Infrastructure --startup-project src/TradingEngine.Api` targets whatever `ConnectionStrings__TradingEngine` points to (LocalDB by default). The migration idempotency check means re-running is a no-op once applied.
+**Apply the migrations** — additive `20261105194347_PriceCollection` and `20261114133340_ListingConfigurations`. Migrations never run at app startup; the runtime identity holds only `db_datareader`/`db_datawriter`. Apply them under the migration identity as documented in the [Azure SQL operations runbook](azure-sql-operations-runbook.md): **Actions → Migrate development database → Run workflow** from `main`, which builds `efbundle` and applies it over `Authentication=Active Directory Default` (OIDC). Locally, `dotnet ef database update --project src/TradingEngine.Infrastructure --startup-project src/TradingEngine.Api` targets whatever `ConnectionStrings__TradingEngine` points to (LocalDB by default). The migration idempotency check means re-running is a no-op once applied.
+
+The `ListingConfigurations` table must exist before the new build serves traffic — the composite quote-unit map, registration, settings and confirmation paths all query it — so the rollout follows the coordinated sequence: set `DEPLOYMENT_HOLD=true` **before** merging, merge and record the merged revision, apply and verify the migration at that revision, then clear `DEPLOYMENT_HOLD` and manually run **Deploy development** for the same recorded revision. Clearing the hold alone does not trigger a deployment — it only stops skipping the job, so the manual `workflow_dispatch` run is the step that ships the build. See the [coordinated cutover procedure](azure-sql-operations-runbook.md#10-coordinated-schemaapplication-cutover) for the full hold/quiesce/verify checklist.
 
 ## Verify two successive samples
 

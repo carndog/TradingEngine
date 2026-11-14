@@ -1,4 +1,5 @@
 using NodaTime;
+using TradingEngine.Application.Listings;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
@@ -45,13 +46,48 @@ internal sealed class StubWatchedInstrumentStore : IWatchedInstrumentStore
         AddResult = GeneratedId;
     }
 
-    public Task<Result<Guid>> AddAsync(
+    public Task<Result<WatchedInstrumentRegistrationReceipt>> AddAsync(
         WatchedInstrumentRegistration registration,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         AddedRegistration = registration;
-        return Task.FromResult(AddResult);
+        if (AddResult.IsFailure)
+        {
+            return Task.FromResult<Result<WatchedInstrumentRegistrationReceipt>>(
+                AddResult.Error);
+        }
+
+        return Task.FromResult<Result<WatchedInstrumentRegistrationReceipt>>(
+            new WatchedInstrumentRegistrationReceipt(
+                AddResult.Value,
+                SimulateListing(registration)));
+    }
+
+    private static ListingConfigurationSnapshot? SimulateListing(
+        WatchedInstrumentRegistration registration)
+    {
+        if (registration.Listing is null)
+        {
+            return null;
+        }
+
+        ListingConfigurationUpsert upsert = registration.Listing;
+        Result<InstrumentListing> listing = InstrumentListing.Restore(
+            upsert.Exchange,
+            upsert.Symbol,
+            upsert.Provider,
+            upsert.ProviderInstrumentId,
+            upsert.ProviderSymbol,
+            upsert.ProviderExchangeName,
+            upsert.DisplayName,
+            upsert.NativeQuoteCurrency,
+            upsert.Source,
+            upsert.ConfirmedBy,
+            upsert.ConfirmedAt,
+            upsert.ConfirmedAt);
+
+        return new ListingConfigurationSnapshot(listing.Value, [9, 9, 9, 9, 9, 9, 9, 9]);
     }
 
     public Task<Result<WatchedInstrumentConfiguration>> GetAsync(

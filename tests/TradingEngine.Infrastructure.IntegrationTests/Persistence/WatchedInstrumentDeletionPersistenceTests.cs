@@ -203,7 +203,7 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
-            Result<Guid> duplicate = await store.AddAsync(
+            Result<WatchedInstrumentRegistrationReceipt> duplicate = await store.AddAsync(
                 Registration(symbol),
                 CancellationToken.None);
             Assert.That(duplicate.IsFailure, Is.True);
@@ -216,11 +216,11 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
         await using (TradingEngineDbContext context = CreateContext())
         {
             SqlServerWatchedInstrumentStore store = new(context, _serializer);
-            Result<Guid> reRegistered = await store.AddAsync(
+            Result<WatchedInstrumentRegistrationReceipt> reRegistered = await store.AddAsync(
                 Registration(symbol),
                 CancellationToken.None);
             Assert.That(reRegistered.IsSuccess, Is.True);
-            Assert.That(reRegistered.Value, Is.Not.EqualTo(first));
+            Assert.That(reRegistered.Value.InstrumentId, Is.Not.EqualTo(first));
         }
     }
 
@@ -438,12 +438,12 @@ public sealed class WatchedInstrumentDeletionPersistenceTests
     {
         await using TradingEngineDbContext context = CreateContext();
         SqlServerWatchedInstrumentStore store = new(context, _serializer);
-        Result<Guid> added = await store.AddAsync(
+        Result<WatchedInstrumentRegistrationReceipt> added = await store.AddAsync(
             Registration(symbol),
             CancellationToken.None);
         Assert.That(added.IsSuccess, Is.True);
 
-        return added.Value;
+        return added.Value.InstrumentId;
     }
 
     private static WatchedInstrumentRegistration Registration(string symbol)

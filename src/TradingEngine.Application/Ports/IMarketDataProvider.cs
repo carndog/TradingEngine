@@ -8,4 +8,8 @@ public interface IMarketDataProvider
     Task<Result<MarketQuote>> GetCurrentQuoteAsync(
         MarketInstrumentIdentity instrument,
         CancellationToken cancellationToken);
+
+    Task<Result<MarketListing>> ResolveListingAsync(
+        MarketListingQuery query,
+        CancellationToken cancellationToken);
 }

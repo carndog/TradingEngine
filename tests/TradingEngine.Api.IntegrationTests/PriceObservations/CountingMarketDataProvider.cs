@@ -8,6 +8,14 @@ internal sealed class CountingMarketDataProvider : IMarketDataProvider
 {
     public int CallCount { get; private set; }
 
+    public Task<Result<MarketListing>> ResolveListingAsync(
+        MarketListingQuery query,
+        CancellationToken cancellationToken)
+    {
+        throw new InvalidOperationException(
+            "The price history read must not call the market-data provider.");
+    }
+
     public Task<Result<MarketQuote>> GetCurrentQuoteAsync(
         MarketInstrumentIdentity instrument,
         CancellationToken cancellationToken)

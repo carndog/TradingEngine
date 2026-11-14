@@ -250,7 +250,7 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
         WatchedInstrumentFields fields = WatchedInstrument
             .Validate($"SET-{Guid.NewGuid():N}".ToUpperInvariant()[..20], "XTEST", "USD", 60)
             .Value;
-        Result<Guid> added = await store.AddAsync(
+        Result<WatchedInstrumentRegistrationReceipt> added = await store.AddAsync(
             new WatchedInstrumentRegistration(
                 fields,
                 MonitoringState.Configured,
@@ -259,7 +259,7 @@ public sealed class WatchedInstrumentSettingsPersistenceTests
             CancellationToken.None);
         Assert.That(added.IsSuccess, Is.True);
 
-        return added.Value;
+        return added.Value.InstrumentId;
     }
 
     private TradingEngineDbContext CreateContext(string database)

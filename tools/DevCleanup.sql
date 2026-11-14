@@ -9,10 +9,10 @@
 --
 -- A run matches watched instruments whose Symbol is 'RUN-<runId>-<suffix>' on
 -- exchange XTEST while still 'Configured'. Their MonitoringRuleRevisions,
--- MonitoringRules, ChartAnalysisDefinitions and WatchedInstruments rows are
--- deleted in one transaction in foreign-key order. Unrelated instruments,
--- monitored instruments and other run ids are preserved. Rerunning the same
--- run id is a safe no-op.
+-- MonitoringRules, ChartAnalysisDefinitions, WatchedInstruments and matching
+-- ListingConfigurations rows are deleted in one transaction in foreign-key
+-- order. Unrelated instruments, monitored instruments and other run ids are
+-- preserved. Rerunning the same run id is a safe no-op.
 
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
@@ -66,6 +66,17 @@ SELECT COUNT(*) AS ChartAnalysisDefinitionRows
 FROM ChartAnalysisDefinitions d
 JOIN @InstrumentIds target ON target.Id = d.WatchedInstrumentId;
 
+SELECT COUNT(*) AS ListingConfigurationRows
+FROM ListingConfigurations l
+WHERE l.Exchange = N'XTEST'
+  AND l.Symbol LIKE N'RUN-' + @RunId + N'-%'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM WatchedInstruments w
+      WHERE w.Exchange = l.Exchange
+        AND w.Symbol = l.Symbol
+        AND w.Id NOT IN (SELECT Id FROM @InstrumentIds));
+
 SELECT w.Id, w.Symbol, w.MonitoringState
 FROM WatchedInstruments w
 WHERE w.Symbol LIKE N'RUN-' + @RunId + N'-%'
@@ -97,6 +108,16 @@ BEGIN TRY
     DELETE w
     FROM WatchedInstruments w
     JOIN @InstrumentIds target ON target.Id = w.Id;
+
+    DELETE l
+    FROM ListingConfigurations l
+    WHERE l.Exchange = N'XTEST'
+      AND l.Symbol LIKE N'RUN-' + @RunId + N'-%'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM WatchedInstruments w
+          WHERE w.Exchange = l.Exchange
+            AND w.Symbol = l.Symbol);
 
     COMMIT TRANSACTION;
 END TRY

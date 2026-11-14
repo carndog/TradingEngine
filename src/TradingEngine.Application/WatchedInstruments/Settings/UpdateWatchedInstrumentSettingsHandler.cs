@@ -1,6 +1,7 @@
 using NodaTime;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Time;
+using TradingEngine.Application.WatchedInstruments.Status;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.Results;
 
@@ -10,13 +11,24 @@ public sealed class UpdateWatchedInstrumentSettingsHandler
 {
     private readonly IWatchedInstrumentStore _store;
     private readonly IClock _clock;
+    private readonly MonitoringReadinessEvaluator _readiness;
+    private readonly ListingStatusEvaluator _listingStatus;
+    private readonly CollectionStatusEvaluator _collectionStatus;
 
     public UpdateWatchedInstrumentSettingsHandler(
         IWatchedInstrumentStore store,
-        IClock clock)
+        IClock clock,
+        MonitoringReadinessEvaluator readiness,
+        ListingStatusEvaluator listingStatus,
+        CollectionStatusEvaluator collectionStatus)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _readiness = readiness ?? throw new ArgumentNullException(nameof(readiness));
+        _listingStatus = listingStatus
+            ?? throw new ArgumentNullException(nameof(listingStatus));
+        _collectionStatus = collectionStatus
+            ?? throw new ArgumentNullException(nameof(collectionStatus));
     }
 
     public async Task<Result<WatchedInstrumentSettingsSnapshot>> HandleAsync(
@@ -66,7 +78,11 @@ public sealed class UpdateWatchedInstrumentSettingsHandler
             _clock.GetCurrentInstant(),
             nameof(command));
 
-        Result applied = ApplyDesiredState(instrument, command, changedAt);
+        Result applied = await ApplyDesiredStateAsync(
+            instrument,
+            command,
+            changedAt,
+            cancellationToken);
         if (applied.IsFailure)
         {
             return applied.Error;
@@ -77,33 +93,66 @@ public sealed class UpdateWatchedInstrumentSettingsHandler
             && instrument.SamplingIntervalSeconds == previousInterval
             && display == snapshot.Value.Display)
         {
-            return snapshot;
+            return await DecorateAsync(snapshot.Value, cancellationToken);
         }
 
-        return await _store.SaveSettingsAsync(
-            instrument,
-            display,
-            command.ExpectedConcurrencyToken,
-            cancellationToken);
+        Result<WatchedInstrumentSettingsSnapshot> saved =
+            await _store.SaveSettingsAsync(
+                instrument,
+                display,
+                command.ExpectedConcurrencyToken,
+                cancellationToken);
+        if (saved.IsFailure)
+        {
+            return saved.Error;
+        }
+
+        return await DecorateAsync(saved.Value, cancellationToken);
     }
 
-    private static PriceDisplayPreferences MergeDisplay(
-        PriceDisplayPreferences current,
-        UpdateWatchedInstrumentSettings command)
+    private async Task<Result<WatchedInstrumentSettingsSnapshot>> DecorateAsync(
+        WatchedInstrumentSettingsSnapshot snapshot,
+        CancellationToken cancellationToken)
     {
-        return new PriceDisplayPreferences(
-            command.PriceDisplayDecimalPlaces ?? current.DecimalPlaces,
-            command.PriceDisplayUnit ?? current.Unit);
+        Result<ListingStatusInfo> listing = await _listingStatus.EvaluateAsync(
+            snapshot.Instrument.Exchange,
+            snapshot.Instrument.Symbol,
+            cancellationToken);
+        if (listing.IsFailure)
+        {
+            return listing.Error;
+        }
+
+        CollectionStatusInfo collection = await _collectionStatus.EvaluateAsync(
+            snapshot.Instrument,
+            cancellationToken);
+
+        return snapshot with
+        {
+            Listing = listing.Value,
+            Collection = collection
+        };
     }
 
-    private static Result ApplyDesiredState(
+    private async Task<Result> ApplyDesiredStateAsync(
         WatchedInstrument instrument,
         UpdateWatchedInstrumentSettings command,
-        Instant changedAt)
+        Instant changedAt,
+        CancellationToken cancellationToken)
     {
         if (command.MonitoringState == MonitoringState.Monitored
             && instrument.MonitoringState == MonitoringState.Configured)
         {
+            Result ready = await _readiness.EvaluateAsync(
+                instrument.Exchange,
+                instrument.Symbol,
+                instrument.QuoteCurrency,
+                cancellationToken);
+            if (ready.IsFailure)
+            {
+                return ready.Error;
+            }
+
             return instrument.StartMonitoring(
                 command.SamplingIntervalSeconds,
                 changedAt);
@@ -127,5 +176,14 @@ public sealed class UpdateWatchedInstrumentSettingsHandler
         }
 
         return Result.Success();
+    }
+
+    private static PriceDisplayPreferences MergeDisplay(
+        PriceDisplayPreferences current,
+        UpdateWatchedInstrumentSettings command)
+    {
+        return new PriceDisplayPreferences(
+            command.PriceDisplayDecimalPlaces ?? current.DecimalPlaces,
+            command.PriceDisplayUnit ?? current.Unit);
     }
 }

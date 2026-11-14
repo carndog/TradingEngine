@@ -32,6 +32,10 @@ else
         <MonitoringBadge State="@_settings.MonitoringState" />
         <span class="te-small">Last changed @UtcTimes.Format(_settings.LastChangedAt)</span>
     </div>
+    @if (_settings.Collection is not null)
+    {
+        <p class="te-small" role="status">@CollectionStatusText(_settings.Collection)</p>
+    }
 
     <div class="te-tabs" role="group" aria-label="Instrument views">
         <button type="button" aria-pressed="@(_tab == "current")" @onclick='() => SelectTab("current")'>Current</button>
@@ -392,6 +396,31 @@ else
     {
         _settings = saved;
         _notice = "Settings saved.";
+    }
+
+    private static string CollectionStatusText(CollectionStatusDto collection)
+    {
+        string text = collection.Status switch
+        {
+            "not-monitored" => "Collection: paused — the instrument is not monitored.",
+            "collector-disabled" => "Collection: disabled for this deployment.",
+            "unsupported-venue" => "Collection: this venue is not supported for price collection.",
+            "native-unit-unconfirmed" => "Collection: waiting — confirm the native quote unit in Settings.",
+            "native-unit-conflict" => "Collection: blocked — the listing unit conflicts with deployment configuration.",
+            "session-closed" => "Collection: the exchange session is currently closed.",
+            "awaiting-first-observation" => "Collection: waiting for the first observation.",
+            "collecting" => collection.LastObservedAt is null
+                ? "Collection: collecting."
+                : $"Collection: collecting — last observed {UtcTimes.Format(collection.LastObservedAt.Value)}.",
+            _ => "Collection: status unknown."
+        };
+
+        if (collection.LastAttemptErrorCode is not null)
+        {
+            text += $" Last attempt failed ({collection.LastAttemptErrorCode}).";
+        }
+
+        return text;
     }
 
     internal async Task BeginApply(MonitoringRuleRevisionDto draft)

@@ -8,4 +8,5 @@ public sealed record RegisterWatchedInstrumentRequest(
     string? MonitoringState,
     int PriceScale,
     IReadOnlyList<ChartZoneDto>? SupportZones,
-    IReadOnlyList<ChartZoneDto>? ResistanceZones);
+    IReadOnlyList<ChartZoneDto>? ResistanceZones,
+    string? NativeQuoteCurrency = null);

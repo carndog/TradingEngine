@@ -754,10 +754,10 @@ public sealed class MonitoringRulePersistenceTests
             January2,
             CreateDefinition(100m));
 
-        Result<Guid> added = await store.AddAsync(registration, CancellationToken.None);
+        Result<WatchedInstrumentRegistrationReceipt> added = await store.AddAsync(registration, CancellationToken.None);
         Assert.That(added.IsSuccess, Is.True);
 
-        return added.Value;
+        return added.Value.InstrumentId;
     }
 
     private async Task<Guid> AddBareInstrumentAsync(string symbol)

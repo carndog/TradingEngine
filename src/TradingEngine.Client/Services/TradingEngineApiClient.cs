@@ -144,6 +144,20 @@ public sealed class TradingEngineApiClient
             cancellationToken);
     }
 
+    public Task<ApiResult<ListingDto>> ConfirmListingUnitAsync(
+        Guid id,
+        ConfirmListingUnitRequest request,
+        string? concurrencyToken,
+        CancellationToken cancellationToken = default)
+    {
+        return SendAsync<ListingDto>(
+            HttpMethod.Put,
+            $"api/watched-instruments/{id}/listing",
+            request,
+            concurrencyToken,
+            cancellationToken);
+    }
+
     public Task<ApiResult<MonitoringRuleTimelineResponse>> GetTimelineAsync(
         Guid instrumentId,
         CancellationToken cancellationToken = default)

@@ -11,4 +11,6 @@ public sealed record WatchedInstrumentSettingsResponse(
     DateTimeOffset LastChangedAt,
     string ConcurrencyToken,
     int PriceDisplayDecimalPlaces = 2,
-    string PriceDisplayUnit = "major");
+    string PriceDisplayUnit = "major",
+    ListingDto? Listing = null,
+    CollectionStatusDto? Collection = null);

@@ -67,10 +67,54 @@
     </div>
 </section>
 
+@if (_listing is ListingDto listing)
+{
+    <section class="te-detail-card" aria-label="Listing configuration">
+        <h3>Listing</h3>
+        <p class="te-note">Provider listing identity and the confirmed native quote unit used for price collection.</p>
+        <ErrorNotice Error="@_listingError" />
+        <div class="te-fields te-two">
+            <div>
+                <span class="te-note">Provider listing</span>
+                <p>@ProviderListingSummary(listing)</p>
+            </div>
+            <div>
+                <span class="te-note">Native quote unit</span>
+                <p>@UnitSummary(listing)</p>
+            </div>
+        </div>
+        @if (listing.UnitState is "unconfirmed" or "deployment")
+        {
+            <div class="te-fields te-two">
+                <label>
+                    Confirm native quote unit
+                    <input @bind="_listingUnit" @bind:event="oninput" maxlength="10"
+                           aria-label="Native quote unit to confirm"
+                           placeholder="@(listing.NativeQuoteCurrency ?? "e.g. GBX")">
+                </label>
+            </div>
+            <p class="te-note">Confirm the unit the provider quotes in — for example GBX for
+                pence-priced listings. This is separate from the display unit above.</p>
+            <div class="te-footer">
+                <button type="button" class="te-primary" @onclick="ConfirmUnitAsync"
+                        disabled="@(_busy || _listingBusy)">
+                    @(_listingBusy ? "Confirming…" : "Confirm unit")
+                </button>
+            </div>
+        }
+        @if (listing.UnitState == "conflict")
+        {
+            <p class="te-alert te-warn" role="status">The persisted listing unit conflicts with the
+                deployment-configured mapping. Reconcile the configuration before enabling collection.</p>
+        }
+    </section>
+}
+
 <DirtyGuard IsDirty="@(() => _dirty)" />
 
 @code {
     private WatchedInstrumentSettingsResponse? _seeded;
+    private ListingDto? _listing;
     private readonly ConflictResolution<WatchedInstrumentSettingsResponse> _conflict = new();
     private string _editState = "configured";
     private int _editInterval = 60;
@@ -79,6 +123,9 @@
     private string _token = string.Empty;
     private bool _busy;
     private ApiError? _saveError;
+    private string _listingUnit = string.Empty;
+    private bool _listingBusy;
+    private ApiError? _listingError;
 
     [Parameter, EditorRequired]
     public WatchedInstrumentSettingsResponse? Settings { get; set; }
@@ -120,12 +167,14 @@
     private void Seed(WatchedInstrumentSettingsResponse latest)
     {
         _seeded = latest;
+        _listing = latest.Listing;
         _token = latest.ConcurrencyToken;
         _editState = latest.MonitoringState;
         _editInterval = latest.SamplingIntervalSeconds;
         _editDecimals = latest.PriceDisplayDecimalPlaces;
         _editUnit = latest.PriceDisplayUnit;
         _saveError = null;
+        _listingError = null;
     }
 
     private void DiscardLocalChanges()
@@ -206,5 +255,96 @@
         WatchedInstrumentSettingsResponse latest = _conflict.Take();
         _token = latest.ConcurrencyToken;
         await SaveAsync();
+    }
+
+    private async Task ConfirmUnitAsync()
+    {
+        if (_seeded is null || _listing is null)
+        {
+            return;
+        }
+
+        _listingBusy = true;
+        _listingError = null;
+
+        ApiResult<ListingDto> result;
+        try
+        {
+            result = await Api.ConfirmListingUnitAsync(
+                _seeded.Id,
+                new ConfirmListingUnitRequest(
+                    string.IsNullOrWhiteSpace(_listingUnit) ? null : _listingUnit),
+                _listing.ConcurrencyToken,
+                Cancellation);
+        }
+        finally
+        {
+            _listingBusy = false;
+        }
+
+        if (result.IsFailure)
+        {
+            _listingError = result.Error;
+            return;
+        }
+
+        _listing = result.Value!;
+        _listingUnit = string.Empty;
+
+        if (_dirty)
+        {
+            await OnNotice.InvokeAsync("Listing unit confirmed.");
+            return;
+        }
+
+        ApiResult<WatchedInstrumentSettingsResponse> latest =
+            await Api.GetSettingsAsync(_seeded.Id, Cancellation);
+        if (latest.IsFailure)
+        {
+            _listingError = latest.Error;
+            return;
+        }
+
+        Seed(latest.Value!);
+        await OnSaved.InvokeAsync(latest.Value);
+        await OnNotice.InvokeAsync("Listing unit confirmed.");
+    }
+
+    private static string ProviderListingSummary(ListingDto listing)
+    {
+        if (listing.Provider is null)
+        {
+            return listing.ResolutionState switch
+            {
+                "not-found" => "No provider listing matched this exchange and symbol.",
+                "ambiguous" => "The provider returned more than one matching listing.",
+                "unsupported-venue" => "This exchange is not mapped to a provider venue.",
+                "unavailable" => "The provider listing could not be verified.",
+                _ => "Provider listing not resolved."
+            };
+        }
+
+        string identity = listing.DisplayName is null
+            ? $"{listing.Provider} instrument {listing.ProviderInstrumentId}"
+            : $"{listing.Provider} · {listing.DisplayName} ({listing.ProviderInstrumentId})";
+        return listing.ProviderExchangeName is null
+            ? identity
+            : $"{identity} on {listing.ProviderExchangeName}";
+    }
+
+    private static string UnitSummary(ListingDto listing)
+    {
+        return listing.UnitState switch
+        {
+            "confirmed" => $"{listing.NativeQuoteCurrency} — confirmed ({UnitSourceLabel(listing)})",
+            "deployment" => $"{listing.NativeQuoteCurrency} — from deployment mapping",
+            "conflict" => "Conflict between persisted and deployment-configured units",
+            _ => "Not confirmed — required before monitoring can start"
+        };
+    }
+
+    private static string UnitSourceLabel(ListingDto listing)
+    {
+        return listing.UnitSource == "provider-metadata" ? "provider metadata" : "administrator";
     }
 }

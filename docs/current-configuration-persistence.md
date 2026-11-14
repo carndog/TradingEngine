@@ -57,6 +57,29 @@ Committed effective periods form one contiguous chain ordered by start, each rev
 
 Committed periods are half-open UTC `Instant` intervals `[EffectiveFrom, EffectiveTo)`: the start is inclusive, the end is exclusive and a `NULL` end is open-ended. At a shared boundary instant `T` only the successor applies: `T - 1 ns` resolves the predecessor while `T` and `T + 1 ns` resolve the successor. The predecessor's end is never adjusted by a tick, millisecond or day, and no end-of-day values, tolerances or independently rounded boundaries are used; the smallest storable period is one `datetime2(7)` tick (100 ns). Splits, reschedules and removals preserve the exact shared boundary. No revision applies before the first committed start — that gap is intentional — and empty or draft-only timelines are valid. Draft proposals stay outside the committed chain and may overlap or carry an inverted proposed ordering.
 
+`ListingConfigurations`:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `Id` | `uniqueidentifier` | Primary key, sequential GUID generated on add. |
+| `Exchange` | `nvarchar(20)` | Required, normalised upper-case exchange. |
+| `Symbol` | `nvarchar(64)` | Required, normalised upper-case symbol. |
+| `Provider` | `nvarchar(32)` | Required market-data provider name. |
+| `ProviderInstrumentId` | `bigint` | Required positive provider instrument identifier. |
+| `ProviderSymbol` | `nvarchar(64)` | Optional provider-side symbol. |
+| `ProviderExchangeName` | `nvarchar(128)` | Optional provider-side venue name. |
+| `DisplayName` | `nvarchar(256)` | Optional provider display name. |
+| `NativeQuoteCurrency` | `nvarchar(10)` | Required confirmed native quote unit. |
+| `UnitSource` | `nvarchar(20)` | Required; check constraint allows `Administrator` or `ProviderMetadata`. |
+| `ConfirmedBy` | `nvarchar(128)` | Required confirming actor. |
+| `ConfirmedAt` | `datetime2(7)` | Required, UTC. |
+| `LastChangedAt` | `datetime2(7)` | Required, UTC; check constraint enforces `LastChangedAt >= ConfirmedAt`. |
+| `RowVersion` | `rowversion` | Optimistic-concurrency token for the listing configuration. |
+
+A unique index `UX_ListingConfigurations_Exchange_Symbol` on `(Exchange, Symbol)` prevents duplicate listings. The row records the provider listing identity resolved at confirmation so collection never re-searches, and the confirmed native quote unit consulted by `INativeQuoteUnitMap` before the deployment quote-currency map. A disagreement between the persisted unit and the deployment map surfaces as `market_data.quote_currency_source_conflict` rather than either source silently winning.
+
+Two write paths reach the table. The standalone `PUT …/listing` confirmation updates one row through `IListingConfigurationStore.SaveAsync` under its `If-Match` token. Registration instead stages the listing upsert inside `IWatchedInstrumentStore.AddAsync`, so the `ListingConfigurations` row, the `WatchedInstruments` row and the initial monitoring-rule rows commit in a single `SaveChangesAsync` batch — a duplicate instrument or a rejected listing stage rolls back every staged row, and provider/network work completes before any database write is staged.
+
 `ChartAnalysisDefinitions` (legacy):
 
 | Column | Type | Notes |
@@ -102,6 +125,7 @@ The stores translate expected outcomes into the `Result` foundation:
 - A missing monitoring rule returns `monitoring_rule.not_found` as a `NotFound` error.
 - Adding a rule for an instrument that already has one returns `monitoring_rule.already_exists` as a `Conflict` error.
 - Saving against a stale `rowversion` token, or a concurrent change detected mid-save, returns `monitoring_rule.concurrent_change` as a `PreconditionFailed` error (412 at the API).
+- A missing listing configuration returns `instrument_listing.not_found` as a `NotFound` error; updating one without an `If-Match` token returns `instrument_listing.concurrency_token_required`, against a stale token `instrument_listing.concurrent_change`, and a save that would relabel a confirmed native unit returns `instrument_listing.unit_conflict` as a `Conflict` error.
 - A configuration read for which no committed revision applies at the requested instant returns `monitoring_rule.no_applicable_revision` as a `NotFound` error.
 - A persisted revision `Id` collision returns `revision.duplicate_id`; a committed effective-start collision returns `revision.start_conflict`; both are `Conflict` errors.
 

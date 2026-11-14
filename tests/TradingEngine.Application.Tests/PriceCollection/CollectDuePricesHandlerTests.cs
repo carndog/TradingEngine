@@ -4,6 +4,7 @@ using NodaTime.Testing;
 using TradingEngine.Application.MarketData;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.PriceCollection;
+using TradingEngine.Application.Tests.Listings;
 using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Application.Tests.PriceCollection;
@@ -29,6 +30,7 @@ public sealed class CollectDuePricesHandlerTests
     private StubMonitoredInstrumentSource _source = null!;
     private CapturingPriceObservationStore _store = null!;
     private StubMarketDataProvider _marketData = null!;
+    private StubNativeQuoteUnitMap _quoteUnits = null!;
 
     [SetUp]
     public void SetUp()
@@ -41,6 +43,7 @@ public sealed class CollectDuePricesHandlerTests
             RetrievedAt = Now,
             ProviderObservedAt = Instant.FromUtc(2026, 10, 30, 13, 45, 28)
         };
+        _quoteUnits = StubNativeQuoteUnitMap.Configured("USD");
         _source.Instruments.Add(Instrument);
     }
 
@@ -1095,6 +1098,7 @@ public sealed class CollectDuePricesHandlerTests
             _source,
             _store,
             _marketData,
+            _quoteUnits,
             samplingPolicy ?? new PerInstrumentSamplingPolicy(),
             sessionPolicy,
             _clock,
