@@ -216,6 +216,90 @@ public sealed class InstrumentSettingsEditorTests
     }
 
     [Test]
+    public void ConfirmUnit_WhenSettingsEdited_PreservesUnsavedChanges()
+    {
+        StubHttpMessageHandler handler = new();
+        List<(string Path, string Body, string? IfMatch)> requests = [];
+        handler.Enqueue(async (request, _) =>
+        {
+            requests.Add((
+                request.RequestUri!.AbsolutePath,
+                await request.Content!.ReadAsStringAsync(),
+                request.Headers.TryGetValues("If-Match", out IEnumerable<string>? values)
+                    ? string.Join(",", values)
+                    : null));
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                ClientTestData.JsonOf(ClientTestData.Listing(
+                    unitState: "confirmed",
+                    unitSource: "administrator")));
+        });
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, token: "tok-2") with
+            {
+                Listing = ClientTestData.Listing(
+                    unitState: "confirmed",
+                    unitSource: "administrator")
+            })));
+        handler.Enqueue(async (request, _) =>
+        {
+            requests.Add((
+                request.RequestUri!.AbsolutePath,
+                await request.Content!.ReadAsStringAsync(),
+                request.Headers.TryGetValues("If-Match", out IEnumerable<string>? values)
+                    ? string.Join(",", values)
+                    : null));
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                ClientTestData.JsonOf(ClientTestData.Settings(
+                    InstrumentId,
+                    interval: 120,
+                    token: "tok-3") with
+                {
+                    Listing = ClientTestData.Listing(
+                        unitState: "confirmed",
+                        unitSource: "administrator")
+                }));
+        });
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(
+            ctx,
+            ClientTestData.Settings(InstrumentId) with
+            {
+                Listing = ClientTestData.Listing()
+            });
+
+        IntervalInput(cut).Input("120");
+        cut.Find("input[aria-label='Native quote unit to confirm']").Input("gbx");
+        ClickButton(cut, "Confirm unit");
+
+        cut.WaitForAssertion(
+            () => Assert.That(requests, Has.Count.EqualTo(1)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(IntervalInput(cut).GetAttribute("value"), Is.EqualTo("120"));
+            Assert.That(cut.Markup, Does.Contain("Unsaved changes"));
+        });
+
+        ClickButton(cut, "Save settings");
+
+        cut.WaitForAssertion(
+            () => Assert.That(requests, Has.Count.EqualTo(2)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                requests[1].Path,
+                Is.EqualTo($"/api/watched-instruments/{InstrumentId}/settings"));
+            Assert.That(
+                requests[1].Body,
+                Does.Contain("\"samplingIntervalSeconds\":120"));
+            Assert.That(requests[1].IfMatch, Is.EqualTo("\"tok-2\""));
+            Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes"));
+        });
+    }
+
+    [Test]
     public void ConfirmUnit_WhenRequestFails_ShowsError()
     {
         StubHttpMessageHandler handler = new();

@@ -2,15 +2,21 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NodaTime;
+using NodaTime.Testing;
 using Testcontainers.MsSql;
 using TradingEngine.Application.Listings;
 using TradingEngine.Application.MarketData;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.PriceCollection;
+using TradingEngine.Application.Time;
+using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Contracts.MonitoringRules;
 using TradingEngine.Contracts.WatchedInstruments;
+using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.Results;
 using TradingEngine.Infrastructure.Persistence;
 
@@ -117,10 +123,65 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
     }
 
     [Test]
+    public async Task PostWatchedInstrument_WhenReadinessFails_WritesNoInstrumentOrListing()
+    {
+        StubMarketDataProvider provider = new();
+        await using WebApplicationFactory<Program> factory = CreateFactory(provider);
+        HttpClient client = factory.CreateClient();
+
+        HttpResponseMessage registration = await client.PostAsJsonAsync(
+            "/api/watched-instruments",
+            new RegisterWatchedInstrumentRequest(
+                "reg-reject",
+                "xother",
+                "gbp",
+                60,
+                "monitored",
+                4,
+                [],
+                [],
+                "gbp"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                registration.StatusCode,
+                Is.EqualTo(HttpStatusCode.BadRequest));
+        });
+
+        using (IServiceScope scope = factory.Services.CreateScope())
+        {
+            IListingConfigurationStore listings =
+                scope.ServiceProvider.GetRequiredService<IListingConfigurationStore>();
+            Result<ListingConfigurationSnapshot> found = await listings.FindAsync(
+                "XOTHER",
+                "REG-REJECT",
+                CancellationToken.None);
+            Assert.Multiple(() =>
+            {
+                Assert.That(found.IsFailure, Is.True);
+                Assert.That(
+                    found.Error,
+                    Is.EqualTo(InstrumentListingErrors.NotFound));
+            });
+
+            IWatchedInstrumentStore store =
+                scope.ServiceProvider.GetRequiredService<IWatchedInstrumentStore>();
+            Result<WatchedInstrumentPage> page = await store.SearchAsync(
+                "REG-REJECT",
+                1,
+                10,
+                CancellationToken.None);
+            Assert.That(page.Value.Items, Is.Empty);
+        }
+    }
+
+    [Test]
     public async Task ListingLifecycle_WithRealPersistence_ConfirmsEnablesCollectsPausesAndResumes()
     {
         StubMarketDataProvider provider = new();
-        WebApplicationFactory<Program> factory = CreateFactory(provider);
+        FakeClock clock = new(Instant.FromUtc(2026, 10, 30, 13, 0, 0));
+        WebApplicationFactory<Program> factory = CreateFactory(provider, clock);
         HttpClient client = factory.CreateClient();
 
         HttpResponseMessage registration = await client.PostAsJsonAsync(
@@ -169,22 +230,44 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
 
         await PutSettingsAsync(client, instrumentId, "monitored");
 
-        await WaitForObservationsAsync(client, instrumentId, 2, TimeSpan.FromSeconds(45));
+        PriceCollectionRunResult firstRun = await RunCollectionAsync(factory);
+        clock.Advance(Duration.FromSeconds(1));
+        PriceCollectionRunResult secondRun = await RunCollectionAsync(factory);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(firstRun.Items, Has.Count.EqualTo(1));
+            Assert.That(
+                firstRun.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+            Assert.That(secondRun.Items, Has.Count.EqualTo(1));
+            Assert.That(
+                secondRun.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+            Assert.That(
+                secondRun.Items[0].ScheduledFor,
+                Is.Not.EqualTo(firstRun.Items[0].ScheduledFor));
+        });
+
+        Dictionary<DateTimeOffset, (long Observations, long ObservedAttempts)> slots =
+            await ReadSlotCountsAsync(instrumentId);
+        Assert.That(slots.Keys, Is.EqualTo(new DateTimeOffset[]
+        {
+            firstRun.Items[0].ScheduledFor.ToDateTimeUtc(),
+            secondRun.Items[0].ScheduledFor.ToDateTimeUtc()
+        }).AsCollection);
+        foreach ((DateTimeOffset _, (long Observations, long ObservedAttempts) counts)
+            in slots)
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(counts.Observations, Is.EqualTo(1));
+                Assert.That(counts.ObservedAttempts, Is.EqualTo(1));
+            });
+        }
 
         using (IServiceScope scope = factory.Services.CreateScope())
         {
-            IPriceObservationStore observations =
-                scope.ServiceProvider.GetRequiredService<IPriceObservationStore>();
-            IReadOnlyDictionary<Guid, PriceCollectionAttempt> attempts =
-                await observations.GetLatestAttemptsAsync([instrumentId], CancellationToken.None);
-            Assert.Multiple(() =>
-            {
-                Assert.That(attempts, Contains.Key(instrumentId));
-                Assert.That(
-                    attempts[instrumentId].Outcome,
-                    Is.EqualTo(PriceCollectionOutcome.Observed));
-            });
-
             IListingConfigurationStore listings =
                 scope.ServiceProvider.GetRequiredService<IListingConfigurationStore>();
             Assert.That(
@@ -201,26 +284,49 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
             Assert.That(collecting, Is.Not.Null);
             Assert.That(collecting!.Collection, Is.Not.Null);
             Assert.That(collecting.Collection!.Status, Is.EqualTo("collecting"));
-            Assert.That(collecting.Collection.LastObservedAt, Is.Not.Null);
+            Assert.That(
+                collecting.Collection.LastObservedAt,
+                Is.Not.Null);
         });
 
         await PutSettingsAsync(client, instrumentId, "configured");
-        int pausedCount = await ObservationCountAsync(client, instrumentId);
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        clock.Advance(Duration.FromSeconds(1));
+        PriceCollectionRunResult pausedRun = await RunCollectionAsync(factory);
+        Assert.That(pausedRun.Items, Is.Empty);
         Assert.That(
-            await ObservationCountAsync(client, instrumentId),
-            Is.EqualTo(pausedCount));
+            (await ReadSlotCountsAsync(instrumentId)).Count,
+            Is.EqualTo(2));
 
         await PutSettingsAsync(client, instrumentId, "monitored");
-        await WaitForObservationsAsync(
-            client,
-            instrumentId,
-            pausedCount + 1,
-            TimeSpan.FromSeconds(45));
+        clock.Advance(Duration.FromSeconds(1));
+        PriceCollectionRunResult resumedRun = await RunCollectionAsync(factory);
+        Assert.Multiple(() =>
+        {
+            Assert.That(resumedRun.Items, Has.Count.EqualTo(1));
+            Assert.That(
+                resumedRun.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+        });
+
+        Dictionary<DateTimeOffset, (long Observations, long ObservedAttempts)> resumed =
+            await ReadSlotCountsAsync(instrumentId);
+        Assert.That(resumed, Has.Count.EqualTo(3));
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                resumed[resumedRun.Items[0].ScheduledFor.ToDateTimeUtc()].Observations,
+                Is.EqualTo(1));
+            Assert.That(
+                resumed[resumedRun.Items[0].ScheduledFor.ToDateTimeUtc()].ObservedAttempts,
+                Is.EqualTo(1));
+        });
 
         await factory.DisposeAsync();
 
-        await using WebApplicationFactory<Program> rebuilt = CreateFactory(provider);
+        FakeClock rebuiltClock = new(Instant.FromUtc(2026, 10, 30, 14, 0, 0));
+        await using WebApplicationFactory<Program> rebuilt = CreateFactory(
+            provider,
+            rebuiltClock);
         HttpClient rebuiltClient = rebuilt.CreateClient();
         WatchedInstrumentSettingsResponse? afterRebuild = await GetSettingsAsync(
             rebuiltClient,
@@ -249,21 +355,77 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
                 Assert.That(resolution.Value.SourceConflict, Is.False);
             });
         }
+
+        PriceCollectionRunResult rebuiltRun = await RunCollectionAsync(rebuilt);
+        Assert.Multiple(() =>
+        {
+            Assert.That(rebuiltRun.Items, Has.Count.EqualTo(1));
+            Assert.That(
+                rebuiltRun.Items[0].Outcome,
+                Is.EqualTo(PriceCollectionOutcome.Observed));
+        });
     }
 
-    private WebApplicationFactory<Program> CreateFactory(IMarketDataProvider provider)
+    private WebApplicationFactory<Program> CreateFactory(
+        IMarketDataProvider provider,
+        IClock? clock = null)
     {
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting(ApiTestHost.ConnectionStringKey, _connectionString);
                 builder.UseSetting("PriceCollection:Enabled", "true");
-                builder.UseSetting("PriceCollection:PollIntervalSeconds", "1");
+                builder.UseSetting("PriceCollection:PollIntervalSeconds", "3600");
                 builder.UseSetting("PriceCollection:MaxExecutionTimeSeconds", "10");
                 builder.UseSetting("PriceCollection:ExchangeSessions:XTEST:AlwaysOpen", "true");
                 builder.ConfigureServices(services =>
-                    services.AddSingleton(provider));
+                {
+                    services.AddSingleton(provider);
+                    if (clock is not null)
+                    {
+                        services.AddSingleton(clock);
+                    }
+                });
             });
+    }
+
+    private static async Task<PriceCollectionRunResult> RunCollectionAsync(
+        WebApplicationFactory<Program> factory)
+    {
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        CollectDuePricesHandler handler =
+            scope.ServiceProvider.GetRequiredService<CollectDuePricesHandler>();
+        return await handler.HandleAsync(new CollectDuePrices(), CancellationToken.None);
+    }
+
+    private async Task<Dictionary<DateTimeOffset, (long Observations, long ObservedAttempts)>>
+        ReadSlotCountsAsync(Guid instrumentId)
+    {
+        Dictionary<DateTimeOffset, (long, long)> slots = [];
+        await using SqlConnection connection = new(_connectionString);
+        await connection.OpenAsync();
+        await using SqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT o.ScheduledFor, " +
+            "COUNT_BIG(DISTINCT o.Id) AS Observations, " +
+            "COUNT_BIG(DISTINCT a.Id) AS ObservedAttempts " +
+            "FROM dbo.PriceObservations o " +
+            "LEFT JOIN dbo.PriceCollectionAttempts a " +
+            "ON a.WatchedInstrumentId = o.WatchedInstrumentId " +
+            "AND a.ScheduledFor = o.ScheduledFor " +
+            "AND a.Outcome = 'Observed' " +
+            "WHERE o.WatchedInstrumentId = @id " +
+            "GROUP BY o.ScheduledFor " +
+            "ORDER BY o.ScheduledFor";
+        command.Parameters.AddWithValue("@id", instrumentId);
+        await using SqlDataReader reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            DateTimeOffset slot = new(reader.GetDateTime(0), TimeSpan.Zero);
+            slots[slot] = (reader.GetInt64(1), reader.GetInt64(2));
+        }
+
+        return slots;
     }
 
     private static async Task<WatchedInstrumentSettingsResponse?> GetSettingsAsync(
@@ -305,35 +467,4 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
-    private static async Task<int> ObservationCountAsync(HttpClient client, Guid instrumentId)
-    {
-        HttpResponseMessage response = await client.GetAsync(
-            $"/api/watched-instruments/{instrumentId}/price-observations?pageSize=100");
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        PriceObservationPageResponse? page = await response.Content
-            .ReadFromJsonAsync<PriceObservationPageResponse>();
-        return page?.Items.Count ?? 0;
-    }
-
-    private static async Task WaitForObservationsAsync(
-        HttpClient client,
-        Guid instrumentId,
-        int minimum,
-        TimeSpan timeout)
-    {
-        DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
-        int count = 0;
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            count = await ObservationCountAsync(client, instrumentId);
-            if (count >= minimum)
-            {
-                return;
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(400));
-        }
-
-        Assert.That(count, Is.GreaterThanOrEqualTo(minimum));
-    }
 }

@@ -28,7 +28,8 @@ public sealed class MonitoringReadinessEvaluator
         string exchange,
         string symbol,
         string quoteCurrency,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? pendingNativeQuoteCurrency = null)
     {
         Result<NativeQuoteUnitResolution> resolved = await _quoteUnits.ResolveAsync(
             exchange,
@@ -49,7 +50,9 @@ public sealed class MonitoringReadinessEvaluator
                 .WithExtension("deploymentCurrency", resolution.DeploymentCurrency);
         }
 
-        if (resolution.NativeQuoteCurrency is null)
+        string? nativeQuoteCurrency =
+            pendingNativeQuoteCurrency ?? resolution.NativeQuoteCurrency;
+        if (nativeQuoteCurrency is null)
         {
             return MarketDataErrors.QuoteCurrencyUnconfigured
                 .WithExtension("exchange", exchange)
@@ -58,7 +61,7 @@ public sealed class MonitoringReadinessEvaluator
         }
 
         if (string.Equals(
-                resolution.NativeQuoteCurrency,
+                nativeQuoteCurrency,
                 quoteCurrency,
                 StringComparison.Ordinal) is false)
         {

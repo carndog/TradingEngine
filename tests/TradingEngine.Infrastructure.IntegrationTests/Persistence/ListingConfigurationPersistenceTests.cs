@@ -3,8 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using NodaTime;
 using Testcontainers.MsSql;
 using TradingEngine.Application.Listings;
+using TradingEngine.Application.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
+using TradingEngine.Domain.MonitoringRules;
 using TradingEngine.Domain.Results;
+using TradingEngine.Infrastructure.MonitoringRules.Xml;
 using TradingEngine.Infrastructure.Persistence;
 
 namespace TradingEngine.Infrastructure.IntegrationTests.Persistence;
@@ -405,6 +408,181 @@ public sealed class ListingConfigurationPersistenceTests
             () => command.ExecuteNonQuery());
 
         Assert.That(violation!.Number, Is.EqualTo(2601).Or.EqualTo(2627));
+    }
+
+    [Test]
+    public async Task AddAsync_WhenInstrumentDuplicate_LeavesNewListingRowAbsent()
+    {
+        ChartAnalysisDefinitionXmlSerializer serializer = new();
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore instruments = new(context, serializer);
+            Result<WatchedInstrumentRegistrationReceipt> seeded = await instruments.AddAsync(
+                CreateRegistration("ATO-1"),
+                CancellationToken.None);
+            Assert.That(seeded.IsSuccess, Is.True);
+        }
+
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore instruments = new(context, serializer);
+            Result<WatchedInstrumentRegistrationReceipt> duplicate = await instruments.AddAsync(
+                CreateRegistration("ATO-1") with
+                {
+                    Listing = CreateUpsert("ATO-1", "GBP")
+                },
+                CancellationToken.None);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(duplicate.IsFailure, Is.True);
+                Assert.That(
+                    duplicate.Error,
+                    Is.EqualTo(WatchedInstrumentErrors.DuplicateBusinessKey));
+            });
+        }
+
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerListingConfigurationStore listings = new(context);
+            Result<ListingConfigurationSnapshot> found = await listings.FindAsync(
+                "XTEST",
+                "ATO-1",
+                CancellationToken.None);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(found.IsFailure, Is.True);
+                Assert.That(found.Error, Is.EqualTo(InstrumentListingErrors.NotFound));
+            });
+        }
+    }
+
+    [Test]
+    public async Task AddAsync_WhenInstrumentDuplicate_LeavesExistingListingUnchanged()
+    {
+        ChartAnalysisDefinitionXmlSerializer serializer = new();
+        byte[] token;
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore instruments = new(context, serializer);
+            Result<WatchedInstrumentRegistrationReceipt> seeded = await instruments.AddAsync(
+                CreateRegistration("ATO-2") with
+                {
+                    Listing = CreateUpsert("ATO-2", "GBP")
+                },
+                CancellationToken.None);
+
+            Assert.That(seeded.IsSuccess, Is.True);
+            token = seeded.Value.Listing!.ConcurrencyToken;
+        }
+
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore instruments = new(context, serializer);
+            Result<WatchedInstrumentRegistrationReceipt> duplicate = await instruments.AddAsync(
+                CreateRegistration("ATO-2") with
+                {
+                    Listing = CreateUpsert("ATO-2", "GBP") with
+                    {
+                        DisplayName = "Rolled Back",
+                        ProviderInstrumentId = 7777
+                    },
+                    ListingConcurrencyToken = token
+                },
+                CancellationToken.None);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(duplicate.IsFailure, Is.True);
+                Assert.That(
+                    duplicate.Error,
+                    Is.EqualTo(WatchedInstrumentErrors.DuplicateBusinessKey));
+            });
+        }
+
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerListingConfigurationStore listings = new(context);
+            Result<ListingConfigurationSnapshot> found = await listings.FindAsync(
+                "XTEST",
+                "ATO-2",
+                CancellationToken.None);
+
+            Assert.That(found.IsSuccess, Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(found.Value.ConcurrencyToken, Is.EqualTo(token));
+                Assert.That(found.Value.Listing.DisplayName, Is.EqualTo("Save One"));
+                Assert.That(found.Value.Listing.ProviderInstrumentId, Is.EqualTo(4242));
+                Assert.That(found.Value.Listing.NativeQuoteCurrency, Is.EqualTo("GBP"));
+            });
+        }
+    }
+
+    [Test]
+    public async Task AddAsync_WhenListingStageRejected_LeavesNoInstrumentRow()
+    {
+        ChartAnalysisDefinitionXmlSerializer serializer = new();
+        await using (TradingEngineDbContext context = CreateContext())
+        {
+            SqlServerWatchedInstrumentStore instruments = new(context, serializer);
+            Result<WatchedInstrumentRegistrationReceipt> rejected = await instruments.AddAsync(
+                CreateRegistration("ATO-3") with
+                {
+                    Listing = CreateUpsert("ATO-3", "GBP"),
+                    ListingConcurrencyToken = [1, 2, 3]
+                },
+                CancellationToken.None);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(rejected.IsFailure, Is.True);
+                Assert.That(
+                    rejected.Error,
+                    Is.EqualTo(InstrumentListingErrors.ConcurrentChange));
+            });
+        }
+
+        await using SqlConnection connection = new(ConnectionStringFor());
+        await connection.OpenAsync();
+        await using SqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COUNT(*) FROM WatchedInstruments " +
+            "WHERE Exchange = 'XTEST' AND Symbol = 'ATO-3'";
+        int rows = (int)(await command.ExecuteScalarAsync())!;
+
+        Assert.That(rows, Is.EqualTo(0));
+    }
+
+    private static WatchedInstrumentRegistration CreateRegistration(string symbol)
+    {
+        WatchedInstrumentFields fields = WatchedInstrument
+            .Validate(symbol, "XTEST", "GBP", 60)
+            .Value;
+
+        return new WatchedInstrumentRegistration(
+            fields,
+            MonitoringState.Configured,
+            ConfirmedAt,
+            ChartAnalysisDefinition.Create(
+                4,
+                [
+                    ChartZone.Create(
+                        ChartAnalysisIdentifier.From("support-a").Value,
+                        95m,
+                        100m,
+                        105m,
+                        [
+                            ChartCondition.Create(
+                                ChartConditionType.BuyZone,
+                                ChartAnalysisIdentifier.From("publish-signal").Value).Value,
+                            ChartCondition.Create(
+                                ChartConditionType.SupportLoss,
+                                ChartAnalysisIdentifier.From("publish-signal").Value).Value
+                        ]).Value
+                ],
+                []).Value);
     }
 
     private static ListingConfigurationUpsert CreateUpsert(string symbol, string unit)

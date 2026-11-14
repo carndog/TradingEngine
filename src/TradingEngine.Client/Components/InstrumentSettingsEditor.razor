@@ -287,7 +287,8 @@
             if (latest.IsSuccess)
             {
                 _listingUnit = string.Empty;
-                Seed(latest.Value!);
+                _seeded = latest.Value!;
+                _token = latest.Value!.ConcurrencyToken;
                 await OnSaved.InvokeAsync(latest.Value);
                 await OnNotice.InvokeAsync("Listing unit confirmed.");
             }

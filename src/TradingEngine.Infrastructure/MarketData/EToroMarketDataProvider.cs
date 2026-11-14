@@ -94,7 +94,11 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
-        RequireCredentials();
+
+        if (CredentialsConfigured() is false)
+        {
+            return MarketDataErrors.ProviderCredentialsUnconfigured;
+        }
 
         if (_options.ExchangeMap.TryGetValue(query.Exchange, out string[]? mappings) is false
             || mappings.Length == 0)
@@ -107,11 +111,32 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         Instant deadline = _clock.GetCurrentInstant()
             .Plus(Duration.FromTimeSpan(MaxExecutionTime()));
 
-        Result<List<EToroSearchItem>> search = await SearchAllPagesAsync(
-            query.Exchange,
-            query.Symbol,
-            deadline,
-            cancellationToken);
+        Result<List<EToroSearchItem>> search;
+        try
+        {
+            search = await SearchAllPagesAsync(
+                query.Exchange,
+                query.Symbol,
+                deadline,
+                cancellationToken);
+        }
+        catch (TimeoutException exception)
+        {
+            return Unavailable(query, exception);
+        }
+        catch (EToroMarketDataException exception)
+        {
+            return Unavailable(query, exception);
+        }
+        catch (InvalidDataException exception)
+        {
+            return Unavailable(query, exception);
+        }
+        catch (HttpRequestException exception)
+        {
+            return Unavailable(query, exception);
+        }
+
         if (search.IsFailure)
         {
             return search.Error;
@@ -747,8 +772,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
 
     private void RequireCredentials()
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiKey)
-            || string.IsNullOrWhiteSpace(_options.UserKey))
+        if (CredentialsConfigured() is false)
         {
             throw new InvalidOperationException(
                 "The eToro market-data credentials are not configured. Set " +
@@ -756,6 +780,24 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 $"{EToroMarketDataOptions.SectionName}:UserKey through a secure " +
                 "configuration source.");
         }
+    }
+
+    private bool CredentialsConfigured()
+    {
+        return string.IsNullOrWhiteSpace(_options.ApiKey) is false
+            && string.IsNullOrWhiteSpace(_options.UserKey) is false;
+    }
+
+    private Error Unavailable(MarketListingQuery query, Exception exception)
+    {
+        _logger.LogWarning(
+            exception,
+            "eToro listing resolution for {Exchange}/{Symbol} failed.",
+            query.Exchange,
+            query.Symbol);
+        return MarketDataErrors.ProviderUnavailable
+            .WithExtension("exchange", query.Exchange)
+            .WithExtension("symbol", query.Symbol);
     }
 
     private static async Task<EToroProviderResponse> CaptureAsync(

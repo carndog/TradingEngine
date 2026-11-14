@@ -78,6 +78,8 @@ Committed periods are half-open UTC `Instant` intervals `[EffectiveFrom, Effecti
 
 A unique index `UX_ListingConfigurations_Exchange_Symbol` on `(Exchange, Symbol)` prevents duplicate listings. The row records the provider listing identity resolved at confirmation so collection never re-searches, and the confirmed native quote unit consulted by `INativeQuoteUnitMap` before the deployment quote-currency map. A disagreement between the persisted unit and the deployment map surfaces as `market_data.quote_currency_source_conflict` rather than either source silently winning.
 
+Two write paths reach the table. The standalone `PUT …/listing` confirmation updates one row through `IListingConfigurationStore.SaveAsync` under its `If-Match` token. Registration instead stages the listing upsert inside `IWatchedInstrumentStore.AddAsync`, so the `ListingConfigurations` row, the `WatchedInstruments` row and the initial monitoring-rule rows commit in a single `SaveChangesAsync` batch — a duplicate instrument or a rejected listing stage rolls back every staged row, and provider/network work completes before any database write is staged.
+
 `ChartAnalysisDefinitions` (legacy):
 
 | Column | Type | Notes |

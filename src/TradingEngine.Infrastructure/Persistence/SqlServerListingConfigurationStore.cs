@@ -43,9 +43,41 @@ public sealed class SqlServerListingConfigurationStore : IListingConfigurationSt
         byte[]? expectedConcurrencyToken,
         CancellationToken cancellationToken)
     {
+        Result<ListingConfigurationRow> staged = await StageSaveAsync(
+            _context,
+            upsert,
+            expectedConcurrencyToken,
+            cancellationToken);
+        if (staged.IsFailure)
+        {
+            return staged.Error;
+        }
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception))
+        {
+            return InstrumentListingErrors.ConcurrentChange;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return InstrumentListingErrors.ConcurrentChange;
+        }
+
+        return Snapshot(staged.Value);
+    }
+
+    internal static async Task<Result<ListingConfigurationRow>> StageSaveAsync(
+        TradingEngineDbContext context,
+        ListingConfigurationUpsert upsert,
+        byte[]? expectedConcurrencyToken,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(upsert);
 
-        ListingConfigurationRow? row = await _context.ListingConfigurations
+        ListingConfigurationRow? row = await context.ListingConfigurations
             .SingleOrDefaultAsync(
                 candidate => candidate.Exchange == upsert.Exchange
                     && candidate.Symbol == upsert.Symbol,
@@ -53,16 +85,16 @@ public sealed class SqlServerListingConfigurationStore : IListingConfigurationSt
 
         if (row is null)
         {
-            return await InsertAsync(upsert, expectedConcurrencyToken, cancellationToken);
+            return StageInsert(context, upsert, expectedConcurrencyToken);
         }
 
-        return await UpdateAsync(row, upsert, expectedConcurrencyToken, cancellationToken);
+        return StageUpdate(context, row, upsert, expectedConcurrencyToken);
     }
 
-    private async Task<Result<ListingConfigurationSnapshot>> InsertAsync(
+    private static Result<ListingConfigurationRow> StageInsert(
+        TradingEngineDbContext context,
         ListingConfigurationUpsert upsert,
-        byte[]? expectedConcurrencyToken,
-        CancellationToken cancellationToken)
+        byte[]? expectedConcurrencyToken)
     {
         if (expectedConcurrencyToken is not null)
         {
@@ -87,25 +119,16 @@ public sealed class SqlServerListingConfigurationStore : IListingConfigurationSt
         }
 
         ListingConfigurationRow row = ToRow(listing.Value);
-        _context.ListingConfigurations.Add(row);
+        context.ListingConfigurations.Add(row);
 
-        try
-        {
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException exception) when (IsUniqueViolation(exception))
-        {
-            return InstrumentListingErrors.ConcurrentChange;
-        }
-
-        return Snapshot(row);
+        return row;
     }
 
-    private async Task<Result<ListingConfigurationSnapshot>> UpdateAsync(
+    private static Result<ListingConfigurationRow> StageUpdate(
+        TradingEngineDbContext context,
         ListingConfigurationRow row,
         ListingConfigurationUpsert upsert,
-        byte[]? expectedConcurrencyToken,
-        CancellationToken cancellationToken)
+        byte[]? expectedConcurrencyToken)
     {
         if (expectedConcurrencyToken is null)
         {
@@ -140,7 +163,7 @@ public sealed class SqlServerListingConfigurationStore : IListingConfigurationSt
             return refreshed.Error;
         }
 
-        EntityEntry<ListingConfigurationRow> entry = _context.Entry(row);
+        EntityEntry<ListingConfigurationRow> entry = context.Entry(row);
         entry.Property(nameof(ListingConfigurationRow.RowVersion)).OriginalValue =
             expectedConcurrencyToken;
 
@@ -153,16 +176,7 @@ public sealed class SqlServerListingConfigurationStore : IListingConfigurationSt
         row.ConfirmedBy = value.ConfirmedBy;
         row.LastChangedAt = value.LastChangedAt;
 
-        try
-        {
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return InstrumentListingErrors.ConcurrentChange;
-        }
-
-        return Snapshot(row);
+        return row;
     }
 
     private static ListingConfigurationRow ToRow(InstrumentListing listing)
@@ -184,7 +198,7 @@ public sealed class SqlServerListingConfigurationStore : IListingConfigurationSt
         };
     }
 
-    private static Result<ListingConfigurationSnapshot> Snapshot(
+    internal static Result<ListingConfigurationSnapshot> Snapshot(
         ListingConfigurationRow row)
     {
         Result<InstrumentListing> listing = Restore(row);

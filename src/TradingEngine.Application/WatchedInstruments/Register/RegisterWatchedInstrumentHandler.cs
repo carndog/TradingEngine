@@ -14,7 +14,6 @@ public sealed class RegisterWatchedInstrumentHandler
     private readonly IClock _clock;
     private readonly IWatchedInstrumentStore _store;
     private readonly IMarketDataProvider _provider;
-    private readonly IListingConfigurationStore _listings;
     private readonly INativeQuoteUnitMap _quoteUnits;
     private readonly MonitoringReadinessEvaluator _readiness;
 
@@ -22,14 +21,12 @@ public sealed class RegisterWatchedInstrumentHandler
         IClock clock,
         IWatchedInstrumentStore store,
         IMarketDataProvider provider,
-        IListingConfigurationStore listings,
         INativeQuoteUnitMap quoteUnits,
         MonitoringReadinessEvaluator readiness)
     {
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _provider = provider ?? throw new ArgumentNullException(nameof(provider));
-        _listings = listings ?? throw new ArgumentNullException(nameof(listings));
         _quoteUnits = quoteUnits ?? throw new ArgumentNullException(nameof(quoteUnits));
         _readiness = readiness ?? throw new ArgumentNullException(nameof(readiness));
     }
@@ -152,32 +149,25 @@ public sealed class RegisterWatchedInstrumentHandler
                 fields.Value.QuoteCurrency);
         }
 
-        ListingConfigurationSnapshot? persisted = resolution.Persisted;
+        ListingConfigurationUpsert? upsert = null;
+        byte[]? listingToken = null;
         if (effectiveUnit is not null && listing is not null)
         {
-            Result<ListingConfigurationSnapshot> saved = await _listings.SaveAsync(
-                new ListingConfigurationUpsert(
-                    fields.Value.Exchange,
-                    fields.Value.Symbol,
-                    listing.Provider,
-                    listing.ProviderInstrumentId,
-                    listing.ProviderSymbol,
-                    listing.ProviderExchangeName,
-                    listing.DisplayName,
-                    effectiveUnit,
-                    listing.NativeQuoteCurrency is not null
-                        ? ListingUnitSource.ProviderMetadata
-                        : ListingUnitSource.Administrator,
-                    command.ConfirmedBy,
-                    occurredAt),
-                persisted?.ConcurrencyToken,
-                cancellationToken);
-            if (saved.IsFailure)
-            {
-                return saved.Error;
-            }
-
-            persisted = saved.Value;
+            upsert = new ListingConfigurationUpsert(
+                fields.Value.Exchange,
+                fields.Value.Symbol,
+                listing.Provider,
+                listing.ProviderInstrumentId,
+                listing.ProviderSymbol,
+                listing.ProviderExchangeName,
+                listing.DisplayName,
+                effectiveUnit,
+                listing.NativeQuoteCurrency is not null
+                    ? ListingUnitSource.ProviderMetadata
+                    : ListingUnitSource.Administrator,
+                command.ConfirmedBy,
+                occurredAt);
+            listingToken = resolution.Persisted?.ConcurrencyToken;
         }
 
         if (command.MonitoringState == MonitoringState.Monitored)
@@ -191,19 +181,22 @@ public sealed class RegisterWatchedInstrumentHandler
                 fields.Value.Exchange,
                 fields.Value.Symbol,
                 fields.Value.QuoteCurrency,
-                cancellationToken);
+                cancellationToken,
+                effectiveUnit);
             if (ready.IsFailure)
             {
                 return ready.Error;
             }
         }
 
-        Result<Guid> stored = await _store.AddAsync(
+        Result<WatchedInstrumentRegistrationReceipt> stored = await _store.AddAsync(
             new WatchedInstrumentRegistration(
                 fields.Value,
                 command.MonitoringState,
                 occurredAt,
-                command.Definition),
+                command.Definition,
+                upsert,
+                listingToken),
             cancellationToken);
 
         if (stored.IsFailure)
@@ -212,7 +205,7 @@ public sealed class RegisterWatchedInstrumentHandler
         }
 
         Result<WatchedInstrument> instrument = WatchedInstrument.Restore(
-            stored.Value,
+            stored.Value.InstrumentId,
             fields.Value.Symbol,
             fields.Value.Exchange,
             fields.Value.QuoteCurrency,
@@ -225,6 +218,8 @@ public sealed class RegisterWatchedInstrumentHandler
             return instrument.Error;
         }
 
+        ListingConfigurationSnapshot? persisted =
+            stored.Value.Listing ?? resolution.Persisted;
         NativeQuoteUnitResolution finalResolution = new(
             persisted?.Listing.NativeQuoteCurrency ?? resolution.DeploymentCurrency,
             persisted,

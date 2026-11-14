@@ -184,7 +184,7 @@ public sealed class WatchedInstrumentSearchPersistenceTests
             WatchedInstrumentFields fields = WatchedInstrument
                 .Validate(symbol, exchange, currency, 60)
                 .Value;
-            Result<Guid> added = await store.AddAsync(
+            Result<WatchedInstrumentRegistrationReceipt> added = await store.AddAsync(
                 new WatchedInstrumentRegistration(
                     fields,
                     MonitoringState.Configured,

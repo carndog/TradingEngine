@@ -991,22 +991,108 @@ public sealed class EToroMarketDataProviderTests
     }
 
     [Test]
-    public void ResolveListingAsync_WithoutConfiguredCredentials_ThrowsInvalidOperation()
+    public async Task ResolveListingAsync_WithoutConfiguredCredentials_ReturnsCredentialsUnconfigured()
     {
         _options.ApiKey = string.Empty;
         _options.UserKey = string.Empty;
         ScriptedHttpMessageHandler handler = new();
         IMarketDataProvider provider = CreateProvider(handler);
 
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
         Assert.Multiple(() =>
         {
+            Assert.That(result.IsFailure, Is.True);
             Assert.That(
-                async () => await provider.ResolveListingAsync(
-                    new MarketListingQuery("XTEST", "DEMO"),
-                    CancellationToken.None),
-                Throws.TypeOf<InvalidOperationException>());
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.ProviderCredentialsUnconfigured.Code));
             Assert.That(handler.Requests, Is.Empty);
         });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WhenAttemptTimesOut_ReturnsProviderUnavailable()
+    {
+        _options.MaxRetryAttempts = 0;
+        ScriptedHttpMessageHandler handler = new();
+        handler.Enqueue((_, _) => Task.FromException<HttpResponseMessage>(
+            new TaskCanceledException("attempt timed out")));
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.ProviderUnavailable.Code));
+        });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WhenProviderFails_ReturnsProviderUnavailable()
+    {
+        _options.MaxRetryAttempts = 0;
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.InternalServerError, "server error");
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.ProviderUnavailable.Code));
+        });
+    }
+
+    [Test]
+    public async Task ResolveListingAsync_WhenBodyMalformed_ReturnsProviderUnavailable()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, "not-json");
+        IMarketDataProvider provider = CreateProvider(handler);
+
+        Result<MarketListing> result = await provider.ResolveListingAsync(
+            new MarketListingQuery("XTEST", "DEMO"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.ProviderUnavailable.Code));
+        });
+    }
+
+    [Test]
+    public void ResolveListingAsync_WhenCallerCancels_PropagatesCancellation()
+    {
+        ScriptedHttpMessageHandler handler = new();
+        handler.Enqueue(async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        IMarketDataProvider provider = CreateProvider(handler);
+        using CancellationTokenSource cancelled = new();
+        cancelled.Cancel();
+
+        Assert.That(
+            async () => await provider.ResolveListingAsync(
+                new MarketListingQuery("XTEST", "DEMO"),
+                cancelled.Token),
+            Throws.InstanceOf<OperationCanceledException>());
     }
 
     private EToroMarketDataProvider CreateProvider(ScriptedHttpMessageHandler handler)

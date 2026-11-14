@@ -38,7 +38,6 @@ internal static class WatchedInstrumentServiceCollectionExtensions
                 provider.GetRequiredService<IClock>(),
                 provider.GetRequiredService<IWatchedInstrumentStore>(),
                 provider.GetRequiredService<IMarketDataProvider>(),
-                provider.GetRequiredService<IListingConfigurationStore>(),
                 provider.GetRequiredService<INativeQuoteUnitMap>(),
                 provider.GetRequiredService<MonitoringReadinessEvaluator>()));
         services.AddScoped<GetWatchedInstrumentHandler>(provider =>

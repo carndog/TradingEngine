@@ -1,6 +1,7 @@
 using NodaTime;
 using NodaTime.Testing;
 using TradingEngine.Application.MarketData;
+using TradingEngine.Application.PriceCollection;
 using TradingEngine.Application.Tests.Listings;
 using TradingEngine.Application.Tests.PriceCollection;
 using TradingEngine.Application.WatchedInstruments.Register;
@@ -21,11 +22,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
     {
         FakeClock clock = new(Now);
         CapturingWatchedInstrumentStore store = new();
-        StubListingConfigurationStore listings = new();
-        RegisterWatchedInstrumentHandler handler = CreateHandler(
-            clock,
-            store,
-            listings: listings);
+        RegisterWatchedInstrumentHandler handler = CreateHandler(clock, store);
         ChartAnalysisDefinition definition = CreateDefinition();
         RegisterWatchedInstrument command = new(
             "demo-2",
@@ -67,7 +64,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
                 result.Value.Listing.ResolutionState,
                 Is.EqualTo(ListingResolutionState.Resolved));
             Assert.That(result.Value.Listing.UnitState, Is.EqualTo(ListingUnitState.Unconfirmed));
-            Assert.That(listings.SavedUpsert, Is.Null);
+            Assert.That(store.AddedRegistration.Listing, Is.Null);
         });
     }
 
@@ -76,11 +73,7 @@ public sealed class RegisterWatchedInstrumentHandlerTests
     {
         FakeClock clock = new(Now);
         CapturingWatchedInstrumentStore store = new();
-        StubListingConfigurationStore listings = new();
-        RegisterWatchedInstrumentHandler handler = CreateHandler(
-            clock,
-            store,
-            listings: listings);
+        RegisterWatchedInstrumentHandler handler = CreateHandler(clock, store);
         RegisterWatchedInstrument command = new(
             "demo-2",
             "xtest",
@@ -98,15 +91,15 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         Assert.That(result.IsSuccess, Is.True);
         Assert.Multiple(() =>
         {
-            Assert.That(listings.SavedUpsert, Is.Not.Null);
-            Assert.That(listings.SavedUpsert!.Exchange, Is.EqualTo("XTEST"));
-            Assert.That(listings.SavedUpsert.Symbol, Is.EqualTo("DEMO-2"));
-            Assert.That(listings.SavedUpsert.Provider, Is.EqualTo("eToro"));
-            Assert.That(listings.SavedUpsert.ProviderInstrumentId, Is.EqualTo(4242));
-            Assert.That(listings.SavedUpsert.NativeQuoteCurrency, Is.EqualTo("GBP"));
-            Assert.That(listings.SavedUpsert.Source, Is.EqualTo(ListingUnitSource.Administrator));
-            Assert.That(listings.SavedUpsert.ConfirmedBy, Is.EqualTo("test-admin"));
-            Assert.That(listings.SavedUpsert.ConfirmedAt, Is.EqualTo(Now));
+            Assert.That(store.AddedRegistration?.Listing, Is.Not.Null);
+            Assert.That(store.AddedRegistration!.Listing!.Exchange, Is.EqualTo("XTEST"));
+            Assert.That(store.AddedRegistration.Listing.Symbol, Is.EqualTo("DEMO-2"));
+            Assert.That(store.AddedRegistration.Listing.Provider, Is.EqualTo("eToro"));
+            Assert.That(store.AddedRegistration.Listing.ProviderInstrumentId, Is.EqualTo(4242));
+            Assert.That(store.AddedRegistration.Listing.NativeQuoteCurrency, Is.EqualTo("GBP"));
+            Assert.That(store.AddedRegistration.Listing.Source, Is.EqualTo(ListingUnitSource.Administrator));
+            Assert.That(store.AddedRegistration.Listing.ConfirmedBy, Is.EqualTo("test-admin"));
+            Assert.That(store.AddedRegistration.Listing.ConfirmedAt, Is.EqualTo(Now));
             Assert.That(result.Value.Listing.UnitState, Is.EqualTo(ListingUnitState.Confirmed));
             Assert.That(result.Value.Listing.NativeQuoteCurrency, Is.EqualTo("GBP"));
             Assert.That(
@@ -190,6 +183,115 @@ public sealed class RegisterWatchedInstrumentHandlerTests
     }
 
     [Test]
+    public async Task HandleAsync_WhenProviderUnavailableAndConfigured_RegistersWithUnavailableResolution()
+    {
+        FakeClock clock = new(Now);
+        CapturingWatchedInstrumentStore store = new();
+        StubMarketDataProvider provider = new()
+        {
+            ListingResponder = (_, _) =>
+                Task.FromResult<Result<MarketListing>>(MarketDataErrors.ProviderUnavailable)
+        };
+        RegisterWatchedInstrumentHandler handler = CreateHandler(clock, store, provider);
+        RegisterWatchedInstrument command = new(
+            "demo-2",
+            "xtest",
+            "gbp",
+            60,
+            MonitoringState.Configured,
+            CreateDefinition(),
+            "test-admin");
+
+        Result<WatchedInstrumentRegistrationOutcome> result = await handler.HandleAsync(
+            command,
+            CancellationToken.None);
+
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                result.Value.Listing.ResolutionState,
+                Is.EqualTo(ListingResolutionState.Unavailable));
+            Assert.That(
+                result.Value.Listing.ResolutionDetailCode,
+                Is.EqualTo(MarketDataErrors.ProviderUnavailable.Code));
+            Assert.That(store.AddedRegistration, Is.Not.Null);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenProviderUnavailableAndMonitored_ReturnsProviderError()
+    {
+        FakeClock clock = new(Now);
+        CapturingWatchedInstrumentStore store = new();
+        StubMarketDataProvider provider = new()
+        {
+            ListingResponder = (_, _) =>
+                Task.FromResult<Result<MarketListing>>(MarketDataErrors.ProviderUnavailable)
+        };
+        RegisterWatchedInstrumentHandler handler = CreateHandler(clock, store, provider);
+        RegisterWatchedInstrument command = new(
+            "demo-2",
+            "xtest",
+            "gbp",
+            60,
+            MonitoringState.Monitored,
+            CreateDefinition(),
+            "test-admin",
+            "gbp");
+
+        Result<WatchedInstrumentRegistrationOutcome> result = await handler.HandleAsync(
+            command,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(MarketDataErrors.ProviderUnavailable.Code));
+            Assert.That(store.AddedRegistration, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_WhenReadinessFails_StagesNoListingOrInstrument()
+    {
+        FakeClock clock = new(Now);
+        CapturingWatchedInstrumentStore store = new();
+        RegisterWatchedInstrumentHandler handler = CreateHandler(
+            clock,
+            store,
+            quoteUnits: StubNativeQuoteUnitMap.Configured("GBP"),
+            sessionPolicy: new StubMarketSessionPolicy
+            {
+                Responder = (_, _) => ExchangeSessionStatus.Unconfigured
+            });
+        RegisterWatchedInstrument command = new(
+            "demo-2",
+            "xother",
+            "gbp",
+            60,
+            MonitoringState.Monitored,
+            CreateDefinition(),
+            "test-admin",
+            "gbp");
+
+        Result<WatchedInstrumentRegistrationOutcome> result = await handler.HandleAsync(
+            command,
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsFailure, Is.True);
+            Assert.That(
+                result.Error.Code,
+                Is.EqualTo(PriceCollectionErrors.ExchangeSessionUnconfigured.Code));
+            Assert.That(store.AddedRegistration, Is.Null);
+        });
+    }
+
+    [Test]
     public async Task HandleAsync_WhenMonitoredAndUnitUnconfirmed_ReturnsUnconfiguredError()
     {
         FakeClock clock = new(Now);
@@ -228,11 +330,9 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         {
             Result = new NativeQuoteUnitResolution("USD", null, "USD", false)
         };
-        StubListingConfigurationStore listings = new();
         RegisterWatchedInstrumentHandler handler = CreateHandler(
             clock,
             store,
-            listings: listings,
             quoteUnits: quoteUnits);
         RegisterWatchedInstrument command = new(
             "demo-2",
@@ -252,7 +352,6 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         {
             Assert.That(result.IsFailure, Is.True);
             Assert.That(result.Error.Code, Is.EqualTo(MarketDataErrors.QuoteCurrencySourceConflict.Code));
-            Assert.That(listings.SavedUpsert, Is.Null);
             Assert.That(store.AddedRegistration, Is.Null);
         });
     }
@@ -262,11 +361,9 @@ public sealed class RegisterWatchedInstrumentHandlerTests
     {
         FakeClock clock = new(Now);
         CapturingWatchedInstrumentStore store = new();
-        StubListingConfigurationStore listings = new();
         RegisterWatchedInstrumentHandler handler = CreateHandler(
             clock,
             store,
-            listings: listings,
             quoteUnits: StubNativeQuoteUnitMap.Unconfigured());
         RegisterWatchedInstrument command = new(
             "demo-2",
@@ -286,7 +383,6 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         {
             Assert.That(result.IsFailure, Is.True);
             Assert.That(result.Error.Code, Is.EqualTo(MarketDataErrors.QuoteCurrencyConflict.Code));
-            Assert.That(listings.SavedUpsert, Is.Null);
             Assert.That(store.AddedRegistration, Is.Null);
         });
     }
@@ -454,7 +550,6 @@ public sealed class RegisterWatchedInstrumentHandlerTests
         FakeClock clock,
         CapturingWatchedInstrumentStore store,
         StubMarketDataProvider? provider = null,
-        StubListingConfigurationStore? listings = null,
         StubNativeQuoteUnitMap? quoteUnits = null,
         StubMarketSessionPolicy? sessionPolicy = null)
     {
@@ -463,7 +558,6 @@ public sealed class RegisterWatchedInstrumentHandlerTests
             clock,
             store,
             provider ?? new StubMarketDataProvider(),
-            listings ?? new StubListingConfigurationStore(),
             units,
             new MonitoringReadinessEvaluator(
                 units,

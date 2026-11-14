@@ -281,6 +281,10 @@ public sealed class WatchedInstrumentListingEndpointTests
         "ambiguous",
         HttpStatusCode.Conflict,
         "market_data.instrument_mapping_ambiguous")]
+    [TestCase(
+        "unavailable",
+        HttpStatusCode.PreconditionFailed,
+        "market_data.provider_unavailable")]
     public async Task PutListing_WhenProviderCannotResolve_ReturnsProblem(
         string mode,
         HttpStatusCode expectedStatus,
@@ -288,9 +292,12 @@ public sealed class WatchedInstrumentListingEndpointTests
     {
         _store.GetSettingsResult = CreateSnapshot("DEMO-2");
         _provider.ListingResponder = (query, _) => Task.FromResult<Result<MarketListing>>(
-            mode == "unresolved"
-                ? MarketDataErrors.InstrumentMappingUnresolved
-                : MarketDataErrors.InstrumentMappingAmbiguous);
+            mode switch
+            {
+                "unresolved" => MarketDataErrors.InstrumentMappingUnresolved,
+                "ambiguous" => MarketDataErrors.InstrumentMappingAmbiguous,
+                _ => MarketDataErrors.ProviderUnavailable
+            });
         HttpClient client = _factory.CreateClient();
 
         HttpResponseMessage response = await client.PutAsJsonAsync(
