@@ -67,7 +67,7 @@
     </div>
 </section>
 
-@if (_seeded?.Listing is ListingDto listing)
+@if (_listing is ListingDto listing)
 {
     <section class="te-detail-card" aria-label="Listing configuration">
         <h3>Listing</h3>
@@ -114,6 +114,7 @@
 
 @code {
     private WatchedInstrumentSettingsResponse? _seeded;
+    private ListingDto? _listing;
     private readonly ConflictResolution<WatchedInstrumentSettingsResponse> _conflict = new();
     private string _editState = "configured";
     private int _editInterval = 60;
@@ -166,6 +167,7 @@
     private void Seed(WatchedInstrumentSettingsResponse latest)
     {
         _seeded = latest;
+        _listing = latest.Listing;
         _token = latest.ConcurrencyToken;
         _editState = latest.MonitoringState;
         _editInterval = latest.SamplingIntervalSeconds;
@@ -257,7 +259,7 @@
 
     private async Task ConfirmUnitAsync()
     {
-        if (_seeded?.Listing is null)
+        if (_seeded is null || _listing is null)
         {
             return;
         }
@@ -272,7 +274,7 @@
                 _seeded.Id,
                 new ConfirmListingUnitRequest(
                     string.IsNullOrWhiteSpace(_listingUnit) ? null : _listingUnit),
-                _seeded.Listing.ConcurrencyToken,
+                _listing.ConcurrencyToken,
                 Cancellation);
         }
         finally
@@ -280,27 +282,32 @@
             _listingBusy = false;
         }
 
-        if (result.IsSuccess)
-        {
-            ApiResult<WatchedInstrumentSettingsResponse> latest =
-                await Api.GetSettingsAsync(_seeded.Id, Cancellation);
-            if (latest.IsSuccess)
-            {
-                _listingUnit = string.Empty;
-                _seeded = latest.Value!;
-                _token = latest.Value!.ConcurrencyToken;
-                await OnSaved.InvokeAsync(latest.Value);
-                await OnNotice.InvokeAsync("Listing unit confirmed.");
-            }
-            else
-            {
-                _listingError = latest.Error;
-            }
-        }
-        else
+        if (result.IsFailure)
         {
             _listingError = result.Error;
+            return;
         }
+
+        _listing = result.Value!;
+        _listingUnit = string.Empty;
+
+        if (_dirty)
+        {
+            await OnNotice.InvokeAsync("Listing unit confirmed.");
+            return;
+        }
+
+        ApiResult<WatchedInstrumentSettingsResponse> latest =
+            await Api.GetSettingsAsync(_seeded.Id, Cancellation);
+        if (latest.IsFailure)
+        {
+            _listingError = latest.Error;
+            return;
+        }
+
+        Seed(latest.Value!);
+        await OnSaved.InvokeAsync(latest.Value);
+        await OnNotice.InvokeAsync("Listing unit confirmed.");
     }
 
     private static string ProviderListingSummary(ListingDto listing)

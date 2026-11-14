@@ -234,14 +234,6 @@ public sealed class InstrumentSettingsEditorTests
                     unitState: "confirmed",
                     unitSource: "administrator")));
         });
-        handler.Enqueue(StubHttpMessageHandler.Json(
-            HttpStatusCode.OK,
-            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId, token: "tok-2") with
-            {
-                Listing = ClientTestData.Listing(
-                    unitState: "confirmed",
-                    unitSource: "administrator")
-            })));
         handler.Enqueue(async (request, _) =>
         {
             requests.Add((
@@ -280,6 +272,7 @@ public sealed class InstrumentSettingsEditorTests
         {
             Assert.That(IntervalInput(cut).GetAttribute("value"), Is.EqualTo("120"));
             Assert.That(cut.Markup, Does.Contain("Unsaved changes"));
+            Assert.That(cut.Markup, Does.Contain("confirmed"));
         });
 
         ClickButton(cut, "Save settings");
@@ -294,8 +287,208 @@ public sealed class InstrumentSettingsEditorTests
             Assert.That(
                 requests[1].Body,
                 Does.Contain("\"samplingIntervalSeconds\":120"));
-            Assert.That(requests[1].IfMatch, Is.EqualTo("\"tok-2\""));
+            Assert.That(requests[1].IfMatch, Is.EqualTo("\"tok-1\""));
             Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes"));
+        });
+    }
+
+    [Test]
+    public void ConfirmUnit_WhenChangedElsewhere_SaveConflictsWithOriginalToken()
+    {
+        StubHttpMessageHandler handler = new();
+        List<(string Path, string? IfMatch)> requests = [];
+        handler.Enqueue(async (request, _) =>
+        {
+            requests.Add((
+                request.RequestUri!.AbsolutePath,
+                request.Headers.TryGetValues("If-Match", out IEnumerable<string>? values)
+                    ? string.Join(",", values)
+                    : null));
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                ClientTestData.JsonOf(ClientTestData.Listing(
+                    unitState: "confirmed",
+                    unitSource: "administrator")));
+        });
+        handler.Enqueue(async (request, _) =>
+        {
+            requests.Add((
+                request.RequestUri!.AbsolutePath,
+                request.Headers.TryGetValues("If-Match", out IEnumerable<string>? values)
+                    ? string.Join(",", values)
+                    : null));
+            return await Task.FromResult(
+                StubHttpMessageHandler.Json(HttpStatusCode.PreconditionFailed, "{}"));
+        });
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(
+                InstrumentId,
+                token: "tok-2") with
+            {
+                PriceDisplayDecimalPlaces = 3,
+                Listing = ClientTestData.Listing(
+                    unitState: "confirmed",
+                    unitSource: "administrator")
+            })));
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(
+            ctx,
+            ClientTestData.Settings(InstrumentId) with
+            {
+                Listing = ClientTestData.Listing()
+            });
+
+        IntervalInput(cut).Input("120");
+        cut.Find("input[aria-label='Native quote unit to confirm']").Input("gbx");
+        ClickButton(cut, "Confirm unit");
+
+        cut.WaitForAssertion(
+            () => Assert.That(requests, Has.Count.EqualTo(1)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(IntervalInput(cut).GetAttribute("value"), Is.EqualTo("120"));
+            Assert.That(cut.Markup, Does.Contain("Unsaved changes"));
+            Assert.That(cut.Markup, Does.Contain("confirmed"));
+        });
+
+        ClickButton(cut, "Save settings");
+
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Changed elsewhere")));
+        Assert.Multiple(() =>
+        {
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[1].IfMatch, Is.EqualTo("\"tok-1\""));
+            Assert.That(cut.Markup, Does.Contain("60 s"));
+            Assert.That(cut.Markup, Does.Contain("3 dp"));
+            Assert.That(cut.Markup, Does.Contain("120 s"));
+        });
+    }
+
+    [Test]
+    public void ConflictReapply_AfterConfirm_SavesEditsAgainstLatestVersion()
+    {
+        StubHttpMessageHandler handler = new();
+        List<(string Path, string? IfMatch, string Body)> requests = [];
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Listing(
+                unitState: "confirmed",
+                unitSource: "administrator"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.PreconditionFailed, "{}"));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(
+                InstrumentId,
+                token: "tok-2") with
+            {
+                PriceDisplayDecimalPlaces = 3,
+                Listing = ClientTestData.Listing(
+                    unitState: "confirmed",
+                    unitSource: "administrator")
+            })));
+        handler.Enqueue(async (request, _) =>
+        {
+            requests.Add((
+                request.RequestUri!.AbsolutePath,
+                request.Headers.TryGetValues("If-Match", out IEnumerable<string>? values)
+                    ? string.Join(",", values)
+                    : null,
+                await request.Content!.ReadAsStringAsync()));
+            return StubHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                ClientTestData.JsonOf(ClientTestData.Settings(
+                    InstrumentId,
+                    interval: 120,
+                    token: "tok-3") with
+                {
+                    PriceDisplayDecimalPlaces = 3,
+                    Listing = ClientTestData.Listing(
+                        unitState: "confirmed",
+                        unitSource: "administrator")
+                }));
+        });
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(
+            ctx,
+            ClientTestData.Settings(InstrumentId) with
+            {
+                Listing = ClientTestData.Listing()
+            });
+
+        IntervalInput(cut).Input("120");
+        ClickButton(cut, "Confirm unit");
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("confirmed")));
+        ClickButton(cut, "Save settings");
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Changed elsewhere")));
+
+        ClickButton(cut, "Keep my input and retry");
+
+        cut.WaitForAssertion(
+            () => Assert.That(requests, Has.Count.EqualTo(1)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(requests[0].IfMatch, Is.EqualTo("\"tok-2\""));
+            Assert.That(
+                requests[0].Body,
+                Does.Contain("\"samplingIntervalSeconds\":120"));
+            Assert.That(
+                cut.Find("input[aria-label='Price decimal places']").GetAttribute("value"),
+                Is.EqualTo("3"));
+            Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes"));
+        });
+    }
+
+    [Test]
+    public void ConflictDiscard_AfterConfirm_AdoptsLatestSettingsAndListing()
+    {
+        StubHttpMessageHandler handler = new();
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Listing(
+                unitState: "confirmed",
+                unitSource: "administrator"))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.PreconditionFailed, "{}"));
+        handler.Enqueue(StubHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(
+                InstrumentId,
+                interval: 30,
+                token: "tok-2") with
+            {
+                PriceDisplayDecimalPlaces = 3,
+                Listing = ClientTestData.Listing(
+                    unitState: "confirmed",
+                    unitSource: "administrator")
+            })));
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<InstrumentSettingsEditor> cut = RenderEditor(
+            ctx,
+            ClientTestData.Settings(InstrumentId) with
+            {
+                Listing = ClientTestData.Listing()
+            });
+
+        IntervalInput(cut).Input("120");
+        ClickButton(cut, "Confirm unit");
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("confirmed")));
+        ClickButton(cut, "Save settings");
+        cut.WaitForAssertion(
+            () => Assert.That(cut.Markup, Does.Contain("Changed elsewhere")));
+
+        ClickButton(cut, "Use latest and discard my input");
+
+        cut.WaitForAssertion(
+            () => Assert.That(IntervalInput(cut).GetAttribute("value"), Is.EqualTo("30")));
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Not.Contain("Unsaved changes"));
+            Assert.That(cut.Markup, Does.Not.Contain("Changed elsewhere"));
+            Assert.That(cut.Markup, Does.Contain("confirmed"));
         });
     }
 
