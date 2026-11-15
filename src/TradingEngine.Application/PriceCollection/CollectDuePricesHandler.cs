@@ -134,6 +134,7 @@ public sealed class CollectDuePricesHandler
         int expiredSlots = _progress.TrackDueSlots(openSlots, latestSlots, instrumentIds);
         List<PendingPriceCollection> pending = [];
         bool deadlineReached = false;
+        int preparedInstruments = 0;
         Guid? interruptedInstrument = _progress.InterruptedInstrument;
         foreach (MonitoredInstrument instrument in _progress.Order(instruments))
         {
@@ -185,6 +186,11 @@ public sealed class CollectDuePricesHandler
                     invocationId,
                     budgetToken,
                     cancellationToken);
+            }
+
+            if (item?.ErrorCode != PriceCollectionErrors.DeadlineExceeded.Code)
+            {
+                preparedInstruments++;
             }
 
             if (item is not null)
@@ -246,8 +252,7 @@ public sealed class CollectDuePricesHandler
                 Failed = items.Count(item => item.Outcome == PriceCollectionOutcome.Failed && IsDeferred(item) is false),
                 Unprocessed = dueSlots.Count - items.Select(item => item.InstrumentId).Distinct().Count(),
                 ExpiredPendingSlots = expiredSlots + items.Count(item => item.ErrorCode == PriceCollectionErrors.SlotExpired.Code),
-                EligibilityScanCompleted = items.Count == dueSlots.Count
-                    && items.All(item => item.ErrorCode != PriceCollectionErrors.DeadlineExceeded.Code),
+                EligibilityScanCompleted = preparedInstruments == dueSlots.Count,
                 Requests = _marketData.RequestStatistics.Since(initialRequests)
             }
         };

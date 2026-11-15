@@ -285,6 +285,28 @@ public sealed class CollectPriceBatchTests
         });
     }
 
+    [Test]
+    public async Task HandleAsync_ProviderDeadlineAfterAllPrepared_ReportsEligibilityScanCompleted()
+    {
+        AddInstruments(3);
+        _provider.Responder = (_, _) =>
+        {
+            _clock.Advance(Duration.FromSeconds(61));
+            throw new OperationCanceledException();
+        };
+
+        PriceCollectionRunResult result = await Handler().HandleAsync(new CollectDuePrices(), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.DeadlineReached, Is.True);
+            Assert.That(result.Items.All(item => item.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code), Is.True);
+            Assert.That(result.Diagnostics.Eligible, Is.EqualTo(3));
+            Assert.That(result.Diagnostics.Unprocessed, Is.Zero);
+            Assert.That(result.Diagnostics.EligibilityScanCompleted, Is.True);
+        });
+    }
+
     [TestCase(true, 1)]
     [TestCase(true, 1000)]
     [TestCase(false, 1)]
@@ -328,6 +350,7 @@ public sealed class CollectPriceBatchTests
         {
             Assert.That(first.DeadlineReached, Is.True);
             Assert.That(first.Diagnostics.Unprocessed, Is.EqualTo(2));
+            Assert.That(first.Diagnostics.EligibilityScanCompleted, Is.False);
             Assert.That(next.Diagnostics.Persisted, Is.EqualTo(2));
             Assert.That(_store.Observations.Select(item => item.InstrumentId),
                 Is.EquivalentTo(_source.Instruments.Skip(1).Select(item => item.Id)));
