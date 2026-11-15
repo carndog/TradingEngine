@@ -227,7 +227,7 @@ public sealed class CollectDuePricesHandlerTests
     public async Task HandleAsync_WhenProviderReturnsError_RecordsFailedOutcome()
     {
         _marketData.Responder = (_, _) =>
-            Task.FromResult<Result<MarketQuote>>(MarketDataErrors.PriceUnavailable);
+            Task.FromResult<Result<MarketQuote>>(MarketDataErrors.InstrumentMappingUnresolved);
         CollectDuePricesHandler handler = CreateHandler(OpenSessions());
 
         PriceCollectionRunResult result = await handler.HandleAsync(
@@ -239,7 +239,7 @@ public sealed class CollectDuePricesHandlerTests
             Assert.That(result.Items[0].Outcome, Is.EqualTo(PriceCollectionOutcome.Failed));
             Assert.That(
                 result.Items[0].ErrorCode,
-                Is.EqualTo(MarketDataErrors.PriceUnavailable.Code));
+                Is.EqualTo(MarketDataErrors.InstrumentMappingUnresolved.Code));
             Assert.That(_store.Observations, Is.Empty);
         });
     }
@@ -600,7 +600,7 @@ public sealed class CollectDuePricesHandlerTests
             if (instrument.Symbol == "DEMO-F")
             {
                 return Task.FromResult<Result<MarketQuote>>(
-                    MarketDataErrors.PriceUnavailable);
+                    MarketDataErrors.InstrumentMappingUnresolved);
             }
 
             return Task.FromResult<Result<MarketQuote>>(new MarketQuote(
