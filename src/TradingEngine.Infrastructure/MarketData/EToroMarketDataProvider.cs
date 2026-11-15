@@ -31,6 +31,9 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         PropertyNameCaseInsensitive = true
     };
 
+    private readonly object _statisticsGate = new();
+    private readonly Dictionary<int, long> _rateBatches = [];
+    private long _searchRequests;
     private readonly HttpClient _httpClient;
     private readonly EToroMarketDataOptions _options;
     private readonly ProviderRateGate _rateGate;
@@ -52,6 +55,8 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        ArgumentOutOfRangeException.ThrowIfLessThan(_options.BatchSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(_options.BatchSize, EToroMarketDataOptions.MaximumBatchSize);
         _rateGate = rateGate ?? throw new ArgumentNullException(nameof(rateGate));
         _instrumentIdCache = instrumentIdCache
             ?? throw new ArgumentNullException(nameof(instrumentIdCache));
@@ -61,7 +66,38 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public int MaxBatchSize => 1000;
+    public int MaxBatchSize => _options.BatchSize;
+
+    public MarketDataRequestStatistics RequestStatistics
+    {
+        get
+        {
+            lock (_statisticsGate)
+            {
+                return new MarketDataRequestStatistics(_searchRequests, new Dictionary<int, long>(_rateBatches));
+            }
+        }
+    }
+
+    private void RecordRequest(string relativeUri, string requestId)
+    {
+        bool rates = relativeUri.StartsWith(RatesPath, StringComparison.Ordinal);
+        int size = rates ? relativeUri.Count(character => character == ',') + 1 : 0;
+        lock (_statisticsGate)
+        {
+            if (rates)
+            {
+                _rateBatches[size] = _rateBatches.GetValueOrDefault(size) + 1;
+            }
+            else
+            {
+                _searchRequests++;
+            }
+        }
+
+        _logger.LogDebug("eToro {RequestKind} request {RequestId} started with {BatchSize} instrument IDs.",
+            rates ? "rates" : "search", requestId, size);
+    }
 
     public async Task<IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>>> GetCurrentQuotesAsync(
         IReadOnlyCollection<MarketInstrumentIdentity> instruments,
@@ -632,7 +668,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 _logger.LogWarning(
                     "eToro market-data request {RequestUri} could not be paced within the " +
                     "execution deadline; the local rate window is saturated.",
-                    relativeUri);
+                    relativeUri.Split('?')[0]);
                 return lastThrottledResponse ?? new EToroProviderResponse
                 {
                     StatusCode = HttpStatusCode.TooManyRequests,
@@ -644,7 +680,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             if (DeadlineExceeded(deadline))
             {
                 throw new TimeoutException(
-                    $"The eToro request '{relativeUri}' did not start within the " +
+                    $"The eToro request '{relativeUri.Split('?')[0]}' did not start within the " +
                     "permitted execution budget.");
             }
 
@@ -655,6 +691,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                     deadline,
                     cancellationToken);
                 using HttpRequestMessage request = CreateRequest(relativeUri, requestId);
+                RecordRequest(relativeUri, requestId);
                 using HttpResponseMessage response = await _httpClient.SendAsync(
                     request,
                     attemptScope.Token);
@@ -702,7 +739,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                     || DeadlineExceededAfter(deadline, RetryBackoff(attempt)))
                 {
                     throw new TimeoutException(
-                        $"The eToro request '{relativeUri}' timed out after " +
+                        $"The eToro request '{relativeUri.Split('?')[0]}' timed out after " +
                         $"{attempt + 1} attempt(s).",
                         exception);
                 }
@@ -716,7 +753,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                     || DeadlineExceededAfter(deadline, RetryBackoff(attempt)))
                 {
                     throw new EToroMarketDataException(
-                        $"The eToro request '{relativeUri}' failed after " +
+                        $"The eToro request '{relativeUri.Split('?')[0]}' failed after " +
                         $"{attempt + 1} attempt(s).",
                         exception);
                 }
@@ -989,7 +1026,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 "eToro market-data request {RequestId} to {RequestUri} was throttled " +
                 "(rate limit remaining {RateLimitRemaining}, retry after {RetryAfterSeconds}s).",
                 response.RequestId,
-                relativeUri,
+                relativeUri.Split('?')[0],
                 response.RateLimitRemaining,
                 response.RetryAfter?.TotalSeconds);
             return;
@@ -999,7 +1036,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             "eToro market-data request {RequestId} to {RequestUri} returned {StatusCode} " +
             "(rate limit remaining {RateLimitRemaining}).",
             response.RequestId,
-            relativeUri,
+            relativeUri.Split('?')[0],
             (int)response.StatusCode,
             response.RateLimitRemaining);
     }

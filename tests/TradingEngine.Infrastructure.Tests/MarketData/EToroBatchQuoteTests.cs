@@ -31,6 +31,7 @@ public sealed class EToroBatchQuoteTests
     }
 
     [TestCase(1)]
+    [TestCase(120)]
     [TestCase(1000)]
     public async Task GetCurrentQuotesAsync_ValidBatch_UsesOneRequestAndPreservesEveryQuote(int count)
     {
@@ -609,6 +610,42 @@ public sealed class EToroBatchQuoteTests
             default:
                 throw new ArgumentOutOfRangeException(nameof(failure));
         }
+    }
+
+    [Test]
+    public async Task GetCurrentQuotesAsync_SearchAndRetry_CountsEveryHttpAttemptAndActualBatchSize()
+    {
+        MarketInstrumentIdentity[] instruments = Instruments(1);
+        ScriptedHttpMessageHandler handler = new();
+        handler.EnqueueResponse(HttpStatusCode.OK, EToroPayloads.SearchBody((10000, "DEMO00000", 5, "Test Exchange")));
+        handler.EnqueueResponse(HttpStatusCode.ServiceUnavailable, "{}");
+        handler.EnqueueResponse(HttpStatusCode.OK, Rates(1));
+        EToroMarketDataProvider provider = Provider(handler, instruments, cachedCount: 0);
+        MarketDataRequestStatistics before = provider.RequestStatistics;
+
+        await provider.GetCurrentQuotesAsync(instruments, CancellationToken.None);
+        MarketDataRequestStatistics statistics = provider.RequestStatistics.Since(before);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(statistics.SearchRequests, Is.EqualTo(1));
+            Assert.That(statistics.RatesRequests, Is.EqualTo(2));
+            Assert.That(statistics.RateBatches[1], Is.EqualTo(2));
+            Assert.That(handler.Requests, Has.Count.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public void GetCurrentQuotesAsync_ExceedsConfiguredBatchSize_RejectsBeforeHttp()
+    {
+        MarketInstrumentIdentity[] instruments = Instruments(3);
+        ScriptedHttpMessageHandler handler = new();
+        EToroMarketDataProvider provider = Provider(handler, instruments, configure: options => options.BatchSize = 2);
+
+        Assert.That(async () => await provider.GetCurrentQuotesAsync(instruments, CancellationToken.None),
+            Throws.TypeOf<ArgumentOutOfRangeException>());
+        Assert.That(provider.RequestStatistics.RatesRequests, Is.Zero);
+        Assert.That(handler.Requests, Is.Empty);
     }
 
     private EToroMarketDataProvider Provider(

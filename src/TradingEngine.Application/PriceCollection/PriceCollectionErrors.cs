@@ -20,6 +20,10 @@ public static class PriceCollectionErrors
         "price_collection.deadline_exceeded",
         "The collection run reached its execution deadline before the attempt completed.");
 
+    public static readonly Error SlotExpired = Error.PreconditionFailed(
+        "price_collection.slot_expired",
+        "The current quote was retrieved after the scheduled sampling slot ended.");
+
     public static readonly Error PriceUnavailable = Error.PreconditionFailed(
         "price_collection.price_unavailable",
         "The provider returned a quote with neither bid nor ask after the bounded retry.");

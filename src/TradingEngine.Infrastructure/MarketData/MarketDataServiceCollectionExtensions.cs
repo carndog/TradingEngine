@@ -25,6 +25,9 @@ public static class MarketDataServiceCollectionExtensions
                     options.SearchPageSize <=
                     EToroMarketDataOptions.MaxSearchPageSize,
                 "EToro:MarketData:SearchPageSize must be between 1 and 100.")
+            .Validate(
+                options => options.BatchSize is >= 1 and <= EToroMarketDataOptions.MaximumBatchSize,
+                "EToro:MarketData:BatchSize must be between 1 and 1000.")
             .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IClock>(SystemClock.Instance);

@@ -24,6 +24,7 @@ internal static class PriceCollectionServiceCollectionExtensions
 
         services.AddSingleton(options);
         services.TryAddSingleton<PriceCollectionTelemetry>();
+        services.TryAddSingleton<PriceCollectionProgress>();
         services.AddSingleton<IMarketSessionPolicy>(
             new WeeklyScheduleMarketSessionPolicy(BuildSessions(options)));
 
@@ -60,7 +61,8 @@ internal static class PriceCollectionServiceCollectionExtensions
                 provider.GetRequiredService<IMarketSessionPolicy>(),
                 provider.GetRequiredService<IClock>(),
                 provider.GetRequiredService<TimeProvider>(),
-                provider.GetRequiredService<PriceCollectionOptions>()));
+                provider.GetRequiredService<PriceCollectionOptions>(),
+                provider.GetRequiredService<PriceCollectionProgress>()));
 
         services.TryAddSingleton(TimeProvider.System);
         services.AddHostedService(provider =>

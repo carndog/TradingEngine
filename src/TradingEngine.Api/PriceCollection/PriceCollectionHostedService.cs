@@ -76,6 +76,7 @@ internal sealed class PriceCollectionHostedService : BackgroundService
 
     private void LogSummary(PriceCollectionRunResult result)
     {
+        _telemetry.RecordRun(result);
         int observed = 0;
         int marketClosed = 0;
         int duplicates = 0;
@@ -109,6 +110,18 @@ internal sealed class PriceCollectionHostedService : BackgroundService
             }
         }
 
+        PriceCollectionRunDiagnostics diagnostics = result.Diagnostics;
+        _logger.LogInformation(
+            "Price collection run {InvocationId} diagnostics: {Due} due, {Eligible} eligible, " +
+            "{Requested} requested, {Returned} returned, {Persisted} persisted, {Deferred} deferred, " +
+            "{Failed} failed, {Unprocessed} unprocessed, {ExpiredPendingSlots} expired pending slots; " +
+            "{RatesRequests} rates requests, {SearchRequests} searches; " +
+            "durationSeconds={DurationSeconds}, eligibilityScanCompleted={EligibilityScanCompleted}.",
+            result.InvocationId, diagnostics.Due, diagnostics.Eligible, diagnostics.Requested,
+            diagnostics.Returned, diagnostics.Persisted, diagnostics.Deferred, diagnostics.Failed,
+            diagnostics.Unprocessed, diagnostics.ExpiredPendingSlots, diagnostics.Requests.RatesRequests,
+            diagnostics.Requests.SearchRequests, (result.CompletedAt - result.StartedAt).TotalSeconds,
+            diagnostics.EligibilityScanCompleted);
         _logger.LogInformation(
             "Price collection run {InvocationId} completed: {Observed} observed, " +
             "{MarketClosed} market-closed, {Duplicates} duplicate, {Throttled} throttled, " +
