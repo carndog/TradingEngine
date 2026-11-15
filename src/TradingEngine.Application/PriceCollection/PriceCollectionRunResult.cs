@@ -7,4 +7,7 @@ public sealed record PriceCollectionRunResult(
     Instant StartedAt,
     Instant CompletedAt,
     bool DeadlineReached,
-    IReadOnlyList<PriceCollectionItemResult> Items);
+    IReadOnlyList<PriceCollectionItemResult> Items)
+{
+    public PriceCollectionRunDiagnostics Diagnostics { get; init; } = new();
+}

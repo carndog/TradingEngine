@@ -181,6 +181,7 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
     {
         StubMarketDataProvider provider = new();
         FakeClock clock = new(Instant.FromUtc(2026, 10, 30, 13, 0, 0));
+        UseQuoteClock(provider, clock);
         WebApplicationFactory<Program> factory = CreateFactory(provider, clock);
         HttpClient client = factory.CreateClient();
 
@@ -324,6 +325,7 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
         await factory.DisposeAsync();
 
         FakeClock rebuiltClock = new(Instant.FromUtc(2026, 10, 30, 14, 0, 0));
+        UseQuoteClock(provider, rebuiltClock);
         await using WebApplicationFactory<Program> rebuilt = CreateFactory(
             provider,
             rebuiltClock);
@@ -364,6 +366,18 @@ public sealed class WatchedInstrumentRegistrationPersistenceTests
                 rebuiltRun.Items[0].Outcome,
                 Is.EqualTo(PriceCollectionOutcome.Observed));
         });
+    }
+
+    private static void UseQuoteClock(StubMarketDataProvider provider, IClock clock)
+    {
+        provider.QuoteResponder = (instrument, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Instant now = clock.GetCurrentInstant();
+            return Task.FromResult<Result<MarketQuote>>(new MarketQuote(
+                instrument, "eToro", 4242, 123.45m, 124.01m, now, now,
+                MarketQuoteTimeliness.Realtime, "synthetic-clock-request"));
+        };
     }
 
     private WebApplicationFactory<Program> CreateFactory(

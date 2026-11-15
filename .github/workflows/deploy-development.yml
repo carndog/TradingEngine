@@ -34,6 +34,15 @@ jobs:
       - name: Test
         run: dotnet test TradingEngine.sln --configuration Release --no-build
 
+      - name: Report synthetic batching evidence
+        if: always()
+        run: |
+          for evidence in tests/TradingEngine.Infrastructure.IntegrationTests/bin/Release/net10.0/batch-sql-evidence-*.json; do
+            if [ -f "$evidence" ]; then
+              cat "$evidence"
+            fi
+          done
+
       - name: Publish API
         if: github.ref == 'refs/heads/main'
         run: dotnet publish src/TradingEngine.Api/TradingEngine.Api.csproj --configuration Release -p:SourceRevisionId=${{ github.sha }} --output ./artifacts/api

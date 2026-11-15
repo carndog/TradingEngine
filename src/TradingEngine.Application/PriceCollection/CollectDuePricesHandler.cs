@@ -19,6 +19,7 @@ public sealed class CollectDuePricesHandler
     private readonly IClock _clock;
     private readonly TimeProvider _timeProvider;
     private readonly PriceCollectionOptions _options;
+    private readonly PriceCollectionProgress _progress;
 
     public CollectDuePricesHandler(
         IMonitoredInstrumentSource source,
@@ -29,7 +30,8 @@ public sealed class CollectDuePricesHandler
         IMarketSessionPolicy sessionPolicy,
         IClock clock,
         TimeProvider timeProvider,
-        PriceCollectionOptions options)
+        PriceCollectionOptions options,
+        PriceCollectionProgress? progress = null)
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _store = store ?? throw new ArgumentNullException(nameof(store));
@@ -42,6 +44,7 @@ public sealed class CollectDuePricesHandler
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _progress = progress ?? new PriceCollectionProgress();
     }
 
     public async Task<PriceCollectionRunResult> HandleAsync(
@@ -54,6 +57,8 @@ public sealed class CollectDuePricesHandler
             _clock.GetCurrentInstant(),
             nameof(command));
         Guid invocationId = Guid.CreateVersion7();
+        MarketDataRequestStatistics initialRequests = _marketData.RequestStatistics;
+        PriceCollectionRunCounters counters = new();
         Instant deadline = startedAt.Plus(
             Duration.FromSeconds(_options.MaxExecutionTimeSeconds));
 
@@ -85,7 +90,10 @@ public sealed class CollectDuePricesHandler
                 startedAt,
                 _clock.GetCurrentInstant(),
                 false,
-                items);
+                items)
+            {
+                Diagnostics = new PriceCollectionRunDiagnostics { EligibilityScanCompleted = true }
+            };
         }
 
         Guid[] instrumentIds = instruments
@@ -109,22 +117,48 @@ public sealed class CollectDuePricesHandler
         }
 
         int batchSize = Math.Max(1, _marketData.MaxBatchSize);
+        Dictionary<Guid, Instant> dueSlots = instruments.ToDictionary(
+            instrument => instrument.Id,
+            instrument => SlotFloor(startedAt,
+                _samplingPolicy.EffectiveIntervalSeconds(instrument, instruments.Count, batchSize)));
+        foreach (Guid completed in dueSlots.Keys.Where(id =>
+            latestSlots.TryGetValue(id, out Instant saved) && saved >= dueSlots[id]).ToArray())
+        {
+            dueSlots.Remove(completed);
+        }
+
+        Dictionary<Guid, Instant> openSlots = instruments
+            .Where(instrument => dueSlots.ContainsKey(instrument.Id)
+                && _sessionPolicy.GetStatus(instrument.Exchange, startedAt) == ExchangeSessionStatus.Open)
+            .ToDictionary(instrument => instrument.Id, instrument => dueSlots[instrument.Id]);
+        int expiredSlots = _progress.TrackDueSlots(openSlots, latestSlots, instrumentIds);
         List<PendingPriceCollection> pending = [];
         bool deadlineReached = false;
-        foreach (MonitoredInstrument instrument in instruments)
+        int preparedInstruments = 0;
+        Guid? interruptedInstrument = _progress.InterruptedInstrument;
+        foreach (MonitoredInstrument instrument in _progress.Order(instruments))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            Instant scheduledFor = SlotFloor(
-                startedAt,
-                _samplingPolicy.EffectiveIntervalSeconds(instrument, instruments.Count, batchSize));
-
-            if (latestSlots.TryGetValue(instrument.Id, out Instant latestSlot)
-                && latestSlot >= scheduledFor)
+            if (dueSlots.TryGetValue(instrument.Id, out Instant scheduledFor) is false)
             {
                 continue;
             }
 
+            if (instrument.Id == interruptedInstrument && pending.Count > 0)
+            {
+                items.AddRange(await CollectBatchAsync(
+                    pending, invocationId, deadline, budgetToken, cancellationToken, counters));
+                pending.Clear();
+                if (budgetToken.IsCancellationRequested || _clock.GetCurrentInstant() >= deadline
+                    || items.Any(result => result.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code))
+                {
+                    deadlineReached = true;
+                    break;
+                }
+            }
+
+            _progress.AdvancePast(instrument.Id);
             latestAttempts.TryGetValue(instrument.Id, out PriceCollectionAttempt? latestAttempt);
 
             PriceCollectionItemResult? item;
@@ -143,12 +177,20 @@ public sealed class CollectDuePricesHandler
             }
             catch (Exception) when (cancellationToken.IsCancellationRequested is false)
             {
-                item = await TryRecordStorageFailureAsync(
+                item = budgetToken.IsCancellationRequested || _clock.GetCurrentInstant() >= deadline
+                    ? new PriceCollectionItemResult(instrument.Id, scheduledFor, PriceCollectionOutcome.Failed,
+                        PriceCollectionErrors.DeadlineExceeded.Code, null)
+                    : await TryRecordStorageFailureAsync(
                     instrument,
                     scheduledFor,
                     invocationId,
                     budgetToken,
                     cancellationToken);
+            }
+
+            if (item?.ErrorCode != PriceCollectionErrors.DeadlineExceeded.Code)
+            {
+                preparedInstruments++;
             }
 
             if (item is not null)
@@ -157,13 +199,16 @@ public sealed class CollectDuePricesHandler
             }
             else
             {
-                pending.Add(new PendingPriceCollection(instrument, scheduledFor, attemptedAt));
+                counters.Eligible.Add(instrument.Id);
+                pending.Add(new PendingPriceCollection(instrument, scheduledFor, attemptedAt,
+                    scheduledFor.Plus(Duration.FromSeconds(_samplingPolicy.EffectiveIntervalSeconds(
+                        instrument, instruments.Count, batchSize)))));
             }
 
             if (pending.Count == batchSize)
             {
                 items.AddRange(await CollectBatchAsync(
-                    pending, invocationId, deadline, budgetToken, cancellationToken));
+                    pending, invocationId, deadline, budgetToken, cancellationToken, counters));
                 pending.Clear();
             }
 
@@ -180,19 +225,43 @@ public sealed class CollectDuePricesHandler
         if (pending.Count > 0)
         {
             items.AddRange(await CollectBatchAsync(
-                pending, invocationId, deadline, budgetToken, cancellationToken));
+                pending, invocationId, deadline, budgetToken, cancellationToken, counters));
         }
 
         deadlineReached |= budgetToken.IsCancellationRequested
             || _clock.GetCurrentInstant() >= deadline
             || items.Any(item => item.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code);
 
+        _progress.FinishRun(deadlineReached);
         return new PriceCollectionRunResult(
             invocationId,
             startedAt,
             _clock.GetCurrentInstant(),
             deadlineReached,
-            items);
+            items)
+        {
+            Diagnostics = new PriceCollectionRunDiagnostics
+            {
+                Monitored = instruments.Count,
+                Due = dueSlots.Count,
+                Eligible = counters.Eligible.Count,
+                Requested = counters.Requested.Count,
+                Returned = counters.Returned.Count,
+                Persisted = items.Count(item => item.Outcome == PriceCollectionOutcome.Observed),
+                Deferred = items.Count(IsDeferred),
+                Failed = items.Count(item => item.Outcome == PriceCollectionOutcome.Failed && IsDeferred(item) is false),
+                Unprocessed = dueSlots.Count - items.Select(item => item.InstrumentId).Distinct().Count(),
+                ExpiredPendingSlots = expiredSlots + items.Count(item => item.ErrorCode == PriceCollectionErrors.SlotExpired.Code),
+                EligibilityScanCompleted = preparedInstruments == dueSlots.Count,
+                Requests = _marketData.RequestStatistics.Since(initialRequests)
+            }
+        };
+    }
+
+    private static bool IsDeferred(PriceCollectionItemResult item)
+    {
+        return item.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code
+            || item.ErrorCode == MarketDataErrors.ProviderRequestDeferred.Code;
     }
 
     private PriceCollectionRunResult DeadlineResult(
@@ -323,7 +392,8 @@ public sealed class CollectDuePricesHandler
         Guid invocationId,
         Instant deadline,
         CancellationToken budgetToken,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        PriceCollectionRunCounters counters)
     {
         List<PriceCollectionItemResult> items = [];
         List<PendingPriceCollection> pending = prepared.ToList();
@@ -331,7 +401,7 @@ public sealed class CollectDuePricesHandler
         {
             cancellationToken.ThrowIfCancellationRequested();
             IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>> quotes =
-                await FetchBatchAsync(pending, deadline, budgetToken, cancellationToken);
+                await FetchBatchAsync(pending, deadline, budgetToken, cancellationToken, counters);
             List<PendingPriceCollection> retry = [];
             foreach (PendingPriceCollection item in pending)
             {
@@ -339,6 +409,11 @@ public sealed class CollectDuePricesHandler
                 Result<MarketQuote> result = quotes.TryGetValue(item.Identity, out Result<MarketQuote>? quote)
                     ? quote
                     : MarketDataErrors.PriceUnavailable;
+                if (result.IsSuccess && (result.Value.Bid is not null || result.Value.Ask is not null))
+                {
+                    counters.Returned.Add(item.Instrument.Id);
+                }
+
                 bool unavailable = result.IsFailure
                     ? result.Error.Code == MarketDataErrors.PriceUnavailable.Code
                     : result.Value.Bid is null && result.Value.Ask is null;
@@ -352,8 +427,19 @@ public sealed class CollectDuePricesHandler
 
                 try
                 {
-                    items.Add(await RecordBatchItemAsync(
-                        item, result, invocationId, budgetToken, cancellationToken));
+                    if (budgetToken.IsCancellationRequested is false && _clock.GetCurrentInstant() < deadline
+                        && (result.IsSuccess || result.Error.Code != PriceCollectionErrors.DeadlineExceeded.Code))
+                    {
+                        _progress.AdvancePast(item.Instrument.Id);
+                    }
+
+                    PriceCollectionItemResult recorded = await RecordBatchItemAsync(
+                        item, result, invocationId, budgetToken, cancellationToken);
+                    items.Add(recorded);
+                    if (recorded.Outcome is PriceCollectionOutcome.Observed or PriceCollectionOutcome.SkippedDuplicate)
+                    {
+                        _progress.Complete(item.Instrument.Id);
+                    }
                 }
                 catch (Exception) when (cancellationToken.IsCancellationRequested is false)
                 {
@@ -372,7 +458,8 @@ public sealed class CollectDuePricesHandler
         IReadOnlyList<PendingPriceCollection> pending,
         Instant deadline,
         CancellationToken budgetToken,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        PriceCollectionRunCounters counters)
     {
         MarketInstrumentIdentity[] identities = pending.Select(item => item.Identity).Distinct().ToArray();
         Error error;
@@ -380,6 +467,8 @@ public sealed class CollectDuePricesHandler
         {
             if (_clock.GetCurrentInstant() < deadline && budgetToken.IsCancellationRequested is false)
             {
+                _progress.AdvancePast(pending[0].Instrument.Id);
+                counters.Requested.UnionWith(pending.Select(item => item.Instrument.Id));
                 return await _marketData.GetCurrentQuotesAsync(identities, budgetToken);
             }
 
@@ -409,6 +498,14 @@ public sealed class CollectDuePricesHandler
         CancellationToken budgetToken,
         CancellationToken cancellationToken)
     {
+        if (result.IsSuccess && result.Value.RetrievedAt >= item.ExpiresAt)
+        {
+            _progress.Complete(item.Instrument.Id);
+            return await RecordAttemptAsync(item.Instrument, item.ScheduledFor, item.AttemptedAt,
+                invocationId, PriceCollectionOutcome.Failed, PriceCollectionErrors.SlotExpired.Code,
+                result.Value.Provider, result.Value.ProviderRequestId, budgetToken, cancellationToken);
+        }
+
         if (result.IsSuccess && (result.Value.Bid is not null || result.Value.Ask is not null))
         {
             return await RecordObservationAsync(

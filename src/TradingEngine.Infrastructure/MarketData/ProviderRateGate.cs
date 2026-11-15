@@ -11,7 +11,7 @@ public sealed class ProviderRateGate
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, Instant> _cooldowns =
         new(StringComparer.Ordinal);
-    private readonly object _cooldownLock = new();
+    private readonly System.Threading.Lock _cooldownLock = new();
 
     public ProviderRateGate(IClock clock, TimeProvider timeProvider)
     {

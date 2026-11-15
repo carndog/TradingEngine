@@ -11,13 +11,15 @@ internal sealed class StubNativeQuoteUnitMap : INativeQuoteUnitMap
 
     public List<(string Exchange, string Symbol)> Calls { get; } = [];
 
+    public Func<string, CancellationToken, Task<Result<NativeQuoteUnitResolution>>>? Responder { get; set; }
+
     public Task<Result<NativeQuoteUnitResolution>> ResolveAsync(
         string exchange,
         string symbol,
         CancellationToken cancellationToken)
     {
         Calls.Add((exchange, symbol));
-        return Task.FromResult(Result);
+        return Responder is null ? Task.FromResult(Result) : Responder(symbol, cancellationToken);
     }
 
     public static StubNativeQuoteUnitMap Configured(string currency)

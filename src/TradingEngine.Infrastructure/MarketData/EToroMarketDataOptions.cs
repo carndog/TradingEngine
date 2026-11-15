@@ -12,6 +12,10 @@ public sealed class EToroMarketDataOptions
 
     public string? UserKey { get; set; }
 
+    public const int MaximumBatchSize = 1000;
+
+    public int BatchSize { get; set; } = MaximumBatchSize;
+
     public int RequestTimeoutSeconds { get; set; } = 5;
 
     public int MaxExecutionTimeSeconds { get; set; } = 15;

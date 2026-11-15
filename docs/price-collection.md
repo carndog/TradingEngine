@@ -96,6 +96,7 @@ Attempts are append-only, but retry semantics are defined **per scheduled slot**
 | `price_collection.exchange_session_unconfigured` | No session entry for the instrument's exchange |
 | `price_collection.provider_timeout` | Provider call timed out inside the run budget |
 | `price_collection.provider_error` | Provider call threw unexpectedly |
+| `price_collection.slot_expired` | A current quote was retrieved at or after the end of its assigned sampling slot; no historical observation is backfilled |
 | `price_collection.deadline_exceeded` | Run budget elapsed before or during the instrument's work |
 | `price_collection.unsupported_quote` | Quote value cannot be persisted without loss (for example a scale finer than `decimal(38,18)`) |
 | `price_collection.storage_error` | The persistence write itself failed |
@@ -105,7 +106,7 @@ The observation and its `Observed` attempt are inserted in one transaction: if e
 
 ### Bounded execution and cancellation
 
-`MaxExecutionTimeSeconds` is one budget for the whole run: a `CancellationTokenSource` armed on the injected `TimeProvider` is created **before the first SQL read** and the linked token is carried through the instrument read, the dedup lookups, every provider call and the observation write. A stalled read or write cannot outlive the budget — cancellation inside it returns a run with `DeadlineReached` (before the instrument loop) or records `Failed`/`price_collection.deadline_exceeded` for the in-flight instrument and stops. Attempt rows are written on the caller's own token so the audit record still lands after the budget fires. Caller cancellation propagates `OperationCanceledException` unchanged — the host's `stoppingToken` on shutdown cancels promptly.
+`MaxExecutionTimeSeconds` is one budget for the whole run: a `CancellationTokenSource` armed on the injected `TimeProvider` is created **before the first SQL read** and the linked token is carried through the instrument read, the dedup lookups, every provider call and the observation write. A stalled read or write cannot outlive the budget — cancellation inside it returns a run with `DeadlineReached` (before the instrument loop) or records `Failed`/`price_collection.deadline_exceeded` for the in-flight instrument and stops. Attempt writes share the remaining run budget. If that budget is exhausted, the run result still exposes the deadline outcome, but no unbounded audit write is attempted; a SQL attempt row is not guaranteed in that case. Caller cancellation propagates `OperationCanceledException` unchanged — the host's `stoppingToken` on shutdown cancels promptly.
 
 ## Persistence
 
@@ -296,7 +297,7 @@ To apply the intended defaults after deployment, open each instrument's **Settin
 
 ## Observability and safety
 
-The hosted service logs one `Information` line per run: `InvocationId` plus observed / market-closed / duplicate / throttled / failed counts and `DeadlineReached`. Per-instrument detail lives in `PriceCollectionAttempts`. Logs never carry credentials, auth headers, raw provider payloads or quote values — only counts, codes, request IDs and timestamps.
+The hosted service logs an `Information` outcome summary and a diagnostics summary per run: `InvocationId` plus observed / market-closed / duplicate / throttled / failed counts and `DeadlineReached`. Per-instrument detail lives in `PriceCollectionAttempts`. Logs never carry credentials, auth headers, raw provider payloads or quote values — only counts, codes, request IDs and timestamps.
 
 ## Testing
 
@@ -306,4 +307,60 @@ The hosted service logs one `Information` line per run: `InvocationId` plus obse
 
 ## Out of scope
 
-Strategy evaluation, alerting/notifications, order execution and any write to the provider remain out of scope. The collector only reads `GetCurrentQuoteAsync`; nothing here can submit an order.
+Strategy evaluation, alerting/notifications, order execution and any write to the provider remain out of scope. The collector only reads quotes through `GetCurrentQuotesAsync` (with a single-quote fallback); nothing here can submit an order.
+
+## Batch progress and diagnostics
+
+The API keeps a singleton `PriceCollectionProgress` across its scoped collector invocations. After a deadline, the next poll starts after the instrument whose preparation, batch request or storage operation was started. If a whole batch is cancelled before results can be persisted, the cursor advances past its first member rather than repeatedly retrying the same prefix. Before retrying the previously interrupted instrument, any prepared partial batch is sent first. This lets healthy instruments progress even when the entire watchlist is smaller than the configured batch size. Completed slots are still suppressed using SQL. New instruments remain in the rotation; a removed cursor instrument resets ordering safely. The cursor resets on process restart; persisted observations still prevent duplicate collection. The hosted service continues to await one run before starting another.
+
+Slots are calculated from each run's start and the existing sampling policy. A quote retrieved at or after the slot's end is reported as `price_collection.slot_expired` and is not written into that historical slot. A later poll requests a new quote for the current slot.
+
+Every completed run logs its invocation ID, duration, deadline state and these aggregate counts:
+
+| Field | Meaning |
+| --- | --- |
+| Due | Monitored instruments without a saved observation for the current slot, before session/unit gates |
+| Eligible | Instruments that passed preparation in this run |
+| Requested | Unique application instruments submitted to the provider, excluding duplicate unavailable retries |
+| Returned | Unique instruments for which a usable bid or ask was returned; persistence or slot checks can still reject them |
+| Persisted | Newly committed observations |
+| Deferred | Explicit local-quota or run-deadline outcomes |
+| Failed | Other failed outcomes, excluding deferred work |
+| Unprocessed | Due instruments for which this run produced no item outcome; eligibility may not have been checked |
+| EligibilityScanCompleted | False when planning/reads or an instrument's preparation could not complete before the deadline |
+| ExpiredPendingSlots | Previously seen open-session due slots still unfinished when a later open slot is seen, plus quotes rejected for arriving after their assigned slot |
+
+Early read cancellation leaves eligibility unknown, not an asserted empty workload. Expired-slot tracking is process-local, counts only slots actually seen, and resets after restart; it does not infer missed slots during downtime or multiply a gap across closed sessions. SQL observation/attempt history and the logs are the durable evidence. Eligibility failures are still explicit per-instrument outcomes. No observations or audits are rewritten by progress tracking.
+
+The existing `TradingEngine.Api.PriceCollection` meter now also exports:
+
+- `tradingengine.price_collection.instruments`, tagged only by aggregate outcome;
+- `tradingengine.price_collection.requests`, tagged `rates` or `search`, including HTTP retries;
+- `tradingengine.price_collection.batch_size`, the actual deduplicated provider-ID count for each rates attempt;
+- `tradingengine.price_collection.duration` in seconds;
+- `tradingengine.price_collection.deadlines` and `tradingengine.price_collection.expired_pending_slots`.
+
+Instrument identities, invocation IDs, request IDs and quote payloads are not metric dimensions. Existing failure metrics and per-instrument audit behavior remain available.
+
+## Reproducible synthetic SQL comparison
+
+Run against Docker's disposable SQL Server only:
+
+```sh
+dotnet test tests/TradingEngine.Infrastructure.IntegrationTests --filter FullyQualifiedName~BatchCollectionSqlTests --logger "console;verbosity=normal"
+```
+
+`BatchCollectionSqlTests` uses the production infrastructure DI, SQL sources/stores, persisted listing resolver, eToro adapter and unchanged provider rate gate. Only HTTP responses and the clock are synthetic. No broker credentials or development connection string are used. It compares configured sizes 1 and 1,000 for 120 and 1,000 seeded instruments, printing `BATCH_SQL_EVIDENCE` with actual rates/search counts, executed EF SQL command counts, measured wall duration, persisted/deferred/unprocessed counts and deadline state. Setup/migration/seed work is excluded from the measured run. Each comparison also writes a `batch-sql-evidence-*.json` file beside the test assembly; CI prints these files in its **Report synthetic batching evidence** step, including on a failed test run.
+
+The clock remains fixed during each comparison so the quota window cannot reset: size-one collection can issue 120 HTTP requests, then reports the remaining work as locally deferred; one known-ID batch covers the full set in one HTTP request. This measures real disposable SQL work and synthetic-provider behavior, not network latency, sustained throughput or Azure capacity. Durations are observations, not flaky pass/fail thresholds. Separate SQL cases cover atomic rollback of one rejected success audit, independent successes, retry after rebuilding the DI container, two slots, replay, concurrent writers and unchanged earlier history.
+
+## Post-deployment completion checks for story 124
+
+After this follow-up is reviewed, merged and deployed, record the deployed revision and perform these read-only checks through the existing authenticated operational access:
+
+1. Confirm `/health` and `/version`, then capture two consecutive eligible sampling slots. Compare each run's eligible set with saved observations and attempts; account explicitly for closed sessions, unavailable prices, throttles and deferred/unprocessed work. Check rates/search request counts and batch-size metrics against the configured limit.
+2. Check each saved observation has exactly one matching successful attempt for its instrument/slot and retains provider/retrieval timestamps and native units. Confirm downstream saved-price evaluation progresses past those observations without duplicate recommendations.
+3. Following an approved or naturally occurring application restart, repeat for the next eligible slot. Confirm persisted IDs are reused and already saved slots are not fetched/written again. The restart itself is a separate operational action, not part of a read-only check.
+4. Record closed-market cases as pending their next eligible session. Publish only aggregate counts, UTC slot timestamps, commit identity and test conclusions; keep real instrument lists, raw logs, market data and deployment configuration private.
+
+These deployed checks remain distinct from CI and synthetic SQL evidence. Keep #124 open until their results are recorded; a healthy version endpoint alone is insufficient.

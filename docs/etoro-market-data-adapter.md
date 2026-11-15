@@ -46,7 +46,7 @@ The OpenAPI security requirement for the rates endpoint lists `etoro-public:mark
 
 ## Batch collection
 
-The collector selects due instruments, applies session and native-unit checks, and requests up to the provider's `MaxBatchSize` at a time. The eToro adapter advertises 1,000. Providers that only implement single-quote retrieval retain the default batch size of one and the sequential fallback.
+The collector selects due instruments, applies session and native-unit checks, and requests up to the provider's `MaxBatchSize` at a time. The eToro adapter advertises the configured `EToro:MarketData:BatchSize` (default 1,000; validated range 1–1,000). The same limit drives collection chunking and the optional sampling-budget estimate. Stored sampling intervals are unchanged. Providers that only implement single-quote retrieval retain the default batch size of one and the sequential fallback.
 
 Each batch uses the existing v2 rates endpoint. Results are associated by provider instrument ID, not response order. Missing IDs in a partial response are individual unavailable results; unexpected IDs are ignored and duplicate IDs are rejected for that instrument. Available quotes are persisted independently, retaining their native units, provider timestamps, timeliness, request correlation and scheduled-slot idempotency. Only missing or empty quotes enter the collector's bounded unavailable retry, still as a batch. Transport retries and shared 429 cooldowns remain in the adapter's existing HTTP path.
 
@@ -60,6 +60,12 @@ A verified persisted listing can seed the ID cache after currency validation whe
 
 Synthetic tests cover a 10,000-instrument collection in ten batches, the 1,000-ID HTTP boundary, partial responses, retries, shared rate limiting, mapping failures, cancellation and duplicate observations. Collector/adapter regression tests also cover mixed resolution/rates failures and 120 instruments with empty or expired caches: 60 are observed in the first full request window, a poll before quota recovery makes no HTTP calls, and the remaining 60 complete after the window resets within the same sampling slot. These are correctness tests, not a production capacity benchmark. Listing reads and observation/attempt writes remain per instrument. Database throughput, recommendation processing, retention and completion within the configured run deadline must be measured separately before increasing a deployment's watchlist substantially. A returned quote can be stale: batching preserves `ProviderObservedAt` and does not make a freshness guarantee.
 
+### Run diagnostics
+
+The provider exposes a snapshot of actual rates/search HTTP attempts, including retries, and rates batch-size frequencies after transport deduplication. Local pacing rejections are not HTTP attempts. The collector takes a per-run delta; default single-quote providers report no HTTP statistics unless they implement that optional capability. Request logs contain endpoint paths and counts, not symbol/ID query strings or quote payloads.
+
+See [collection completion and verification](price-collection.md#batch-progress-and-diagnostics) for fairness, metrics and the disposable SQL comparison.
+
 ## Configuration
 
 Section `EToro:MarketData` (`EToroMarketDataOptions`):
@@ -69,6 +75,7 @@ Section `EToro:MarketData` (`EToroMarketDataOptions`):
 | `BaseUrl` | `https://public-api.etoro.com` | API host; the adapter appends relative paths. |
 | `ApiKey` | none | eToro public API key. **Never commit.** |
 | `UserKey` | none | eToro user key paired with the API key. **Never commit.** |
+| `BatchSize` | 1000 | Maximum application identities per batch, validated from 1 to 1000 at startup. Provider IDs are deduplicated within each request. Environment key: `ETORO__MARKETDATA__BATCHSIZE`. |
 | `RequestTimeoutSeconds` | 5 | Per-attempt request timeout. |
 | `MaxExecutionTimeSeconds` | 15 | Whole-call deadline covering retries and pacing. |
 | `MaxRetryAttempts` | 2 | Retries after the first attempt on transient failures. |

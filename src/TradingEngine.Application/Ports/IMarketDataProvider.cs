@@ -7,6 +7,8 @@ public interface IMarketDataProvider
 {
     int MaxBatchSize => 1;
 
+    MarketDataRequestStatistics RequestStatistics => MarketDataRequestStatistics.Empty;
+
     Task<Result<MarketQuote>> GetCurrentQuoteAsync(
         MarketInstrumentIdentity instrument,
         CancellationToken cancellationToken);

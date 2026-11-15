@@ -359,7 +359,9 @@ public sealed class CollectDuePricesHandlerTests
             Assert.That(result.Items, Has.Count.EqualTo(1));
             Assert.That(
                 result.Items[0].Outcome,
-                Is.EqualTo(PriceCollectionOutcome.Observed));
+                Is.EqualTo(PriceCollectionOutcome.Failed));
+            Assert.That(result.Items[0].ErrorCode, Is.EqualTo(PriceCollectionErrors.SlotExpired.Code));
+            Assert.That(_store.Observations, Is.Empty);
             Assert.That(_marketData.Requests, Has.Count.EqualTo(1));
             Assert.That(_store.Attempts, Has.Count.EqualTo(1));
         });

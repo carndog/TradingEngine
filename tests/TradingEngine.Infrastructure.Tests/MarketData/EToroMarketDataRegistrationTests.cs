@@ -348,6 +348,33 @@ public sealed class EToroMarketDataRegistrationTests
         });
     }
 
+    [TestCase(0)]
+    [TestCase(-1)]
+    [TestCase(1001)]
+    public void AddEtoroMarketData_InvalidBatchSize_FailsStartupValidation(int size)
+    {
+        using ServiceProvider provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["EToro:MarketData:BatchSize"] = size.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        });
+
+        Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate(),
+            Throws.TypeOf<OptionsValidationException>());
+    }
+
+    [TestCase(1)]
+    [TestCase(120)]
+    [TestCase(1000)]
+    public void AddEtoroMarketData_ValidBatchSize_AdvertisesConfiguredLimit(int size)
+    {
+        using ServiceProvider provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["EToro:MarketData:BatchSize"] = size.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        });
+
+        Assert.That(provider.GetRequiredService<IMarketDataProvider>().MaxBatchSize, Is.EqualTo(size));
+    }
+
     private static ServiceProvider BuildProvider(IReadOnlyDictionary<string, string?> values)
     {
         IConfiguration configuration = new ConfigurationBuilder()
