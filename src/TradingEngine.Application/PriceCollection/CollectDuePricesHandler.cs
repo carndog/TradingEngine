@@ -428,7 +428,10 @@ public sealed class CollectDuePricesHandler
             item.AttemptedAt,
             invocationId,
             outcome,
-            unavailable ? PriceCollectionErrors.PriceUnavailable.Code : result.Error.Code,
+            unavailable ? PriceCollectionErrors.PriceUnavailable.Code
+                : result.Error.Code == MarketDataErrors.ProviderTimeout.Code
+                    ? PriceCollectionErrors.ProviderTimeout.Code
+                    : result.Error.Code,
             result.IsSuccess ? result.Value.Provider : null,
             result.IsSuccess ? result.Value.ProviderRequestId : null,
             budgetToken,

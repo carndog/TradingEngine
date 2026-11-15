@@ -40,11 +40,19 @@ public static class MarketDataErrors
         "market_data.provider_throttled",
         "The provider rate limit prevented the request within the permitted time.");
 
+    public static readonly Error ProviderRequestDeferred = Error.PreconditionFailed(
+        "market_data.provider_request_deferred",
+        "The local request budget deferred collection until a later poll.");
+
+    public static readonly Error ProviderTimeout = Error.PreconditionFailed(
+        "market_data.provider_timeout",
+        "The provider market-data request timed out.");
+
     public static readonly Error ProviderCredentialsUnconfigured = Error.PreconditionFailed(
         "market_data.provider_credentials_unconfigured",
         "The provider market-data credentials are not configured.");
 
     public static readonly Error ProviderUnavailable = Error.PreconditionFailed(
         "market_data.provider_unavailable",
-        "The provider could not resolve the listing because the market-data service failed or timed out.");
+        "The provider market-data service failed or timed out.");
 }
