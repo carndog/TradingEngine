@@ -297,7 +297,7 @@ To apply the intended defaults after deployment, open each instrument's **Settin
 
 ## Observability and safety
 
-The hosted service logs one `Information` line per run: `InvocationId` plus observed / market-closed / duplicate / throttled / failed counts and `DeadlineReached`. Per-instrument detail lives in `PriceCollectionAttempts`. Logs never carry credentials, auth headers, raw provider payloads or quote values — only counts, codes, request IDs and timestamps.
+The hosted service logs an `Information` outcome summary and a diagnostics summary per run: `InvocationId` plus observed / market-closed / duplicate / throttled / failed counts and `DeadlineReached`. Per-instrument detail lives in `PriceCollectionAttempts`. Logs never carry credentials, auth headers, raw provider payloads or quote values — only counts, codes, request IDs and timestamps.
 
 ## Testing
 
@@ -307,8 +307,7 @@ The hosted service logs one `Information` line per run: `InvocationId` plus obse
 
 ## Out of scope
 
-Strategy evaluation, alerting/notifications, order execution and any write to the provider remain out of scope. The collector only reads `GetCurrentQuoteAsync`; nothing here can submit an order.
-
+Strategy evaluation, alerting/notifications, order execution and any write to the provider remain out of scope. The collector only reads quotes through `GetCurrentQuotesAsync` (with a single-quote fallback); nothing here can submit an order.
 
 ## Batch progress and diagnostics
 
