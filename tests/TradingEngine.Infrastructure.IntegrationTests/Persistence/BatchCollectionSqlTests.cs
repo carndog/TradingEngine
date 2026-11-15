@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -132,6 +133,21 @@ public sealed class BatchCollectionSqlTests
 
         stopwatch.Stop();
         PriceCollectionRunDiagnostics diagnostics = result.Diagnostics;
+        string evidence = JsonSerializer.Serialize(new
+        {
+            instruments = count,
+            batchSize,
+            rates = diagnostics.Requests.RatesRequests,
+            searches = diagnostics.Requests.SearchRequests,
+            sqlCommands = _commands.Count - before,
+            elapsedMs = stopwatch.ElapsedMilliseconds,
+            persisted = diagnostics.Persisted,
+            deferred = diagnostics.Deferred,
+            unprocessed = diagnostics.Unprocessed,
+            deadline = result.DeadlineReached
+        });
+        await File.WriteAllTextAsync(Path.Combine(TestContext.CurrentContext.TestDirectory,
+            $"batch-sql-evidence-{count}-{batchSize}.json"), evidence + Environment.NewLine);
         TestContext.Progress.WriteLine(
             $"BATCH_SQL_EVIDENCE instruments={count} batchSize={batchSize} " +
             $"rates={diagnostics.Requests.RatesRequests} searches={diagnostics.Requests.SearchRequests} " +
