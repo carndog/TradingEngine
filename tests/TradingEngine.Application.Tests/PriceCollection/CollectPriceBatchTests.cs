@@ -172,6 +172,7 @@ public sealed class CollectPriceBatchTests
 
     [TestCase(1)]
     [TestCase(2)]
+    [TestCase(1000)]
     public async Task HandleAsync_RepeatedFirstInstrumentDeadline_NextScopeMakesProgress(int batchSize)
     {
         AddInstruments(3);
@@ -200,8 +201,8 @@ public sealed class CollectPriceBatchTests
         Assert.Multiple(() =>
         {
             Assert.That(first.DeadlineReached, Is.True);
-            Assert.That(first.Diagnostics.Unprocessed, Is.EqualTo(3 - batchSize));
-            Assert.That(first.Diagnostics.Deferred, Is.EqualTo(batchSize));
+            Assert.That(first.Diagnostics.Unprocessed, Is.EqualTo(Math.Max(0, 3 - batchSize)));
+            Assert.That(first.Diagnostics.Deferred, Is.EqualTo(Math.Min(3, batchSize)));
             Assert.That(second.Diagnostics.Persisted, Is.EqualTo(2));
             Assert.That(_store.Observations.Select(item => item.InstrumentId),
                 Is.EquivalentTo(_source.Instruments.Skip(1).Select(item => item.Id)));
@@ -284,12 +285,13 @@ public sealed class CollectPriceBatchTests
         });
     }
 
-    [TestCase(true)]
-    [TestCase(false)]
-    public async Task HandleAsync_RepeatedPreparationOrStorageDeadline_AdvancesPastStalledInstrument(bool preparation)
+    [TestCase(true, 1)]
+    [TestCase(true, 1000)]
+    [TestCase(false, 1)]
+    public async Task HandleAsync_RepeatedPreparationOrStorageDeadline_AdvancesPastStalledInstrument(bool preparation, int batchSize)
     {
         AddInstruments(3);
-        _provider.MaxBatchSize = 1;
+        _provider.MaxBatchSize = batchSize;
         PriceCollectionProgress progress = new();
         StubNativeQuoteUnitMap units = StubNativeQuoteUnitMap.Configured("USD");
         if (preparation)

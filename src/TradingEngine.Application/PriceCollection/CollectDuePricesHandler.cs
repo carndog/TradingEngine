@@ -134,6 +134,7 @@ public sealed class CollectDuePricesHandler
         int expiredSlots = _progress.TrackDueSlots(openSlots, latestSlots, instrumentIds);
         List<PendingPriceCollection> pending = [];
         bool deadlineReached = false;
+        Guid? interruptedInstrument = _progress.InterruptedInstrument;
         foreach (MonitoredInstrument instrument in _progress.Order(instruments))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -141,6 +142,19 @@ public sealed class CollectDuePricesHandler
             if (dueSlots.TryGetValue(instrument.Id, out Instant scheduledFor) is false)
             {
                 continue;
+            }
+
+            if (instrument.Id == interruptedInstrument && pending.Count > 0)
+            {
+                items.AddRange(await CollectBatchAsync(
+                    pending, invocationId, deadline, budgetToken, cancellationToken, counters));
+                pending.Clear();
+                if (budgetToken.IsCancellationRequested || _clock.GetCurrentInstant() >= deadline
+                    || items.Any(result => result.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code))
+                {
+                    deadlineReached = true;
+                    break;
+                }
             }
 
             _progress.AdvancePast(instrument.Id);
@@ -212,6 +226,7 @@ public sealed class CollectDuePricesHandler
             || _clock.GetCurrentInstant() >= deadline
             || items.Any(item => item.ErrorCode == PriceCollectionErrors.DeadlineExceeded.Code);
 
+        _progress.FinishRun(deadlineReached);
         return new PriceCollectionRunResult(
             invocationId,
             startedAt,

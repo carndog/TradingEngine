@@ -7,6 +7,26 @@ public sealed class PriceCollectionProgress
     private readonly object _gate = new();
     private readonly Dictionary<Guid, Instant> _unfinishedSlots = [];
     private Guid? _lastStarted;
+    private Guid? _interruptedInstrument;
+
+    public Guid? InterruptedInstrument
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _interruptedInstrument;
+            }
+        }
+    }
+
+    public void FinishRun(bool deadlineReached)
+    {
+        lock (_gate)
+        {
+            _interruptedInstrument = deadlineReached ? _lastStarted : null;
+        }
+    }
 
     public IReadOnlyList<MonitoredInstrument> Order(IReadOnlyList<MonitoredInstrument> instruments)
     {
