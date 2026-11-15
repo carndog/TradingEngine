@@ -6,5 +6,8 @@ public interface ISamplingPolicy
 {
     string Name { get; }
 
-    int EffectiveIntervalSeconds(MonitoredInstrument instrument, int monitoredCount);
+    int EffectiveIntervalSeconds(
+        MonitoredInstrument instrument,
+        int monitoredCount,
+        int quotesPerRequest = 1);
 }

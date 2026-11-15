@@ -55,6 +55,31 @@ public sealed class SamplingPolicyTests
         Assert.That(interval, Is.EqualTo(1));
     }
 
+    [TestCase(1000, 1)]
+    [TestCase(1001, 1)]
+    [TestCase(2001, 2)]
+    [TestCase(10000, 5)]
+    public void EffectiveIntervalSeconds_BatchProvider_BudgetsRequestsInsteadOfQuotes(int count, int expected)
+    {
+        ISamplingPolicy policy = new ProviderBudgetClampedSamplingPolicy(120, 60);
+        MonitoredInstrument fast = Instrument with { SamplingIntervalSeconds = 1 };
+
+        int interval = policy.EffectiveIntervalSeconds(fast, count, 1000);
+
+        Assert.That(interval, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void EffectiveIntervalSeconds_TenThousandStocksAtFifteenMinutes_PreservesRequestedInterval()
+    {
+        ISamplingPolicy policy = new ProviderBudgetClampedSamplingPolicy(120, 60);
+        MonitoredInstrument instrument = Instrument with { SamplingIntervalSeconds = 900 };
+
+        int interval = policy.EffectiveIntervalSeconds(instrument, 10000, 1000);
+
+        Assert.That(interval, Is.EqualTo(900));
+    }
+
     [Test]
     public void Resolve_WhenNameIsNullOrEmpty_ReturnsPerInstrument()
     {

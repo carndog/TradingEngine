@@ -61,6 +61,118 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    public int MaxBatchSize => 1000;
+
+    public async Task<IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>>> GetCurrentQuotesAsync(
+        IReadOnlyCollection<MarketInstrumentIdentity> instruments,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(instruments);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(instruments.Count, MaxBatchSize);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        Dictionary<MarketInstrumentIdentity, Result<MarketQuote>> results = [];
+        if (instruments.Count == 0)
+        {
+            return results;
+        }
+
+        RequireCredentials();
+        Instant deadline = _clock.GetCurrentInstant()
+            .Plus(Duration.FromTimeSpan(MaxExecutionTime()));
+        Dictionary<MarketInstrumentIdentity, long> resolved = [];
+        foreach (MarketInstrumentIdentity instrument in instruments.Distinct())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Result<long> identity = await ResolveBatchInstrumentAsync(
+                instrument, deadline, cancellationToken);
+            if (identity.IsFailure)
+            {
+                results[instrument] = identity.Error;
+            }
+            else
+            {
+                resolved[instrument] = identity.Value;
+            }
+        }
+
+        if (resolved.Count == 0)
+        {
+            return results;
+        }
+
+        string ids = string.Join(
+            ",", resolved.Values.Distinct().Select(id => id.ToString(CultureInfo.InvariantCulture)));
+        EToroProviderResponse response = await SendWithBoundedRetriesAsync(
+            $"{RatesPath}?instrumentIds={ids}", deadline, cancellationToken);
+
+        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.PartialContent)
+        {
+            EToroRatesResponse payload = Deserialize<EToroRatesResponse>(response.Body, "rates");
+            Dictionary<long, EToroRate[]> rates = (payload.Results ?? [])
+                .Where(rate => rate.InstrumentId.HasValue)
+                .GroupBy(rate => rate.InstrumentId!.Value)
+                .ToDictionary(group => group.Key, group => group.ToArray());
+            foreach (KeyValuePair<MarketInstrumentIdentity, long> entry in resolved)
+            {
+                if (rates.TryGetValue(entry.Value, out EToroRate[]? matches) is false)
+                {
+                    results[entry.Key] = MarketDataErrors.PriceUnavailable;
+                }
+                else if (matches.Length != 1)
+                {
+                    results[entry.Key] = MarketDataErrors.ProviderUnavailable;
+                }
+                else
+                {
+                    results[entry.Key] = MapRate(entry.Key, entry.Value, matches[0], response);
+                }
+            }
+
+            return results;
+        }
+
+        Error error;
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            error = Throttled(response);
+        }
+        else if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            error = MarketDataErrors.PriceUnavailable;
+        }
+        else
+        {
+            throw ProviderFailure("retrieve instrument rates", response);
+        }
+
+        foreach (MarketInstrumentIdentity instrument in resolved.Keys)
+        {
+            results[instrument] = error;
+        }
+
+        return results;
+    }
+
+    private async Task<Result<long>> ResolveBatchInstrumentAsync(
+        MarketInstrumentIdentity instrument,
+        Instant deadline,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            Error? currencyError = await CheckQuoteCurrencyAsync(instrument, cancellationToken);
+            return currencyError is not null
+                ? currencyError
+                : await ResolveInstrumentIdAsync(instrument, deadline, cancellationToken);
+        }
+        catch (Exception exception) when (exception is TimeoutException
+            or EToroMarketDataException or InvalidDataException or HttpRequestException)
+        {
+            return MarketDataErrors.ProviderUnavailable;
+        }
+    }
+
     public async Task<Result<MarketQuote>> GetCurrentQuoteAsync(
         MarketInstrumentIdentity instrument,
         CancellationToken cancellationToken)
@@ -384,6 +496,15 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 .WithExtension("providerInstrumentId", instrumentId);
         }
 
+        return MapRate(instrument, instrumentId, rate, response);
+    }
+
+    private MarketQuote MapRate(
+        MarketInstrumentIdentity instrument,
+        long instrumentId,
+        EToroRate rate,
+        EToroProviderResponse response)
+    {
         return new MarketQuote(
             instrument,
             ProviderName,
@@ -555,7 +676,32 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 .WithExtension("providerCurrency", resolution.NativeQuoteCurrency);
         }
 
+        CachePersistedInstrument(instrument, resolution);
         return null;
+    }
+
+    private void CachePersistedInstrument(
+        MarketInstrumentIdentity instrument,
+        NativeQuoteUnitResolution resolution)
+    {
+        Domain.Instruments.InstrumentListing? listing = resolution.Persisted?.Listing;
+        if (listing is null
+            || string.Equals(listing.Provider, ProviderName, StringComparison.OrdinalIgnoreCase) is false
+            || string.Equals(listing.Exchange, instrument.Exchange, StringComparison.OrdinalIgnoreCase) is false
+            || string.Equals(listing.Symbol, instrument.Symbol, StringComparison.OrdinalIgnoreCase) is false
+            || string.Equals(listing.ProviderSymbol, instrument.Symbol, StringComparison.OrdinalIgnoreCase) is false
+            || _options.ExchangeMap.TryGetValue(instrument.Exchange, out string[]? mappings) is false
+            || mappings.Contains(listing.ProviderExchangeName, StringComparer.OrdinalIgnoreCase) is false)
+        {
+            return;
+        }
+
+        _instrumentIdCache.Store(
+            instrument.Exchange,
+            instrument.Symbol,
+            instrument.QuoteCurrency,
+            listing.ProviderInstrumentId,
+            TimeSpan.FromSeconds(_options.ResolutionCacheSeconds));
     }
 
     private HttpRequestMessage CreateRequest(string relativeUri, string requestId)

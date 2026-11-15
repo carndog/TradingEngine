@@ -35,11 +35,15 @@ public sealed class ProviderBudgetClampedSamplingPolicy : ISamplingPolicy
 
     public int EffectiveIntervalSeconds(
         MonitoredInstrument instrument,
-        int monitoredCount)
+        int monitoredCount,
+        int quotesPerRequest = 1)
     {
         ArgumentNullException.ThrowIfNull(instrument);
 
-        int minimum = MinimumIntervalSeconds(Math.Max(1, monitoredCount));
+        ArgumentOutOfRangeException.ThrowIfLessThan(quotesPerRequest, 1);
+
+        int requestCount = (int)Math.Ceiling((double)Math.Max(1, monitoredCount) / quotesPerRequest);
+        int minimum = MinimumIntervalSeconds(requestCount);
         return Math.Max(instrument.SamplingIntervalSeconds, minimum);
     }
 

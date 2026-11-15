@@ -8,7 +8,8 @@ public sealed class PerInstrumentSamplingPolicy : ISamplingPolicy
 
     public int EffectiveIntervalSeconds(
         MonitoredInstrument instrument,
-        int monitoredCount)
+        int monitoredCount,
+        int quotesPerRequest = 1)
     {
         ArgumentNullException.ThrowIfNull(instrument);
 

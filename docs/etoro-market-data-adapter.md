@@ -9,7 +9,7 @@
 
 | Type | Role |
 | --- | --- |
-| `IMarketDataProvider` (`Ports`) | `GetCurrentQuoteAsync(MarketInstrumentIdentity, CancellationToken) -> Result<MarketQuote>` |
+| `IMarketDataProvider` (`Ports`) | Single-quote and batch-quote retrieval, with a provider-advertised `MaxBatchSize` |
 | `MarketInstrumentIdentity` | Exchange, symbol and quote currency the caller wants priced |
 | `MarketQuote` | Provider name, provider instrument ID, nullable `Bid`/`Ask` decimals, `ProviderObservedAt`, `RetrievedAt`, `MarketQuoteTimeliness`, `ProviderRequestId` |
 | `MarketDataErrors` | `market_data.*` error catalogue |
@@ -43,6 +43,18 @@ Sources (accessed 2026-11-04):
 ### Read-only scope
 
 The OpenAPI security requirement for the rates endpoint lists `etoro-public:market-data:read` (read scopes such as `etoro-public:real:read`/`demo:read` also work). The adapter sends only `GET` requests to market-data paths. Create the eToro API key with the market-data read permission only; scope enforcement is at key creation, not in code.
+
+## Batch collection
+
+The collector selects due instruments, applies session and native-unit checks, and requests up to the provider's `MaxBatchSize` at a time. The eToro adapter advertises 1,000. Providers that only implement single-quote retrieval retain the default batch size of one and the sequential fallback.
+
+Each batch uses the existing v2 rates endpoint. Results are associated by provider instrument ID, not response order. Missing IDs in a partial response are individual unavailable results; unexpected IDs are ignored and duplicate IDs are rejected for that instrument. Available quotes are persisted independently, retaining their native units, provider timestamps, timeliness, request correlation and scheduled-slot idempotency. Only missing or empty quotes enter the collector's bounded unavailable retry, still as a batch. Transport retries and shared 429 cooldowns remain in the adapter's existing HTTP path.
+
+`ProviderRateGate` continues to count actual HTTP attempts, including discovery and retries. The optional provider-budget sampling policy now estimates quote requests as `ceil(monitoredCount / MaxBatchSize)` before calculating its minimum interval. This estimate assumes full batches; the rate gate remains authoritative for smaller batches, mixed cadences and discovery traffic.
+
+A verified persisted listing can seed the ID cache after currency validation when its provider, exchange, symbol and provider exchange name match the configured allow-list. Missing or incompatible metadata retains the bounded search fallback. Persisted metadata is rechecked, so refreshed IDs replace cached IDs. Deployment-only listings still need initial discovery after a restart or cache expiry; numeric-only exchange mappings retain search validation because the persisted listing does not contain the numeric provider exchange ID.
+
+Synthetic tests cover a 10,000-instrument collection in ten batches, the 1,000-ID HTTP boundary, partial responses, retries, shared rate limiting, mapping failures, cancellation and duplicate observations. These are correctness tests, not a production capacity benchmark. Listing reads and observation/attempt writes remain per instrument. Database throughput, recommendation processing, retention and completion within the configured run deadline must be measured separately before increasing a deployment's watchlist substantially. A returned quote can be stale: batching preserves `ProviderObservedAt` and does not make a freshness guarantee.
 
 ## Configuration
 
