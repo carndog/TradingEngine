@@ -307,6 +307,56 @@ public sealed class CollectPriceBatchTests
         });
     }
 
+    [Test]
+    public async Task HandleAsync_StorageDeadlineAfterAllPrepared_ReportsEligibilityScanCompleted()
+    {
+        AddInstruments(3);
+        _store.ObservationGate = _ =>
+        {
+            _clock.Advance(Duration.FromSeconds(61));
+            throw new OperationCanceledException();
+        };
+
+        PriceCollectionRunResult result = await Handler().HandleAsync(new CollectDuePrices(), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.DeadlineReached, Is.True);
+            Assert.That(result.Diagnostics.Eligible, Is.EqualTo(3));
+            Assert.That(result.Diagnostics.Returned, Is.EqualTo(3));
+            Assert.That(result.Diagnostics.Unprocessed, Is.Zero);
+            Assert.That(result.Diagnostics.EligibilityScanCompleted, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task HandleAsync_LastPreparationReachesDeadline_ReportsEligibilityScanIncomplete()
+    {
+        AddInstruments(3);
+        StubNativeQuoteUnitMap units = StubNativeQuoteUnitMap.Configured("USD");
+        units.Responder = (symbol, _) =>
+        {
+            if (symbol == "DEMO00002")
+            {
+                _clock.Advance(Duration.FromSeconds(61));
+                throw new OperationCanceledException();
+            }
+
+            return Task.FromResult(units.Result);
+        };
+
+        PriceCollectionRunResult result = await Handler(units: units).HandleAsync(new CollectDuePrices(), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.DeadlineReached, Is.True);
+            Assert.That(result.Diagnostics.Eligible, Is.EqualTo(2));
+            Assert.That(result.Diagnostics.Unprocessed, Is.Zero);
+            Assert.That(result.Diagnostics.EligibilityScanCompleted, Is.False);
+            Assert.That(_provider.Batches, Is.Empty);
+        });
+    }
+
     [TestCase(true, 1)]
     [TestCase(true, 1000)]
     [TestCase(false, 1)]

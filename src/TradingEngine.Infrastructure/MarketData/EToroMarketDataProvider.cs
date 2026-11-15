@@ -31,7 +31,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly object _statisticsGate = new();
+    private readonly System.Threading.Lock _statisticsGate = new();
     private readonly Dictionary<int, long> _rateBatches = [];
     private long _searchRequests;
     private readonly HttpClient _httpClient;

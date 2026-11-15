@@ -4,7 +4,7 @@ namespace TradingEngine.Application.PriceCollection;
 
 public sealed class PriceCollectionProgress
 {
-    private readonly object _gate = new();
+    private readonly System.Threading.Lock _gate = new();
     private readonly Dictionary<Guid, Instant> _unfinishedSlots = [];
     private Guid? _lastStarted;
     private Guid? _interruptedInstrument;
