@@ -7,6 +7,7 @@ These standards apply to all C# production and test code in this repository.
 - Declare an explicit type for every local variable and `foreach` iteration variable. Never use `var`.
 - Do not add `//`, `/* */` or XML documentation comments to C# code. Express intent through clear naming and extracted methods.
 - Prefer private methods over local functions.
+- Do not nest ternary (`?:`) expressions. Use guard clauses, `if`/`else` or a `switch` expression for multiple cases. A single ternary is acceptable when both branches are short and easy to read.
 - Keep one class, interface, record or enum per file.
 - Separate interface method declarations with a blank line.
 - Make the smallest change that satisfies the requirement.

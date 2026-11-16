@@ -542,14 +542,7 @@ public sealed class CollectDuePricesHandler
                 item.Identity, result.Value, budgetToken, cancellationToken);
         }
 
-        bool unavailable = result.IsSuccess || result.Error.Code == MarketDataErrors.PriceUnavailable.Code;
-        PriceCollectionOutcome outcome = unavailable
-            ? PriceCollectionOutcome.PriceUnavailable
-            : result.Error.Code == MarketDataErrors.ProviderThrottled.Code
-                ? PriceCollectionOutcome.Throttled
-                : MarketSessionDecision.IsClosedError(result.Error.Code)
-                    ? PriceCollectionOutcome.SkippedMarketClosed
-                    : PriceCollectionOutcome.Failed;
+        (PriceCollectionOutcome outcome, string errorCode) = GetUnobservedOutcome(result);
         return await RecordOutcomeAsync(
             item.Instrument,
             item.ScheduledFor,
@@ -557,14 +550,35 @@ public sealed class CollectDuePricesHandler
             item.AttemptedAt,
             invocationId,
             outcome,
-            unavailable ? PriceCollectionErrors.PriceUnavailable.Code
-                : result.Error.Code == MarketDataErrors.ProviderTimeout.Code
-                    ? PriceCollectionErrors.ProviderTimeout.Code
-                    : result.Error.Code,
+            errorCode,
             result.IsSuccess ? result.Value.Provider : null,
             result.IsSuccess ? result.Value.ProviderRequestId : null,
             budgetToken,
             cancellationToken);
+    }
+
+    private static (PriceCollectionOutcome Outcome, string ErrorCode) GetUnobservedOutcome(Result<MarketQuote> result)
+    {
+        if (result.IsSuccess || result.Error.Code == MarketDataErrors.PriceUnavailable.Code)
+        {
+            return (PriceCollectionOutcome.PriceUnavailable, PriceCollectionErrors.PriceUnavailable.Code);
+        }
+
+        Error error = result.Error;
+        if (error.Code == MarketDataErrors.ProviderThrottled.Code)
+        {
+            return (PriceCollectionOutcome.Throttled, error.Code);
+        }
+
+        if (MarketSessionDecision.IsClosedError(error.Code))
+        {
+            return (PriceCollectionOutcome.SkippedMarketClosed, error.Code);
+        }
+
+        string errorCode = error.Code == MarketDataErrors.ProviderTimeout.Code
+            ? PriceCollectionErrors.ProviderTimeout.Code
+            : error.Code;
+        return (PriceCollectionOutcome.Failed, errorCode);
     }
 
     private async Task<string?> ResolveUnitErrorAsync(

@@ -9,13 +9,26 @@ public sealed record MarketSessionDecision(
     string? CalendarVersion = null,
     string? Notice = null)
 {
-    public Error? BlockingError => Status == ExchangeSessionStatus.Open
-        ? null
-        : Status == ExchangeSessionStatus.Unconfigured
-            ? PriceCollectionErrors.ExchangeSessionUnconfigured
-            : Error.PreconditionFailed(ReasonCode ?? PriceCollectionErrors.ExchangeSessionUnconfigured.Code,
-            Description ?? PriceCollectionErrors.ExchangeSessionUnconfigured.Description)
-            .WithExtension("calendarVersion", CalendarVersion);
+    public Error? BlockingError
+    {
+        get
+        {
+            if (Status == ExchangeSessionStatus.Open)
+            {
+                return null;
+            }
+
+            if (Status == ExchangeSessionStatus.Unconfigured)
+            {
+                return PriceCollectionErrors.ExchangeSessionUnconfigured;
+            }
+
+            return Error.PreconditionFailed(
+                ReasonCode ?? PriceCollectionErrors.ExchangeSessionUnconfigured.Code,
+                Description ?? PriceCollectionErrors.ExchangeSessionUnconfigured.Description)
+                .WithExtension("calendarVersion", CalendarVersion);
+        }
+    }
 
     public static MarketSessionDecision FromStatus(ExchangeSessionStatus status)
     {
