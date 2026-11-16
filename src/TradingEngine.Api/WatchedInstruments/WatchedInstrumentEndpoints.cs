@@ -453,6 +453,7 @@ internal static class WatchedInstrumentEndpoints
             InstrumentCollectionStatus.NativeUnitUnconfirmed => "native-unit-unconfirmed",
             InstrumentCollectionStatus.NativeUnitConflict => "native-unit-conflict",
             InstrumentCollectionStatus.SessionClosed => "session-closed",
+            InstrumentCollectionStatus.CalendarUnavailable => "calendar-unavailable",
             InstrumentCollectionStatus.AwaitingFirstObservation => "awaiting-first-observation",
             _ => "collecting"
         };

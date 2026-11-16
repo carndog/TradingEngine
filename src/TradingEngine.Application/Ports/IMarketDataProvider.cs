@@ -15,7 +15,8 @@ public interface IMarketDataProvider
 
     async Task<IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>>> GetCurrentQuotesAsync(
         IReadOnlyCollection<MarketInstrumentIdentity> instruments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IMarketDataRequestGuard? requestGuard = null)
     {
         ArgumentNullException.ThrowIfNull(instruments);
 
@@ -23,7 +24,10 @@ public interface IMarketDataProvider
         foreach (MarketInstrumentIdentity instrument in instruments.Distinct())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            results[instrument] = await GetCurrentQuoteAsync(instrument, cancellationToken);
+            IReadOnlyDictionary<MarketInstrumentIdentity, Error>? blocked = requestGuard?.GetBlocked([instrument]);
+            results[instrument] = blocked?.TryGetValue(instrument, out Error? error) == true
+                ? error
+                : await GetCurrentQuoteAsync(instrument, cancellationToken);
         }
 
         return results;

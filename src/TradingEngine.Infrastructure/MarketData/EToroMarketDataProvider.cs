@@ -101,7 +101,8 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
 
     public async Task<IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>>> GetCurrentQuotesAsync(
         IReadOnlyCollection<MarketInstrumentIdentity> instruments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IMarketDataRequestGuard? requestGuard = null)
     {
         ArgumentNullException.ThrowIfNull(instruments);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(instruments.Count, MaxBatchSize);
@@ -140,7 +141,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         if (resolved.Count > 0)
         {
             Dictionary<MarketInstrumentIdentity, Result<MarketQuote>> quotes =
-                await FetchResolvedQuotesAsync(resolved, deadline, cancellationToken);
+                await FetchResolvedQuotesAsync(resolved, deadline, cancellationToken, requestGuard);
             foreach (KeyValuePair<MarketInstrumentIdentity, Result<MarketQuote>> quote in quotes)
             {
                 results[quote.Key] = quote.Value;
@@ -160,7 +161,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 continue;
             }
 
-            Result<long> identity = await ResolveBatchInstrumentAsync(instrument, deadline, cancellationToken);
+            Result<long> identity = await ResolveBatchInstrumentAsync(instrument, deadline, cancellationToken, requestGuard);
             if (identity.IsFailure)
             {
                 results[instrument] = BatchPacingError(identity.Error);
@@ -169,7 +170,7 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             {
                 Dictionary<MarketInstrumentIdentity, long> discovered = new() { [instrument] = identity.Value };
                 Dictionary<MarketInstrumentIdentity, Result<MarketQuote>> quotes =
-                    await FetchResolvedQuotesAsync(discovered, deadline, cancellationToken);
+                    await FetchResolvedQuotesAsync(discovered, deadline, cancellationToken, requestGuard);
                 results[instrument] = quotes[instrument];
             }
 
@@ -185,15 +186,29 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     private async Task<Dictionary<MarketInstrumentIdentity, Result<MarketQuote>>> FetchResolvedQuotesAsync(
         IReadOnlyDictionary<MarketInstrumentIdentity, long> resolved,
         Instant deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IMarketDataRequestGuard? requestGuard)
     {
-        string ids = string.Join(
-            ",", resolved.Values.Distinct().Select(id => id.ToString(CultureInfo.InvariantCulture)));
+        GuardedQuoteRequest request = new(resolved, requestGuard);
+        Dictionary<MarketInstrumentIdentity, Result<MarketQuote>> results =
+            await FetchEligibleQuotesAsync(request, deadline, cancellationToken);
+        foreach (KeyValuePair<MarketInstrumentIdentity, Error> blocked in request.Blocked)
+        {
+            results[blocked.Key] = blocked.Value;
+        }
+
+        return results;
+    }
+
+    private async Task<Dictionary<MarketInstrumentIdentity, Result<MarketQuote>>> FetchEligibleQuotesAsync(
+        GuardedQuoteRequest request, Instant deadline, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<MarketInstrumentIdentity, long> resolved = request.Remaining;
         EToroProviderResponse response;
         try
         {
             response = await SendWithBoundedRetriesAsync(
-                $"{RatesPath}?instrumentIds={ids}", deadline, cancellationToken);
+                RatesPath, deadline, cancellationToken, request.PrepareUri);
         }
         catch (TimeoutException)
         {
@@ -203,6 +218,11 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             or InvalidDataException or HttpRequestException)
         {
             return BatchFailures(resolved, MarketDataErrors.ProviderUnavailable);
+        }
+
+        if (response.Suppressed)
+        {
+            return [];
         }
 
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
@@ -295,11 +315,12 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     private async Task<Result<long>> ResolveBatchInstrumentAsync(
         MarketInstrumentIdentity instrument,
         Instant deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IMarketDataRequestGuard? requestGuard)
     {
         try
         {
-            return await ResolveInstrumentIdAsync(instrument, deadline, cancellationToken);
+            return await ResolveInstrumentIdAsync(instrument, deadline, cancellationToken, requestGuard);
         }
         catch (Exception exception) when (exception is TimeoutException
             or EToroMarketDataException or InvalidDataException or HttpRequestException)
@@ -425,7 +446,8 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     private async Task<Result<long>> ResolveInstrumentIdAsync(
         MarketInstrumentIdentity instrument,
         Instant deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IMarketDataRequestGuard? requestGuard = null)
     {
         if (_instrumentIdCache.TryGet(
                 instrument.Exchange,
@@ -448,7 +470,9 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
             instrument.Exchange,
             instrument.Symbol,
             deadline,
-            cancellationToken);
+            cancellationToken,
+            instrument,
+            requestGuard);
         if (search.IsFailure)
         {
             return search.Error;
@@ -461,7 +485,9 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
         string exchange,
         string symbol,
         Instant deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        MarketInstrumentIdentity? instrument = null,
+        IMarketDataRequestGuard? requestGuard = null)
     {
         List<EToroSearchItem> items = [];
         HashSet<long> observedIds = [];
@@ -469,10 +495,13 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
 
         for (int page = 1; page <= _options.MaxSearchPages; page++)
         {
+            GuardedSearchRequest request = new(SearchUri(symbol, page, _options.SearchPageSize), instrument, requestGuard);
             EToroProviderResponse response = await SendWithBoundedRetriesAsync(
-                SearchUri(symbol, page, _options.SearchPageSize),
-                deadline,
-                cancellationToken);
+                SearchPath, deadline, cancellationToken, request.PrepareUri);
+            if (request.Blocked is Error blocked)
+            {
+                return blocked;
+            }
 
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
@@ -655,11 +684,20 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
     private async Task<EToroProviderResponse> SendWithBoundedRetriesAsync(
         string relativeUri,
         Instant deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<string?>? prepareUri = null)
     {
         EToroProviderResponse? lastThrottledResponse = null;
         for (int attempt = 0; ; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            string? prepared = prepareUri is null ? relativeUri : prepareUri();
+            if (prepared is null)
+            {
+                return new EToroProviderResponse { StatusCode = HttpStatusCode.NoContent, RequestId = string.Empty, Suppressed = true };
+            }
+
+            relativeUri = prepared;
             if (await _rateGate.WaitForSlotAsync(
                     EToroRateLimitPolicies.MarketData,
                     deadline,
@@ -669,6 +707,11 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                     "eToro market-data request {RequestUri} could not be paced within the " +
                     "execution deadline; the local rate window is saturated.",
                     relativeUri.Split('?')[0]);
+                if (prepareUri is not null && prepareUri() is null)
+                {
+                    return new EToroProviderResponse { StatusCode = HttpStatusCode.NoContent, RequestId = string.Empty, Suppressed = true };
+                }
+
                 return lastThrottledResponse ?? new EToroProviderResponse
                 {
                     StatusCode = HttpStatusCode.TooManyRequests,
@@ -677,6 +720,13 @@ public sealed class EToroMarketDataProvider : IMarketDataProvider
                 };
             }
 
+            prepared = prepareUri is null ? relativeUri : prepareUri();
+            if (prepared is null)
+            {
+                return new EToroProviderResponse { StatusCode = HttpStatusCode.NoContent, RequestId = string.Empty, Suppressed = true };
+            }
+
+            relativeUri = prepared;
             if (DeadlineExceeded(deadline))
             {
                 throw new TimeoutException(

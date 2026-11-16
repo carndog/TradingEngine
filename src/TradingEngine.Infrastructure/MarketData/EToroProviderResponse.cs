@@ -12,6 +12,8 @@ internal sealed class EToroProviderResponse
 
     public bool ClientThrottled { get; init; }
 
+    public bool Suppressed { get; init; }
+
     public TimeSpan? RetryAfter { get; init; }
 
     public int? RateLimitRemaining { get; init; }

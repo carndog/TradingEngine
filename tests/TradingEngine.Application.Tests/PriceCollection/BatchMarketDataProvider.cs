@@ -17,7 +17,8 @@ internal sealed class BatchMarketDataProvider : IMarketDataProvider
 
     public async Task<IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>>> GetCurrentQuotesAsync(
         IReadOnlyCollection<MarketInstrumentIdentity> instruments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IMarketDataRequestGuard? requestGuard = null)
     {
         MarketInstrumentIdentity[] batch = instruments.ToArray();
         Batches.Add(batch);

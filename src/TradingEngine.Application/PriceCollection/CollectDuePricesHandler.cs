@@ -202,7 +202,7 @@ public sealed class CollectDuePricesHandler
                 counters.Eligible.Add(instrument.Id);
                 pending.Add(new PendingPriceCollection(instrument, scheduledFor, attemptedAt,
                     scheduledFor.Plus(Duration.FromSeconds(_samplingPolicy.EffectiveIntervalSeconds(
-                        instrument, instruments.Count, batchSize)))));
+                        instrument, instruments.Count, batchSize))), latestAttempt));
             }
 
             if (pending.Count == batchSize)
@@ -315,9 +315,9 @@ public sealed class CollectDuePricesHandler
                 latestAttempt.ProviderRequestId);
         }
 
-        ExchangeSessionStatus session =
-            _sessionPolicy.GetStatus(instrument.Exchange, attemptedAt);
-        if (session == ExchangeSessionStatus.Unconfigured)
+        MarketSessionDecision decision = _sessionPolicy.GetDecision(instrument.Exchange, attemptedAt);
+        ExchangeSessionStatus session = decision.Status;
+        if (session is ExchangeSessionStatus.Unconfigured or ExchangeSessionStatus.CalendarUnavailable)
         {
             return await RecordOutcomeAsync(
                 instrument,
@@ -326,7 +326,7 @@ public sealed class CollectDuePricesHandler
                 attemptedAt,
                 invocationId,
                 PriceCollectionOutcome.Failed,
-                PriceCollectionErrors.ExchangeSessionUnconfigured.Code,
+                decision.ReasonCode,
                 null,
                 null,
                 budgetToken,
@@ -342,7 +342,7 @@ public sealed class CollectDuePricesHandler
                 attemptedAt,
                 invocationId,
                 PriceCollectionOutcome.SkippedMarketClosed,
-                null,
+                decision.ReasonCode,
                 null,
                 null,
                 budgetToken,
@@ -461,15 +461,34 @@ public sealed class CollectDuePricesHandler
         CancellationToken cancellationToken,
         PriceCollectionRunCounters counters)
     {
-        MarketInstrumentIdentity[] identities = pending.Select(item => item.Identity).Distinct().ToArray();
+        Dictionary<MarketInstrumentIdentity, Instant> expiry = pending.GroupBy(item => item.Identity)
+            .ToDictionary(group => group.Key, group => group.Min(item => item.ExpiresAt));
+        PriceCollectionRequestGuard guard = new(_sessionPolicy, _clock, deadline, expiry);
+        IReadOnlyDictionary<MarketInstrumentIdentity, Error> blocked = guard.GetBlocked(expiry.Keys.ToArray());
+        Dictionary<MarketInstrumentIdentity, Result<MarketQuote>> results = blocked
+            .ToDictionary(entry => entry.Key, entry => Result<MarketQuote>.Failure(entry.Value));
+        MarketInstrumentIdentity[] identities = expiry.Keys.Where(identity => blocked.ContainsKey(identity) is false).ToArray();
+        if (identities.Length == 0)
+        {
+            return results;
+        }
+
         Error error;
         try
         {
             if (_clock.GetCurrentInstant() < deadline && budgetToken.IsCancellationRequested is false)
             {
-                _progress.AdvancePast(pending[0].Instrument.Id);
-                counters.Requested.UnionWith(pending.Select(item => item.Instrument.Id));
-                return await _marketData.GetCurrentQuotesAsync(identities, budgetToken);
+                _progress.AdvancePast(pending.First(item => blocked.ContainsKey(item.Identity) is false).Instrument.Id);
+                counters.Requested.UnionWith(pending.Where(item => blocked.ContainsKey(item.Identity) is false)
+                    .Select(item => item.Instrument.Id));
+                IReadOnlyDictionary<MarketInstrumentIdentity, Result<MarketQuote>> quotes =
+                    await _marketData.GetCurrentQuotesAsync(identities, budgetToken, guard);
+                foreach (KeyValuePair<MarketInstrumentIdentity, Result<MarketQuote>> quote in quotes)
+                {
+                    results[quote.Key] = quote.Value;
+                }
+
+                return results;
             }
 
             error = PriceCollectionErrors.DeadlineExceeded;
@@ -488,7 +507,12 @@ public sealed class CollectDuePricesHandler
             error = PriceCollectionErrors.ProviderError;
         }
 
-        return identities.ToDictionary(identity => identity, _ => Result<MarketQuote>.Failure(error));
+        foreach (MarketInstrumentIdentity identity in identities)
+        {
+            results[identity] = error;
+        }
+
+        return results;
     }
 
     private async Task<PriceCollectionItemResult> RecordBatchItemAsync(
@@ -498,6 +522,11 @@ public sealed class CollectDuePricesHandler
         CancellationToken budgetToken,
         CancellationToken cancellationToken)
     {
+        if (result.IsFailure && result.Error.Code == PriceCollectionErrors.SlotExpired.Code)
+        {
+            _progress.Complete(item.Instrument.Id);
+        }
+
         if (result.IsSuccess && result.Value.RetrievedAt >= item.ExpiresAt)
         {
             _progress.Complete(item.Instrument.Id);
@@ -513,26 +542,43 @@ public sealed class CollectDuePricesHandler
                 item.Identity, result.Value, budgetToken, cancellationToken);
         }
 
-        bool unavailable = result.IsSuccess || result.Error.Code == MarketDataErrors.PriceUnavailable.Code;
-        PriceCollectionOutcome outcome = unavailable
-            ? PriceCollectionOutcome.PriceUnavailable
-            : result.Error.Code == MarketDataErrors.ProviderThrottled.Code
-                ? PriceCollectionOutcome.Throttled
-                : PriceCollectionOutcome.Failed;
-        return await RecordAttemptAsync(
+        (PriceCollectionOutcome outcome, string errorCode) = GetUnobservedOutcome(result);
+        return await RecordOutcomeAsync(
             item.Instrument,
             item.ScheduledFor,
+            item.LatestAttempt,
             item.AttemptedAt,
             invocationId,
             outcome,
-            unavailable ? PriceCollectionErrors.PriceUnavailable.Code
-                : result.Error.Code == MarketDataErrors.ProviderTimeout.Code
-                    ? PriceCollectionErrors.ProviderTimeout.Code
-                    : result.Error.Code,
+            errorCode,
             result.IsSuccess ? result.Value.Provider : null,
             result.IsSuccess ? result.Value.ProviderRequestId : null,
             budgetToken,
             cancellationToken);
+    }
+
+    private static (PriceCollectionOutcome Outcome, string ErrorCode) GetUnobservedOutcome(Result<MarketQuote> result)
+    {
+        if (result.IsSuccess || result.Error.Code == MarketDataErrors.PriceUnavailable.Code)
+        {
+            return (PriceCollectionOutcome.PriceUnavailable, PriceCollectionErrors.PriceUnavailable.Code);
+        }
+
+        Error error = result.Error;
+        if (error.Code == MarketDataErrors.ProviderThrottled.Code)
+        {
+            return (PriceCollectionOutcome.Throttled, error.Code);
+        }
+
+        if (MarketSessionDecision.IsClosedError(error.Code))
+        {
+            return (PriceCollectionOutcome.SkippedMarketClosed, error.Code);
+        }
+
+        string errorCode = error.Code == MarketDataErrors.ProviderTimeout.Code
+            ? PriceCollectionErrors.ProviderTimeout.Code
+            : error.Code;
+        return (PriceCollectionOutcome.Failed, errorCode);
     }
 
     private async Task<string?> ResolveUnitErrorAsync(

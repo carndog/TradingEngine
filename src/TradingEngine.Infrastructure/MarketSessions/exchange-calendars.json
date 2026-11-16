@@ -1,0 +1,191 @@
+[
+  {
+    "exchange": "XLON",
+    "version": "xlon-2026-11-16-v1",
+    "timeZone": "Europe/London",
+    "coverageStart": "2026-11-16",
+    "coverageEnd": "2027-12-31",
+    "verifiedOn": "2026-11-16",
+    "sources": [
+      "https://www.londonstockexchange.com/en/resources/markets-products/business-days",
+      "https://www.londonstockexchange.com/content/dam/lse/en_us/documents/technical-library/millennium-exchange-and-tradecho-business-parameters.xlsx"
+    ],
+    "exceptions": [
+      {
+        "date": "2026-12-25",
+        "closed": true,
+        "reason": "Christmas Day"
+      },
+      {
+        "date": "2026-12-28",
+        "closed": true,
+        "reason": "Boxing Day observed"
+      },
+      {
+        "date": "2027-01-01",
+        "closed": true,
+        "reason": "New Year"
+      },
+      {
+        "date": "2027-03-26",
+        "closed": true,
+        "reason": "Good Friday"
+      },
+      {
+        "date": "2027-03-29",
+        "closed": true,
+        "reason": "Easter Monday"
+      },
+      {
+        "date": "2027-05-03",
+        "closed": true,
+        "reason": "Early May bank holiday"
+      },
+      {
+        "date": "2027-05-31",
+        "closed": true,
+        "reason": "Spring bank holiday"
+      },
+      {
+        "date": "2027-08-30",
+        "closed": true,
+        "reason": "Summer bank holiday"
+      },
+      {
+        "date": "2027-12-27",
+        "closed": true,
+        "reason": "Christmas observed"
+      },
+      {
+        "date": "2027-12-28",
+        "closed": true,
+        "reason": "Boxing Day observed"
+      },
+      {
+        "date": "2026-12-24",
+        "reason": "early_close",
+        "windows": [
+          {
+            "open": "08:00",
+            "close": "12:30"
+          }
+        ]
+      },
+      {
+        "date": "2026-12-31",
+        "reason": "early_close",
+        "windows": [
+          {
+            "open": "08:00",
+            "close": "12:30"
+          }
+        ]
+      },
+      {
+        "date": "2027-12-24",
+        "reason": "early_close",
+        "windows": [
+          {
+            "open": "08:00",
+            "close": "12:30"
+          }
+        ]
+      },
+      {
+        "date": "2027-12-31",
+        "reason": "early_close",
+        "windows": [
+          {
+            "open": "08:00",
+            "close": "12:30"
+          }
+        ]
+      }
+    ],
+    "overrides": []
+  },
+  {
+    "exchange": "XNAS",
+    "version": "xnas-2026-11-16-v1",
+    "timeZone": "America/New_York",
+    "coverageStart": "2026-01-01",
+    "coverageEnd": "2026-12-31",
+    "verifiedOn": "2026-11-16",
+    "sources": [
+      "https://www.nasdaqtrader.com/trader.aspx?id=Calendar"
+    ],
+    "exceptions": [
+      {
+        "date": "2026-01-01",
+        "closed": true,
+        "reason": "New Year"
+      },
+      {
+        "date": "2026-01-19",
+        "closed": true,
+        "reason": "Martin Luther King Jr Day"
+      },
+      {
+        "date": "2026-02-16",
+        "closed": true,
+        "reason": "Presidents Day"
+      },
+      {
+        "date": "2026-04-03",
+        "closed": true,
+        "reason": "Good Friday"
+      },
+      {
+        "date": "2026-05-25",
+        "closed": true,
+        "reason": "Memorial Day"
+      },
+      {
+        "date": "2026-06-19",
+        "closed": true,
+        "reason": "Juneteenth"
+      },
+      {
+        "date": "2026-07-03",
+        "closed": true,
+        "reason": "Independence Day observed"
+      },
+      {
+        "date": "2026-09-07",
+        "closed": true,
+        "reason": "Labor Day"
+      },
+      {
+        "date": "2026-11-26",
+        "closed": true,
+        "reason": "Thanksgiving"
+      },
+      {
+        "date": "2026-12-25",
+        "closed": true,
+        "reason": "Christmas Day"
+      },
+      {
+        "date": "2026-11-27",
+        "reason": "early_close",
+        "windows": [
+          {
+            "open": "09:30",
+            "close": "13:00"
+          }
+        ]
+      },
+      {
+        "date": "2026-12-24",
+        "reason": "early_close",
+        "windows": [
+          {
+            "open": "09:30",
+            "close": "13:00"
+          }
+        ]
+      }
+    ],
+    "overrides": []
+  }
+]

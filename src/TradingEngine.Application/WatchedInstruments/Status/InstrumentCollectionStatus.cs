@@ -16,5 +16,7 @@ public enum InstrumentCollectionStatus
 
     AwaitingFirstObservation = 7,
 
-    Collecting = 8
+    Collecting = 8,
+
+    CalendarUnavailable = 9
 }

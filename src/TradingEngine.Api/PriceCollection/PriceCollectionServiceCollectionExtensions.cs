@@ -3,6 +3,7 @@ using NodaTime;
 using NodaTime.Text;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.PriceCollection;
+using TradingEngine.Infrastructure.MarketSessions;
 
 namespace TradingEngine.Api.PriceCollection;
 
@@ -25,8 +26,12 @@ internal static class PriceCollectionServiceCollectionExtensions
         services.AddSingleton(options);
         services.TryAddSingleton<PriceCollectionTelemetry>();
         services.TryAddSingleton<PriceCollectionProgress>();
-        services.AddSingleton<IMarketSessionPolicy>(
-            new WeeklyScheduleMarketSessionPolicy(BuildSessions(options)));
+        services.TryAddSingleton<IExchangeTradingCalendar>(provider =>
+            new ConfiguredExchangeTradingCalendar(configuration,
+                provider.GetRequiredService<ILogger<ConfiguredExchangeTradingCalendar>>()));
+        services.AddSingleton<IMarketSessionPolicy>(provider =>
+            new CalendarMarketSessionPolicy(BuildSessions(options),
+                provider.GetRequiredService<IExchangeTradingCalendar>()));
 
         if (options.Enabled is false)
         {
@@ -125,7 +130,9 @@ internal static class PriceCollectionServiceCollectionExtensions
             .Select(window => BuildWindow(exchange, window))
             .ToList();
 
-        return new ExchangeSession(zone, false, windows);
+        return new ExchangeSession(zone, false, windows,
+            options.CalendarRequired || exchange.Equals("XLON", StringComparison.OrdinalIgnoreCase)
+                || exchange.Equals("XNAS", StringComparison.OrdinalIgnoreCase));
     }
 
     private static SessionWindow BuildWindow(

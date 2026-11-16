@@ -166,7 +166,7 @@ public sealed class CollectDuePricesHandlerTests
             Assert.That(
                 _store.Attempts[0].Outcome,
                 Is.EqualTo(PriceCollectionOutcome.SkippedMarketClosed));
-            Assert.That(_store.Attempts[0].ErrorCode, Is.Null);
+            Assert.That(_store.Attempts[0].ErrorCode, Is.EqualTo("price_collection.session_closed"));
         });
     }
 

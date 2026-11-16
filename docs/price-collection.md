@@ -13,7 +13,7 @@ PeriodicTimer (PriceCollectionHostedService, thin entry point)
         └── CollectDuePricesHandler (TradingEngine.Application.PriceCollection)
               ├── IMonitoredInstrumentSource   → SqlServerMonitoredInstrumentSource
               ├── IPriceObservationStore       → SqlServerPriceObservationStore
-              ├── IMarketSessionPolicy         → WeeklyScheduleMarketSessionPolicy
+              ├── IMarketSessionPolicy         → CalendarMarketSessionPolicy
               ├── ISamplingPolicy              → resolved from PriceCollection:SamplingPolicy
               ├── IMarketDataProvider          → eToro adapter (rate gate + retries unchanged)
               └── IClock                       → system clock (FakeClock in tests)
@@ -364,3 +364,7 @@ After this follow-up is reviewed, merged and deployed, record the deployed revis
 4. Record closed-market cases as pending their next eligible session. Publish only aggregate counts, UTC slot timestamps, commit identity and test conclusions; keep real instrument lists, raw logs, market data and deployment configuration private.
 
 These deployed checks remain distinct from CI and synthetic SQL evidence. Keep #124 open until their results are recorded; a healthy version endpoint alone is insufficient.
+
+## Exchange calendars and batch-time session checks
+
+The registered policy is now `CalendarMarketSessionPolicy`, combining the existing weekly schedules with verified XLON and XNAS calendars. A fresh-clock request guard rechecks each distinct exchange before every outbound batch, after waits and before retries; expired run/slot work is rejected after suspension. See [exchange calendars](exchange-calendars.md) for packaged coverage, closure reasons, override maintenance and deployment verification.
