@@ -7,7 +7,8 @@ internal sealed record PendingPriceCollection(
     MonitoredInstrument Instrument,
     Instant ScheduledFor,
     Instant AttemptedAt,
-    Instant ExpiresAt)
+    Instant ExpiresAt,
+    PriceCollectionAttempt? LatestAttempt = null)
 {
     public MarketInstrumentIdentity Identity => new(
         Instrument.Exchange, Instrument.Symbol, Instrument.QuoteCurrency);

@@ -408,6 +408,7 @@ else
             "native-unit-unconfirmed" => "Collection: waiting — confirm the native quote unit in Settings.",
             "native-unit-conflict" => "Collection: blocked — the listing unit conflicts with deployment configuration.",
             "session-closed" => "Collection: the exchange session is currently closed.",
+            "calendar-unavailable" => "Collection: blocked — exchange calendar coverage is unavailable.",
             "awaiting-first-observation" => "Collection: waiting for the first observation.",
             "collecting" => collection.LastObservedAt is null
                 ? "Collection: collecting."
@@ -415,9 +416,14 @@ else
             _ => "Collection: status unknown."
         };
 
+        if (collection.Reason is not null)
+        {
+            text += $" {collection.Reason}";
+        }
+
         if (collection.LastAttemptErrorCode is not null)
         {
-            text += $" Last attempt failed ({collection.LastAttemptErrorCode}).";
+            text += $" Last attempt: {collection.LastAttemptErrorCode}.";
         }
 
         return text;

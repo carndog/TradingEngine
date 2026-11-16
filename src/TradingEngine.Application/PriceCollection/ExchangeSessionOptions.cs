@@ -6,5 +6,7 @@ public sealed class ExchangeSessionOptions
 
     public bool AlwaysOpen { get; set; }
 
+    public bool CalendarRequired { get; set; }
+
     public List<SessionWindowOptions> Windows { get; set; } = [];
 }

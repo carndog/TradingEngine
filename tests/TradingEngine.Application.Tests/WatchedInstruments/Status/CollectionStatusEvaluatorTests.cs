@@ -73,6 +73,22 @@ public sealed class CollectionStatusEvaluatorTests
     }
 
     [Test]
+    public async Task EvaluateAsync_WhenCalendarUnavailable_ReportsDistinctBlockedStatus()
+    {
+        StubMarketSessionPolicy sessions = new()
+        {
+            Responder = (_, _) => ExchangeSessionStatus.CalendarUnavailable
+        };
+        CollectionStatusEvaluator evaluator = CreateEvaluator(sessions: sessions);
+
+        CollectionStatusInfo result = await evaluator.EvaluateAsync(
+            CreateInstrument(MonitoringState.Monitored), CancellationToken.None);
+
+        Assert.That(result.Status, Is.EqualTo(InstrumentCollectionStatus.CalendarUnavailable));
+        Assert.That(result.ReasonCode, Is.EqualTo("price_collection.calendar_unavailable"));
+    }
+
+    [Test]
     public async Task EvaluateAsync_WhenUnitUnconfigured_ReturnsNativeUnitUnconfirmed()
     {
         CollectionStatusEvaluator evaluator = CreateEvaluator(

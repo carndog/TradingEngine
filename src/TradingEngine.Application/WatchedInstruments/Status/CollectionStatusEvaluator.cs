@@ -67,9 +67,16 @@ public sealed class CollectionStatusEvaluator
         }
 
         Instant now = _clock.GetCurrentInstant();
-        ExchangeSessionStatus session = _sessionPolicy.GetStatus(
-            instrument.Exchange,
-            now);
+        MarketSessionDecision decision = _sessionPolicy.GetDecision(instrument.Exchange, now);
+        ExchangeSessionStatus session = decision.Status;
+        string? detail = decision.Notice is null ? decision.Description
+            : $"{decision.Description} {decision.Notice}".Trim();
+        if (session == ExchangeSessionStatus.CalendarUnavailable)
+        {
+            return new CollectionStatusInfo(InstrumentCollectionStatus.CalendarUnavailable,
+                decision.ReasonCode, detail, null, null, null, null);
+        }
+
         if (session == ExchangeSessionStatus.Unconfigured)
         {
             return new CollectionStatusInfo(
@@ -149,8 +156,8 @@ public sealed class CollectionStatusEvaluator
             return WithAttempt(
                 new CollectionStatusInfo(
                     InstrumentCollectionStatus.SessionClosed,
-                    "price_collection.session_closed",
-                    "The exchange session is currently closed.",
+                    decision.ReasonCode,
+                    detail,
                     null,
                     null,
                     null,
@@ -186,8 +193,8 @@ public sealed class CollectionStatusEvaluator
         return WithAttempt(
             new CollectionStatusInfo(
                 InstrumentCollectionStatus.Collecting,
-                null,
-                null,
+                decision.Notice is null ? null : "price_collection.calendar_notice",
+                detail,
                 lastObservedAt,
                 null,
                 null,

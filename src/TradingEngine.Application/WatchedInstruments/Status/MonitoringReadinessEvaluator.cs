@@ -72,12 +72,10 @@ public sealed class MonitoringReadinessEvaluator
                 .WithExtension("requestedCurrency", quoteCurrency);
         }
 
-        ExchangeSessionStatus session = _sessionPolicy.GetStatus(
-            exchange,
-            _clock.GetCurrentInstant());
-        if (session == ExchangeSessionStatus.Unconfigured)
+        MarketSessionDecision decision = _sessionPolicy.GetDecision(exchange, _clock.GetCurrentInstant());
+        if (decision.Status is ExchangeSessionStatus.Unconfigured or ExchangeSessionStatus.CalendarUnavailable)
         {
-            return PriceCollectionErrors.ExchangeSessionUnconfigured;
+            return decision.BlockingError!;
         }
 
         return Result.Success();
