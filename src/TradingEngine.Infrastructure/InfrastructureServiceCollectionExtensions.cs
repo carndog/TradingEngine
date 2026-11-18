@@ -28,6 +28,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<INotificationIntentStore, SqlServerNotificationIntentStore>();
         services.AddScoped<ISignalEvidenceReader, SqlServerSignalEvidenceReader>();
         services.AddScoped<ISignalTrackingStore, SqlServerSignalTrackingStore>();
+        services.AddScoped<IWeeklyReportStore, SqlServerWeeklyReportStore>();
 
         return services;
     }
