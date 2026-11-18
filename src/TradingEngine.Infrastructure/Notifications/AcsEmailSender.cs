@@ -32,12 +32,13 @@ public sealed class AcsEmailSender : IEmailSender
         EmailMessage message = new(
             _options.SenderAddress,
             new EmailRecipients(
-                _options.RecipientAddresses
+                (email.RecipientAddresses ?? _options.RecipientAddresses)
                     .Select(address => new EmailAddress(address))
                     .ToList()),
             new EmailContent(email.Subject)
             {
-                PlainText = email.PlainTextBody
+                PlainText = email.PlainTextBody,
+                Html = email.HtmlBody
             });
 
         try
