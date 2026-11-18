@@ -36,3 +36,29 @@ Apply `SignalTracking` followed by `WeeklyReportSnapshots` through the existing
 controlled migration workflow before deploying report functionality. These are
 additive migrations. Down migrations delete the corresponding report/audit evidence;
 use forward fixes after real reports exist. No new Azure service is needed.
+
+## Schedule and composition
+
+The default schedule is Sunday 18:00 Europe/London. Local weekly boundaries keep
+that wall-clock time across GMT/BST (167/169-hour transition weeks). If a configured
+time is skipped by a clock change it moves forward by the gap; an overlapping time
+uses its earlier occurrence. First enablement uses the next strictly future cutoff.
+After downtime only the latest due cutoff is generated, with the number of older
+missed periods recorded. A still-generating report is recovered with its original
+cutoff before a new period is claimed.
+
+Composition reads tracked signals in 100-row batches at the fixed cutoff, then
+signals archived in `(period start, cutoff]`. All tracked signals remain included
+even without new signals. Multiple matches and later re-entries remain separate.
+The default snapshot bound is 10,000 rows: exceeding it fails generation visibly
+without sending an incomplete report. Operators must investigate or deliberately
+increase the bounded configuration before retrying.
+
+Emails include plain text and encoded HTML. `MaxEmailRows` (100) and `MaxEmailBytes`
+(128,000 combined UTF-8 subject/body bytes) limit rendered size; these are application
+bounds, not a claim about provider limits. The footer states shown/total rows and
+links to paginated, authenticated saved evidence. Preview links recompute preview
+evidence and do not masquerade as saved reports. Price changes retain their sign,
+use canonical units, and are rounded only in email display. Last-known, missing and
+unknown-freshness quotes remain explicitly labelled. Range position never infers
+profit, loss, an order or a short position.
