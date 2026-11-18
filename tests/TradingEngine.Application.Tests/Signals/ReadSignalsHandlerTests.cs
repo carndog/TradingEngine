@@ -1,3 +1,4 @@
+using System.Text.Json;
 using NodaTime;
 using NodaTime.Testing;
 using TradingEngine.Application.PriceCollection;
@@ -91,6 +92,32 @@ public sealed class ReadSignalsHandlerTests
         Assert.That(page.Cutoff, Is.EqualTo(Cutoff.ToDateTimeOffset()));
     }
 
+    [TestCase("XTEST", true, 900, 15, "current")]
+    [TestCase("XTEST", true, 900, 30, "stale_last_known")]
+    [TestCase("XSESSION", true, 900, 15, "latest_session")]
+    [TestCase("XCLOSED", true, 900, 15, "unknown_expected_collection")]
+    [TestCase("UNKNOWN", true, 900, 15, "unknown_calendar")]
+    [TestCase("XTEST", true, 0, 15, "unknown_cadence")]
+    [TestCase("XTEST", false, 900, 15, "missing")]
+    public async Task HandleAsync_FreshnessClassification_PreservesSerializedResponseLabel(
+        string exchange, bool hasQuote, int interval, int ageMinutes, string expected)
+    {
+        Instant quoteAt = Cutoff.Minus(Duration.FromMinutes(ageMinutes));
+        SignalEvidence source = Evidence();
+        SignalEvidence signal = source with
+        {
+            Exchange = exchange, SamplingIntervalSeconds = interval,
+            Quote = hasQuote ? source.Quote! with { ScheduledFor = quoteAt, RetrievedAt = quoteAt } : null
+        };
+        SignalEvidenceStub reader = new() { Items = [signal] };
+
+        SignalStatus item = (await Handler(reader).HandleAsync(new SignalQuery(Cutoff), CancellationToken.None)).Value.Items.Single();
+        using JsonDocument json = JsonDocument.Parse(JsonSerializer.Serialize(item));
+
+        Assert.That(item.QuoteFreshness, Is.EqualTo(expected));
+        Assert.That(json.RootElement.GetProperty("QuoteFreshness").GetString(), Is.EqualTo(expected));
+    }
+
     internal static SignalEvidence Evidence()
     {
         return new SignalEvidence(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "SYNTH", "XTEST", Guid.NewGuid(),
@@ -105,7 +132,10 @@ public sealed class ReadSignalsHandlerTests
     {
         WeeklyScheduleMarketSessionPolicy sessions = new(new Dictionary<string, ExchangeSession>
         {
-            ["XTEST"] = new(null, true, [])
+            ["XTEST"] = new(null, true, []),
+            ["XSESSION"] = new(DateTimeZone.Utc, false,
+                [new SessionWindow(new HashSet<IsoDayOfWeek> { IsoDayOfWeek.Monday }, new LocalTime(9, 0), new LocalTime(12, 0))]),
+            ["XCLOSED"] = new(DateTimeZone.Utc, false, [])
         });
         return new ReadSignalsHandler(reader, new SignalFreshnessClassifier(sessions), new FakeClock(Cutoff));
     }

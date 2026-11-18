@@ -6,18 +6,18 @@ namespace TradingEngine.Application.Signals;
 
 public sealed class SignalFreshnessClassifier(IMarketSessionPolicy sessions, PriceCollectionOptions? options = null)
 {
-    public string Classify(SignalEvidence signal, Instant cutoff)
+    public SignalFreshness Classify(SignalEvidence signal, Instant cutoff)
     {
         if (signal.Quote is null)
         {
-            return "missing";
+            return SignalFreshness.Missing;
         }
 
         int interval = signal.SamplingIntervalSeconds;
         if (interval < 1 || cutoff < Instant.FromUtc(2000, 1, 15, 0, 0)
             || (options is not null && options.SamplingPolicy != SamplingPolicyNames.PerInstrument))
         {
-            return "unknown_cadence";
+            return SignalFreshness.UnknownCadence;
         }
 
         long seconds = cutoff.ToUnixTimeSeconds();
@@ -28,27 +28,27 @@ public sealed class SignalFreshnessClassifier(IMarketSessionPolicy sessions, Pri
             ExchangeSessionStatus status = sessions.GetStatus(signal.Exchange, candidate);
             if (status is ExchangeSessionStatus.Unconfigured or ExchangeSessionStatus.CalendarUnavailable)
             {
-                return "unknown_calendar";
+                return SignalFreshness.UnknownCalendar;
             }
 
             if (status == ExchangeSessionStatus.Open)
             {
                 if (signal.Quote.ScheduledFor < candidate || signal.Quote.ObservedAt < candidate)
                 {
-                    return "stale_last_known";
+                    return SignalFreshness.StaleLastKnown;
                 }
 
                 return sessions.GetStatus(signal.Exchange, cutoff) switch
                 {
-                    ExchangeSessionStatus.Open => "current",
-                    ExchangeSessionStatus.Closed => "latest_session",
-                    _ => "unknown_calendar"
+                    ExchangeSessionStatus.Open => SignalFreshness.Current,
+                    ExchangeSessionStatus.Closed => SignalFreshness.LatestSession,
+                    _ => SignalFreshness.UnknownCalendar
                 };
             }
 
             candidate = candidate.Minus(Duration.FromSeconds(interval));
         }
 
-        return "unknown_expected_collection";
+        return SignalFreshness.UnknownExpectedCollection;
     }
 }
