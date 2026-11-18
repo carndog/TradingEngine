@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -88,10 +89,10 @@ public sealed class WeeklyReportEndpointTests : ISignalEvidenceReader
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSyntheticConnectionString();
+            builder.UseSetting("WeeklyReports:Enabled", enabled.ToString());
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Authentication:EasyAuth:TrustPlatformHeaders"] = authenticated.ToString(),
-                ["WeeklyReports:Enabled"] = enabled.ToString()
+                ["Authentication:EasyAuth:TrustPlatformHeaders"] = authenticated.ToString()
             }));
             builder.ConfigureServices(services => services.AddSingleton<ISignalEvidenceReader>(this));
         });
