@@ -164,6 +164,22 @@ public sealed class WeeklyReportPersistenceTests
         Assert.That((await store.ListDispatchableAsync(key, 10, Cutoff, CancellationToken.None)).Single().Id, Is.EqualTo(report.ReportId));
     }
 
+    [TestCase(3)]
+    [TestCase(10)]
+    public async Task CompleteGenerationAsync_ScheduleChangedDuringRecovery_PreservesNextNewOccurrence(int days)
+    {
+        string key = await ScheduleAsync();
+        WeeklyReportClaim claim = (await ClaimAsync(Request(key)))!;
+        Instant next = Cutoff.Plus(Duration.FromDays(days));
+        await using TradingEngineDbContext context = _database.CreateContext();
+        SqlServerWeeklyReportStore store = new(context);
+        await store.ConfigureScheduleAsync(key, true, "changed-schedule", next, Cutoff, CancellationToken.None);
+
+        await store.CompleteGenerationAsync(claim, _ => Task.FromResult(Empty(claim)), Cutoff, CancellationToken.None);
+
+        Assert.That((await context.WeeklyReportSchedules.AsNoTracking().SingleAsync(row => row.SubscriptionKey == key)).NextCutoff, Is.EqualTo(next));
+    }
+
     private async Task<(string Key, WeeklyReportClaim Claim)> ReadyAsync()
     {
         string key = await ScheduleAsync();
