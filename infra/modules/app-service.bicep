@@ -76,8 +76,38 @@ param acsEmailSenderAddress string = ''
 @secure()
 param acsEmailRecipientAddresses string = ''
 
+@description('Private weekly-report configuration. Enabled defaults false; stable identity remains present when pausing. Recipients and application origin never belong in source control.')
+@secure()
+param weeklyReportSettings object = {}
+
 @description('Tags applied to the resources.')
 param tags object
+
+var weeklyReportAppSettings = {
+  WeeklyReports__Enabled: string(weeklyReportSettings.?enabled ?? false)
+  WeeklyReports__DeploymentId: string(weeklyReportSettings.?deploymentId ?? '')
+  WeeklyReports__SubscriptionId: string(weeklyReportSettings.?subscriptionId ?? 'operator')
+  WeeklyReports__TimeZone: string(weeklyReportSettings.?timeZone ?? 'Europe/London')
+  WeeklyReports__IsoDayOfWeek: string(weeklyReportSettings.?isoDayOfWeek ?? 7)
+  WeeklyReports__LocalTime: string(weeklyReportSettings.?localTime ?? '18:00')
+  WeeklyReports__BaseUrl: string(weeklyReportSettings.?baseUrl ?? '')
+  WeeklyReports__PollIntervalSeconds: string(weeklyReportSettings.?pollIntervalSeconds ?? 30)
+  WeeklyReports__GenerationLeaseSeconds: string(weeklyReportSettings.?generationLeaseSeconds ?? 600)
+  WeeklyReports__ClaimLeaseSeconds: string(weeklyReportSettings.?claimLeaseSeconds ?? 120)
+  WeeklyReports__MaxDispatchAttempts: string(weeklyReportSettings.?maxDispatchAttempts ?? 5)
+  WeeklyReports__MaxReportsPerRun: string(weeklyReportSettings.?maxReportsPerRun ?? 10)
+  WeeklyReports__MaxSnapshotRows: string(weeklyReportSettings.?maxSnapshotRows ?? 10000)
+  WeeklyReports__MaxEmailRows: string(weeklyReportSettings.?maxEmailRows ?? 100)
+  WeeklyReports__MaxEmailBytes: string(weeklyReportSettings.?maxEmailBytes ?? 128000)
+}
+
+var weeklyReportRecipients = weeklyReportSettings.?recipientAddresses ?? []
+var weeklyReportRecipientSettings = reduce(
+  range(0, length(weeklyReportRecipients)),
+  {},
+  (accumulated, index) => union(accumulated, {
+    'WeeklyReports__RecipientAddresses__${index}': string(weeklyReportRecipients[index])
+  }))
 
 var emailRecipientList = filter(
   map(split(acsEmailRecipientAddresses, ','), entry => trim(entry)),
@@ -204,10 +234,12 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || recommendationsEnabled || notificationsEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions) || acsEmailConnectionString != '' || acsEmailSenderAddress != '' || !empty(acsEmailRecipientAddresses)) {
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (!empty(weeklyReportSettings) || tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || recommendationsEnabled || notificationsEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions) || acsEmailConnectionString != '' || acsEmailSenderAddress != '' || !empty(acsEmailRecipientAddresses)) {
   parent: webApp
   name: 'appsettings'
   properties: union(
+    weeklyReportAppSettings,
+    weeklyReportRecipientSettings,
     tradingEngineConnectionString != ''
       ? {
           ConnectionStrings__TradingEngine: tradingEngineConnectionString
