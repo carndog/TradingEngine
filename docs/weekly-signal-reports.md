@@ -30,7 +30,11 @@ One logical report is guaranteed by the application, not exactly-once inbox deli
 Disabling a subscription suppresses report dispatch. Re-enabling schedules the next
 occurrence while retaining pending reports for reconciliation. Keep the deployment
 and subscription identity stable when disabling. Report scheduling/composition and
-the disabled-by-default host are added in the next slices.
+the host are disabled by default. A configured identity keeps the host running while
+disabled so it can persist the paused state; an empty deployment identity registers
+no report host. Allow a successful disabled tick before removing identity or stopping
+the application. Re-enabling resumes already-claimed work and pending submissions,
+but does not create unclaimed historical reports.
 
 Apply `SignalTracking` followed by `WeeklyReportSnapshots` through the existing
 controlled migration workflow before deploying report functionality. These are
@@ -62,3 +66,26 @@ evidence and do not masquerade as saved reports. Price changes retain their sign
 use canonical units, and are rounded only in email display. Last-known, missing and
 unknown-freshness quotes remain explicitly labelled. Range position never infers
 profit, loss, an order or a short position.
+
+## Authenticated inspection
+
+All routes use the existing `/api` Easy Auth and request limits. A preview needs no
+email credentials, report-store call or enabled scheduler:
+
+- `GET /api/weekly-reports/preview?cutoff=2026-03-29T17:00:00Z&page=1&pageSize=25`
+  composes a read-only preview at the supplied cutoff. Omit cutoff to use the injected
+  current time. The preview covers the preceding seven local days, returns its fixed
+  UTC cutoff for subsequent pages, and never persists, claims, advances or sends.
+  Paging a preview re-reads source evidence; use a saved report for immutable audit.
+- `GET /api/weekly-reports?maximum=25` lists at most 100 recent run summaries for the
+  configured deployment/subscription.
+- `GET /api/weekly-reports/{id}?page=1&pageSize=25` reads immutable saved evidence,
+  generation/error state and delivery outcome. Page size is at most 100. Recipient
+  addresses are intentionally absent from API responses.
+
+Generation failure leaves `Generating` with `generation_failed` and a recoverable
+lease. Other ready reports continue to reconcile. Counts are emitted through
+`TradingEngine.Api.WeeklyReports`: `tradingengine.weekly_reports.generated`,
+`.failures` and `.deliveries` (bounded outcome tag). Logs contain counts and fixed
+failure messages, never report bodies, recipients or source prices. Immediate alerts
+use their existing independent schedule and remain unchanged.
