@@ -8,23 +8,20 @@ Refs #
 
 Use `Closes #` only for the final completing PR when the story's completion requirements are met. Intermediate PRs must not close the story.
 
-## Review size and stack
+## Review size and scope
 
-Follow [the repository convention](https://github.com/carndog/TradingEngine/blob/main/AGENTS.md#pull-request-size-and-stacked-story-delivery): prefer about 10 changed files and normally no more than 20; justified larger changes are welcome.
+Follow [the repository convention](https://github.com/carndog/TradingEngine/blob/main/AGENTS.md#pull-request-size-and-delivery): prefer about 10 changed files and normally no more than 20; justified larger changes are welcome. Branch from and target `main`.
 
-- Incremental changed files against this PR's actual base:
+- Changed files against `main`:
 - Size exception, if needed (identify repetitive/generated changes and explain why this grouping helps review):
-- Stack position and ordered PR links (or standalone):
-- Immediate dependency / target branch:
+- Prerequisites already merged, if any:
 - This slice's scope and safe intermediate deployment behaviour:
-
-For a stack, use `_1`, `_2`, etc. in branch names and PR titles. Keep these fields and the story checklist current after restacking or changing an earlier PR.
 
 ## Verification
 
-- [ ] Relevant tests pass on this slice and its declared ancestors
+- [ ] Relevant tests pass on this slice against `main`
 - [ ] This slice's acceptance criteria have been checked
-- [ ] The incremental diff, base and stack order have been checked; any affected descendants have been updated
+- [ ] The diff against `main` has been checked and required prerequisites are merged
 - [ ] No credentials or secrets have been committed
 - [ ] Documentation or ADRs have been updated where required
 
