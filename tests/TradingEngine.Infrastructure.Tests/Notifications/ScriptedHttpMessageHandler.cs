@@ -8,6 +8,8 @@ internal sealed class ScriptedHttpMessageHandler : HttpMessageHandler
 
     public List<HttpRequestMessage> Requests { get; } = [];
 
+    public List<string> Bodies { get; } = [];
+
     public void Enqueue(HttpStatusCode status, string body)
     {
         _responses.Enqueue(new HttpResponseMessage(status)
@@ -17,18 +19,19 @@ internal sealed class ScriptedHttpMessageHandler : HttpMessageHandler
         });
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
         Requests.Add(request);
+        Bodies.Add(request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken));
         if (_responses.Count == 0)
         {
             throw new InvalidOperationException(
                 $"No scripted response for {request.Method} {request.RequestUri}.");
         }
 
-        return Task.FromResult(_responses.Dequeue());
+        return _responses.Dequeue();
     }
 
     private sealed class StaticContent(byte[] bytes) : HttpContent

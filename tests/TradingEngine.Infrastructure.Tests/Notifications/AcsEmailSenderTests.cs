@@ -134,6 +134,21 @@ public sealed class AcsEmailSenderTests
             $"{{\"id\":\"{OperationId}\",\"status\":\"NotStarted\"}}");
     }
 
+    [Test]
+    public async Task SendAsync_SnapshotRecipientsAndHtml_UsesSnapshotInsteadOfCurrentRecipientConfiguration()
+    {
+        EnqueueSendAccepted();
+        RecommendationEmail email = new("synthetic report", "plain snapshot", "<p>encoded &amp; safe</p>", ["snapshot@synthetic.example"]);
+
+        await _sender.SendAsync(email, Guid.Parse(OperationId), CancellationToken.None);
+        string body = _handler.Bodies.Single();
+
+        Assert.That(body, Does.Contain("snapshot@synthetic.example"));
+        Assert.That(body, Does.Not.Contain("devnull@synthetic.example"));
+        Assert.That(body, Does.Contain("plain snapshot"));
+        Assert.That(body, Does.Contain("html"));
+    }
+
     private void EnqueueOperationStatus(string status)
     {
         _handler.Enqueue(
