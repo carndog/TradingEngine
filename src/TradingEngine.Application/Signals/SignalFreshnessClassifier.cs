@@ -4,7 +4,7 @@ using TradingEngine.Application.PriceCollection;
 
 namespace TradingEngine.Application.Signals;
 
-public sealed class SignalFreshnessClassifier(IMarketSessionPolicy sessions)
+public sealed class SignalFreshnessClassifier(IMarketSessionPolicy sessions, PriceCollectionOptions? options = null)
 {
     public string Classify(SignalEvidence signal, Instant cutoff)
     {
@@ -14,7 +14,8 @@ public sealed class SignalFreshnessClassifier(IMarketSessionPolicy sessions)
         }
 
         int interval = signal.SamplingIntervalSeconds;
-        if (interval < 1 || cutoff < Instant.FromUtc(2000, 1, 15, 0, 0))
+        if (interval < 1 || cutoff < Instant.FromUtc(2000, 1, 15, 0, 0)
+            || (options is not null && options.SamplingPolicy != SamplingPolicyNames.PerInstrument))
         {
             return "unknown_cadence";
         }

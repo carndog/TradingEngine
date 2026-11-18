@@ -135,7 +135,7 @@ public sealed class SqlServerWeeklyReportStore(TradingEngineDbContext context) :
                     .SetProperty(row => row.ArchivedCount, archivedCount).SetProperty(row => row.GenerationError, (string?)null)
                     .SetProperty(row => row.GenerationClaim, (Guid?)null).SetProperty(row => row.GenerationClaimedUntil, (Instant?)null)
                     .SetProperty(row => row.UpdatedAt, now), cancellationToken);
-            await context.WeeklyReportSchedules.Where(row => row.SubscriptionKey == report.SubscriptionKey)
+            await context.WeeklyReportSchedules.Where(row => row.SubscriptionKey == report.SubscriptionKey && row.NextCutoff <= report.Cutoff)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.NextCutoff, report.NextCutoff), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return true;
