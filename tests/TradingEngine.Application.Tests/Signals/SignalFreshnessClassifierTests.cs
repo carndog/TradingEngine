@@ -1,11 +1,12 @@
 using NodaTime;
+using TradingEngine.Application.Ports;
 using TradingEngine.Application.PriceCollection;
 using TradingEngine.Application.Signals;
 
 namespace TradingEngine.Application.Tests.Signals;
 
 [TestFixture]
-public sealed class SignalFreshnessClassifierTests
+public sealed class SignalFreshnessClassifierTests : IMarketSessionPolicy
 {
     [TestCase(15, "current")]
     [TestCase(30, "stale_last_known")]
@@ -37,5 +38,35 @@ public sealed class SignalFreshnessClassifierTests
     {
         SignalFreshnessClassifier classifier = new(new WeeklyScheduleMarketSessionPolicy(new Dictionary<string, ExchangeSession>()));
         Assert.That(classifier.Classify(ReadSignalsHandlerTests.Evidence(), Instant.FromUtc(2026, 1, 12, 12, 0)), Is.EqualTo("unknown_calendar"));
+    }
+
+    [Test]
+    public void Classify_ProviderBudgetChangesEffectiveCadence_ReportsUnknownRatherThanFalseStaleness()
+    {
+        WeeklyScheduleMarketSessionPolicy sessions = new(new Dictionary<string, ExchangeSession> { ["XTEST"] = new(null, true, []) });
+        SignalFreshnessClassifier classifier = new(sessions, new PriceCollectionOptions { SamplingPolicy = SamplingPolicyNames.ProviderBudgetClamped });
+        Assert.That(classifier.Classify(ReadSignalsHandlerTests.Evidence(), Instant.FromUtc(2026, 1, 12, 12, 0)), Is.EqualTo("unknown_cadence"));
+    }
+
+    [TestCase(45, "latest_session")]
+    [TestCase(30, "stale_last_known")]
+    public void Classify_KnownHoliday_UsesLastExpectedOpenSession(int minute, string expected)
+    {
+        Instant thursday = Instant.FromUtc(2026, 1, 15, 16, minute);
+        SignalEvidence signal = ReadSignalsHandlerTests.Evidence();
+        signal = signal with { Quote = signal.Quote! with { ScheduledFor = thursday, RetrievedAt = thursday } };
+        Assert.That(new SignalFreshnessClassifier(this).Classify(signal, Instant.FromUtc(2026, 1, 16, 18, 0)), Is.EqualTo(expected));
+    }
+
+    public ExchangeSessionStatus GetStatus(string exchange, Instant at)
+    {
+        ZonedDateTime local = at.InZone(DateTimeZoneProviders.Tzdb["Europe/London"]);
+        if (local.Date == new LocalDate(2026, 1, 16) || local.DayOfWeek is IsoDayOfWeek.Saturday or IsoDayOfWeek.Sunday)
+        {
+            return ExchangeSessionStatus.Closed;
+        }
+
+        return local.TimeOfDay >= new LocalTime(9, 0) && local.TimeOfDay < new LocalTime(17, 0)
+            ? ExchangeSessionStatus.Open : ExchangeSessionStatus.Closed;
     }
 }
