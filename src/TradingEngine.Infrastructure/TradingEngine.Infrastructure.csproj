@@ -3,6 +3,7 @@
     <EmbeddedResource Include="MonitoringRules/Xml/chart-analysis-definition.xsd" />
     <EmbeddedResource Include="MarketSessions/exchange-calendars.json" />
     <InternalsVisibleTo Include="TradingEngine.Infrastructure.Tests" />
+    <InternalsVisibleTo Include="TradingEngine.Infrastructure.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Azure.Communication.Email" />

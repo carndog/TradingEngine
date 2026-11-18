@@ -1,0 +1,85 @@
+using Microsoft.EntityFrameworkCore;
+using NodaTime;
+using Testcontainers.MsSql;
+using TradingEngine.Infrastructure.Persistence;
+
+namespace TradingEngine.Infrastructure.IntegrationTests.Persistence;
+
+internal sealed class SignalTestDatabase : IAsyncDisposable
+{
+    private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").Build();
+
+    public static Instant TriggeredAt => Instant.FromUtc(2026, 1, 5, 12, 0);
+
+    public async Task StartAsync()
+    {
+        await _container.StartAsync();
+        await using TradingEngineDbContext context = CreateContext();
+        await context.Database.MigrateAsync();
+    }
+
+    public TradingEngineDbContext CreateContext()
+    {
+        return new TradingEngineDbContext(new DbContextOptionsBuilder<TradingEngineDbContext>()
+            .UseSqlServer(_container.GetConnectionString()).Options);
+    }
+
+    public async Task<NotificationIntentMatchRow> SeedAsync()
+    {
+        await using TradingEngineDbContext context = CreateContext();
+        WatchedInstrumentRow instrument = new()
+        {
+            Id = Guid.NewGuid(), Symbol = $"S{Guid.NewGuid():N}"[..12].ToUpperInvariant(), Exchange = "XTEST",
+            QuoteCurrency = "USD", MonitoringState = "Monitored", SamplingIntervalSeconds = 900,
+            CreatedAt = TriggeredAt, LastChangedAt = TriggeredAt
+        };
+        MonitoringRuleRow rule = new() { Id = Guid.NewGuid(), Instrument = instrument, CreatedAt = TriggeredAt };
+        MonitoringRuleRevisionRow revision = new()
+        {
+            Id = Guid.NewGuid(), Rule = rule, CreatedAt = TriggeredAt, CreatedBy = "synthetic",
+            DefinitionXml = "<ChartAnalysisDefinition priceScale=\"4\" />", EffectiveFrom = TriggeredAt,
+            RevisionNumber = 1
+        };
+        NotificationIntentRow intent = new()
+        {
+            Id = Guid.NewGuid(), Instrument = instrument, ScheduledFor = TriggeredAt,
+            MonitoringRuleRevisionId = revision.Id, Reason = "ConditionsTriggered", PriceBasis = "Bid",
+            QuoteCurrency = "USD", CurrentBid = 100m, CurrentAsk = 101m, Status = "Pending",
+            CreatedAt = TriggeredAt, UpdatedAt = TriggeredAt
+        };
+        NotificationIntentMatchRow match = Match(intent);
+        context.Add(revision);
+        context.Add(match);
+        await context.SaveChangesAsync();
+        return match;
+    }
+
+    public static NotificationIntentMatchRow Match(NotificationIntentRow intent)
+    {
+        return new NotificationIntentMatchRow
+        {
+            Id = Guid.NewGuid(), Intent = intent, ZoneId = "synthetic-zone", Condition = "BuyZone",
+            ActionId = "publish-signal", Lower = 95m, Level = 100m, Upper = 105m, PreviousPrice = 94m, CurrentPrice = 100m
+        };
+    }
+
+    public async Task<PriceObservationRow> QuoteAsync(Guid instrumentId, Instant at, decimal? bid = 110m,
+        Instant? retrievedAt = null, Instant? providerAt = null)
+    {
+        await using TradingEngineDbContext context = CreateContext();
+        PriceObservationRow quote = new()
+        {
+            Id = Guid.NewGuid(), WatchedInstrumentId = instrumentId, ScheduledFor = at, Provider = "synthetic",
+            ProviderInstrumentId = 1, Bid = bid, Ask = 111m, QuoteCurrency = "USD", RetrievedAt = retrievedAt ?? at,
+            ProviderObservedAt = providerAt, Timeliness = "Realtime", InvocationId = Guid.NewGuid()
+        };
+        context.Add(quote);
+        await context.SaveChangesAsync();
+        return quote;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _container.DisposeAsync();
+    }
+}
