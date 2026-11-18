@@ -61,8 +61,23 @@ public sealed class ReadSignalsHandler(
             quote?.ObservedAt.ToDateTimeOffset(), quote?.RetrievedAt.ToDateTimeOffset(),
             comparison.LatestPrice, comparison.PercentageChange, comparison.RangePosition?.ToString(),
             invalidQuote ? "InvalidLatestQuote" : comparison.UnavailableReason?.ToString(),
-            freshness.Classify(signal, cutoff), quote is null ? null : (cutoff - quote.ObservedAt).TotalSeconds,
+            FormatFreshness(freshness.Classify(signal, cutoff)), quote is null ? null : (cutoff - quote.ObservedAt).TotalSeconds,
             signal.EmailStatus, signal.MonitoringPaused, signal.InstrumentRemoved, signal.SourceRevisionActive,
             signal.Archived, signal.TrackingChangedAt);
+    }
+
+    private static string FormatFreshness(SignalFreshness value)
+    {
+        return value switch
+        {
+            SignalFreshness.Missing => "missing",
+            SignalFreshness.Current => "current",
+            SignalFreshness.LatestSession => "latest_session",
+            SignalFreshness.StaleLastKnown => "stale_last_known",
+            SignalFreshness.UnknownCadence => "unknown_cadence",
+            SignalFreshness.UnknownCalendar => "unknown_calendar",
+            SignalFreshness.UnknownExpectedCollection => "unknown_expected_collection",
+            _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown signal freshness.")
+        };
     }
 }
