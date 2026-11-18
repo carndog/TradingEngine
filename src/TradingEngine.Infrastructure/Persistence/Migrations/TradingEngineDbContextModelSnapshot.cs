@@ -624,6 +624,194 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportAttemptRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ErrorKind")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ProviderOperationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("ProviderStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("ReportId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReportId", "Id");
+
+                    b.ToTable("WeeklyReportAttempts", (string)null);
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportItemRow", b =>
+                {
+                    b.Property<Guid>("ReportId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("int");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("SignalId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ReportId", "Position");
+
+                    b.HasIndex("SignalId");
+
+                    b.HasIndex("ReportId", "SignalId")
+                        .IsUnique();
+
+                    b.ToTable("WeeklyReportItems", (string)null);
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ArchivedCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<DateTime>("Cutoff")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<Guid?>("DeliveryClaim")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("DeliveryClaimedUntil")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("DeliveryStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime?>("FirstSkippedCutoff")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<Guid?>("GenerationClaim")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("GenerationClaimedUntil")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("GenerationError")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("GenerationStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("HtmlBody")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("NextCutoff")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<DateTime>("PeriodStart")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("PlainTextBody")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ProviderOperationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("RecipientsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("SendAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SkippedPeriods")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("SubscriptionKey")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<int>("TotalCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SubscriptionKey", "Cutoff")
+                        .IsUnique();
+
+                    b.HasIndex("SubscriptionKey", "GenerationStatus", "DeliveryStatus", "UpdatedAt");
+
+                    b.ToTable("WeeklyReports", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_WeeklyReports_DeliveryStatus", "[DeliveryStatus] IN ('Skipped', 'Pending', 'Submitted', 'Ambiguous', 'Sent', 'Failed')");
+
+                            t.HasCheckConstraint("CK_WeeklyReports_GenerationStatus", "[GenerationStatus] IN ('Generating', 'Ready', 'Empty')");
+
+                            t.HasCheckConstraint("CK_WeeklyReports_Period", "[PeriodStart] < [Cutoff] AND [Cutoff] < [NextCutoff]");
+                        });
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportScheduleRow", b =>
+                {
+                    b.Property<string>("SubscriptionKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<DateTime>("NextCutoff")
+                        .HasColumnType("datetime2(7)");
+
+                    b.HasKey("SubscriptionKey");
+
+                    b.ToTable("WeeklyReportSchedules", (string)null);
+                });
+
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.ChartAnalysisDefinitionRow", b =>
                 {
                     b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
@@ -728,6 +916,39 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", null)
                         .WithMany()
                         .HasForeignKey("SignalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportAttemptRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", null)
+                        .WithMany()
+                        .HasForeignKey("ReportId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportItemRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", null)
+                        .WithMany()
+                        .HasForeignKey("ReportId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", null)
+                        .WithMany()
+                        .HasForeignKey("SignalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.WeeklyReportScheduleRow", null)
+                        .WithMany()
+                        .HasForeignKey("SubscriptionKey")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

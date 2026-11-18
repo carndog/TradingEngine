@@ -70,4 +70,12 @@ public sealed class TradingEngineDbContext : DbContext
     }
 
     internal DbSet<SignalTrackingAuditRow> SignalTrackingAudit => Set<SignalTrackingAuditRow>();
+
+    internal DbSet<WeeklyReportScheduleRow> WeeklyReportSchedules => Set<WeeklyReportScheduleRow>();
+
+    internal DbSet<WeeklyReportRow> WeeklyReports => Set<WeeklyReportRow>();
+
+    internal DbSet<WeeklyReportItemRow> WeeklyReportItems => Set<WeeklyReportItemRow>();
+
+    internal DbSet<WeeklyReportAttemptRow> WeeklyReportAttempts => Set<WeeklyReportAttemptRow>();
 }
