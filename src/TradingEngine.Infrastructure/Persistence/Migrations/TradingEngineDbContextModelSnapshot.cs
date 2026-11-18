@@ -17,7 +17,7 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.14")
+                .HasAnnotation("ProductVersion", "10.0.15")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -383,6 +383,9 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ScheduledFor", "CreatedAt")
+                        .HasDatabaseName("IX_NotificationIntents_ScheduledFor_CreatedAt");
+
                     b.HasIndex("Status", "ScheduledFor")
                         .HasDatabaseName("IX_NotificationIntents_Status_ScheduledFor");
 
@@ -513,6 +516,35 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_PriceObservations_Timeliness", "[Timeliness] IN ('Unknown', 'Realtime', 'Delayed')");
                         });
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.SignalTrackingAuditRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("Archived")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("ChangedAt")
+                        .HasColumnType("datetime2(7)");
+
+                    b.Property<string>("ChangedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid>("SignalId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SignalId", "ChangedAt", "Id");
+
+                    b.ToTable("SignalTrackingAudit", (string)null);
                 });
 
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", b =>
@@ -689,6 +721,15 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Instrument");
+                });
+
+            modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.SignalTrackingAuditRow", b =>
+                {
+                    b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", null)
+                        .WithMany()
+                        .HasForeignKey("SignalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", b =>

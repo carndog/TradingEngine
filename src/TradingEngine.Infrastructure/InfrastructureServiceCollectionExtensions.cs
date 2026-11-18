@@ -27,6 +27,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IRecommendationEvaluationStore, SqlServerRecommendationStore>();
         services.AddScoped<INotificationIntentStore, SqlServerNotificationIntentStore>();
         services.AddScoped<ISignalEvidenceReader, SqlServerSignalEvidenceReader>();
+        services.AddScoped<ISignalTrackingStore, SqlServerSignalTrackingStore>();
 
         return services;
     }

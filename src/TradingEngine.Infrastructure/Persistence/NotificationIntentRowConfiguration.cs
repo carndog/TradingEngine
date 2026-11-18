@@ -90,6 +90,9 @@ internal sealed class NotificationIntentRowConfiguration
         builder.HasIndex(row => new { row.Status, row.ScheduledFor })
             .HasDatabaseName("IX_NotificationIntents_Status_ScheduledFor");
 
+        builder.HasIndex(row => new { row.ScheduledFor, row.CreatedAt })
+            .HasDatabaseName("IX_NotificationIntents_ScheduledFor_CreatedAt");
+
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_NotificationIntents_Status",
             "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed')"));
