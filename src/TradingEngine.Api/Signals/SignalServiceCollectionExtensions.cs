@@ -7,6 +7,7 @@ internal static class SignalServiceCollectionExtensions
     public static IServiceCollection AddSignals(this IServiceCollection services)
     {
         services.AddScoped<ReadSignalsHandler>();
+        services.AddScoped<ChangeSignalTrackingHandler>();
         services.AddSingleton<SignalFreshnessClassifier>();
         return services;
     }

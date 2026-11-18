@@ -33,6 +33,20 @@ public sealed class SqlServerSignalEvidenceReader(TradingEngineDbContext context
             matches = matches.Where(row => row.Intent.ScheduledFor < query.TriggeredTo);
         }
 
+        IQueryable<SignalTrackingAuditRow> audit = context.SignalTrackingAudit.AsNoTracking()
+            .Where(row => row.ChangedAt <= query.Cutoff);
+        if (query.Archived is not null)
+        {
+            matches = matches.Where(row => audit.Where(change => change.SignalId == row.Id)
+                .OrderByDescending(change => change.Id).Select(change => change.Archived).FirstOrDefault() == query.Archived);
+        }
+
+        if (query.TrackingChangedFrom is not null)
+        {
+            matches = matches.Where(row => audit.Where(change => change.SignalId == row.Id)
+                .OrderByDescending(change => change.Id).Select(change => (Instant?)change.ChangedAt).FirstOrDefault() >= query.TrackingChangedFrom);
+        }
+
         List<NotificationIntentMatchRow> rows = await matches
             .Include(row => row.Intent).ThenInclude(intent => intent.Instrument)
             .OrderByDescending(row => row.Intent.ScheduledFor).ThenBy(row => row.Id)
@@ -61,8 +75,18 @@ public sealed class SqlServerSignalEvidenceReader(TradingEngineDbContext context
                 && row.EffectiveFrom <= query.Cutoff && (row.EffectiveTo == null || row.EffectiveTo > query.Cutoff))
             .Select(row => row.Id).ToListAsync(cancellationToken);
 
+        Guid[] signalIds = rows.Select(row => row.Id).ToArray();
+        List<SignalTrackingAuditRow> tracking = await audit.Where(row => signalIds.Contains(row.SignalId)
+                && row.Id == audit.Where(other => other.SignalId == row.SignalId).Max(other => other.Id))
+            .ToListAsync(cancellationToken);
+        Dictionary<Guid, SignalTrackingAuditRow> trackingBySignal = tracking.ToDictionary(row => row.SignalId);
+
         return rows.Select(row => Map(row, byInstrument.GetValueOrDefault(row.Intent.WatchedInstrumentId),
-            activeRevisions.Contains(row.Intent.MonitoringRuleRevisionId))).ToArray();
+            activeRevisions.Contains(row.Intent.MonitoringRuleRevisionId)) with
+            {
+                Archived = trackingBySignal.GetValueOrDefault(row.Id)?.Archived ?? false,
+                TrackingChangedAt = trackingBySignal.GetValueOrDefault(row.Id)?.ChangedAt.ToDateTimeOffset()
+            }).ToArray();
     }
 
     private static SignalEvidence Map(NotificationIntentMatchRow row, PriceObservationRow? quote, bool revisionActive)

@@ -23,6 +23,7 @@ public sealed class ReadSignalsHandler(
             || (long)(query.Page - 1) * query.PageSize > int.MaxValue
             || PersistedInstant.IsPersistable(query.Cutoff) is false
             || query.Cutoff > clock.GetCurrentInstant()
+            || (query.TrackingChangedFrom is not null && PersistedInstant.IsPersistable(query.TrackingChangedFrom.Value) is false)
             || (query.TriggeredFrom is not null && PersistedInstant.IsPersistable(query.TriggeredFrom.Value) is false)
             || (query.TriggeredTo is not null && PersistedInstant.IsPersistable(query.TriggeredTo.Value) is false)
             || (query.TriggeredFrom is not null && query.TriggeredTo is not null && query.TriggeredFrom >= query.TriggeredTo))
@@ -61,6 +62,7 @@ public sealed class ReadSignalsHandler(
             comparison.LatestPrice, comparison.PercentageChange, comparison.RangePosition?.ToString(),
             invalidQuote ? "InvalidLatestQuote" : comparison.UnavailableReason?.ToString(),
             freshness.Classify(signal, cutoff), quote is null ? null : (cutoff - quote.ObservedAt).TotalSeconds,
-            signal.EmailStatus, signal.MonitoringPaused, signal.InstrumentRemoved, signal.SourceRevisionActive);
+            signal.EmailStatus, signal.MonitoringPaused, signal.InstrumentRemoved, signal.SourceRevisionActive,
+            signal.Archived, signal.TrackingChangedAt);
     }
 }

@@ -30,3 +30,25 @@ holiday. A missed open slot is `stale_last_known`; missing calendar coverage is
 unknown, never silently fresh. Invalid cadence is also unknown. This describes
 saved quote freshness, not an instruction to trade. See
 [the calculation contract](signal-price-comparison.md) for percentage semantics.
+
+## Archive and restore
+
+`GET /api/signals/{matchId}/tracking` returns the current state and ETag.
+`PUT` to the same path with `{ "archived": true }` or `{ "archived": false }`
+and `If-Match: <returned ETag>` changes inclusion. A missing token is 428;
+malformed tokens are 400 and stale tokens are 412. Repeating the current state
+with its current ETag is a no-op. A stale token is rejected even if its requested
+state happens to match. List reads accept `archived=true` or `archived=false`;
+omitting the filter includes both states.
+
+The additive `SignalTrackingAudit` table is an append-only state history: the
+latest entry supplies the current override and its identity supplies the opaque
+concurrency token. No entry means tracked/version zero. This single history
+avoids maintaining a second mutable state copy. Each transition records actor
+and time atomically under a lock on the existing match; neither the match nor
+its parent notification is changed. Historical queries apply only changes at
+or before their cutoff. Signal history survives instrument removal.
+
+Apply the `SignalTracking` migration through the controlled migration workflow
+before deploying this slice. Down migration removes tracking decisions/audit;
+do not run it as a routine rollback after recording real archive activity.

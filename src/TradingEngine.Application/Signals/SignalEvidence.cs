@@ -18,4 +18,6 @@ public sealed record SignalEvidence(
     bool InstrumentRemoved,
     bool SourceRevisionActive,
     int SamplingIntervalSeconds,
-    SignalQuote? Quote);
+    SignalQuote? Quote,
+    bool Archived = false,
+    DateTimeOffset? TrackingChangedAt = null);

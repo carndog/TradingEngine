@@ -1,6 +1,8 @@
 using NodaTime;
 using NodaTime.Text;
 using TradingEngine.Application.Signals;
+using TradingEngine.Application.Ports;
+using TradingEngine.Contracts.Signals;
 using TradingEngine.Domain.Results;
 
 namespace TradingEngine.Api.Signals;
@@ -12,11 +14,13 @@ internal static class SignalEndpoints
         RouteGroupBuilder group = routes.MapGroup("/api/signals");
         group.MapGet("", ListAsync);
         group.MapGet("/{id:guid}", GetAsync);
+        group.MapGet("/{id:guid}/tracking", GetTrackingAsync);
+        group.MapPut("/{id:guid}/tracking", SetTrackingAsync);
     }
 
     private static async Task<IResult> ListAsync(
         Guid? instrumentId, string? cutoff, string? triggeredFrom, string? triggeredTo,
-        int? page, int? pageSize, ReadSignalsHandler handler, IClock clock, CancellationToken cancellationToken)
+        int? page, int? pageSize, bool? archived, ReadSignalsHandler handler, IClock clock, CancellationToken cancellationToken)
     {
         if (TryTime(cutoff, out Instant? at) is false
             || TryTime(triggeredFrom, out Instant? from) is false
@@ -26,7 +30,7 @@ internal static class SignalEndpoints
         }
 
         Result<SignalPage> result = await handler.HandleAsync(
-            new SignalQuery(at ?? clock.GetCurrentInstant(), instrumentId, from, to, page ?? 1, pageSize ?? 25), cancellationToken);
+            new SignalQuery(at ?? clock.GetCurrentInstant(), instrumentId, from, to, page ?? 1, pageSize ?? 25, Archived: archived), cancellationToken);
         return result.IsSuccess ? TypedResults.Ok(result.Value) : ApiProblemDetails.Problem(result.Error);
     }
 
@@ -72,5 +76,38 @@ internal static class SignalEndpoints
 
         value = parsed.Value;
         return true;
+    }
+
+    private static async Task<IResult> GetTrackingAsync(Guid id, ISignalTrackingStore store,
+        HttpContext context, CancellationToken cancellationToken)
+    {
+        Result<SignalTrackingState> state = await store.GetAsync(id, cancellationToken);
+        if (state.IsFailure)
+        {
+            return ApiProblemDetails.Problem(state.Error);
+        }
+
+        ConcurrencyTokens.SetConcurrencyHeaders(context, state.Value.ConcurrencyToken);
+        return TypedResults.Ok(state.Value);
+    }
+
+    private static async Task<IResult> SetTrackingAsync(Guid id, SetSignalTrackingRequest request,
+        ChangeSignalTrackingHandler handler, HttpContext context, CancellationToken cancellationToken)
+    {
+        (byte[]? token, Error? error) = ConcurrencyTokens.ExpectedToken(context.Request, ChangeSignalTrackingHandler.InvalidToken);
+        if (error is not null)
+        {
+            return ApiProblemDetails.Problem(error);
+        }
+
+        Result<SignalTrackingState> result = await handler.HandleAsync(id, request.Archived, token,
+            RequestActor.Resolve(context), cancellationToken);
+        if (result.IsFailure)
+        {
+            return ApiProblemDetails.Problem(result.Error);
+        }
+
+        ConcurrencyTokens.SetConcurrencyHeaders(context, result.Value.ConcurrencyToken);
+        return TypedResults.Ok(result.Value);
     }
 }

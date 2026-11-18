@@ -9,4 +9,6 @@ public sealed record SignalQuery(
     Instant? TriggeredTo = null,
     int Page = 1,
     int PageSize = 25,
-    Guid? SignalId = null);
+    Guid? SignalId = null,
+    bool? Archived = null,
+    Instant? TrackingChangedFrom = null);

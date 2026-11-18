@@ -28,4 +28,6 @@ public sealed record SignalStatus(
     string EmailStatus,
     bool MonitoringPaused,
     bool InstrumentRemoved,
-    bool SourceRevisionActive);
+    bool SourceRevisionActive,
+    bool Archived,
+    DateTimeOffset? TrackingChangedAt);

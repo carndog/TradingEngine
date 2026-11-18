@@ -68,4 +68,6 @@ public sealed class TradingEngineDbContext : DbContext
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(TradingEngineDbContext).Assembly);
     }
+
+    internal DbSet<SignalTrackingAuditRow> SignalTrackingAudit => Set<SignalTrackingAuditRow>();
 }
