@@ -9,6 +9,7 @@ using TradingEngine.Api.PriceObservations;
 using TradingEngine.Api.Recommendations;
 using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.Session;
+using TradingEngine.Api.Signals;
 using TradingEngine.Api.WatchedInstruments;
 using TradingEngine.Infrastructure;
 using TradingEngine.Infrastructure.MarketData;
@@ -35,6 +36,7 @@ builder.Services
     .AddWatchedInstruments()
     .AddMonitoringRules()
     .AddPriceObservations()
+    .AddSignals()
     .AddTradingEngineInfrastructure(connectionString)
     .AddEtoroMarketData(builder.Configuration)
     .AddPriceCollection(builder.Configuration)
@@ -98,6 +100,7 @@ app.MapWatchedInstrumentEndpoints();
 app.MapMonitoringRuleEndpoints();
 app.MapPriceObservationEndpoints();
 app.MapSessionEndpoints();
+app.MapSignalEndpoints();
 
 HttpMethodMetadata getAndHeadOnly = new([HttpMethods.Get, HttpMethods.Head]);
 

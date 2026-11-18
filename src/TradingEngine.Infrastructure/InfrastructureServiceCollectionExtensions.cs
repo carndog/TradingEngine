@@ -26,6 +26,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IPriceObservationHistoryReader, SqlServerPriceObservationHistoryReader>();
         services.AddScoped<IRecommendationEvaluationStore, SqlServerRecommendationStore>();
         services.AddScoped<INotificationIntentStore, SqlServerNotificationIntentStore>();
+        services.AddScoped<ISignalEvidenceReader, SqlServerSignalEvidenceReader>();
 
         return services;
     }
