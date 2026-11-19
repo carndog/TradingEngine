@@ -59,17 +59,9 @@ public sealed class SqlServerSignalEvidenceReader(TradingEngineDbContext context
             return [];
         }
 
-        IQueryable<PriceObservationRow> eligible = context.PriceObservations.AsNoTracking()
-            .Where(row => row.ScheduledFor <= query.Cutoff && row.RetrievedAt <= query.Cutoff
-                && (row.ProviderObservedAt == null || row.ProviderObservedAt <= query.Cutoff));
-        List<PriceObservationRow> quotes = await context.WatchedInstruments.AsNoTracking()
-            .Where(instrument => instrumentIds.Contains(instrument.Id))
-            .SelectMany(instrument => eligible.Where(row => row.WatchedInstrumentId == instrument.Id)
-                .OrderByDescending(row => row.ProviderObservedAt ?? row.RetrievedAt)
-                .ThenByDescending(row => row.ScheduledFor).ThenByDescending(row => row.RetrievedAt)
-                .ThenBy(row => row.Id).Take(1))
+        List<InstrumentSignalQuote> quotes = await SignalQuoteQuery.Latest(context, instrumentIds, query.Cutoff)
             .ToListAsync(cancellationToken);
-        Dictionary<Guid, PriceObservationRow> byInstrument = quotes.ToDictionary(row => row.WatchedInstrumentId);
+        Dictionary<Guid, SignalQuote> byInstrument = quotes.ToDictionary(row => row.InstrumentId, row => row.Quote);
         List<Guid> activeRevisions = await context.MonitoringRuleRevisions.AsNoTracking()
             .Where(row => revisionIds.Contains(row.Id) && row.EffectiveFrom != null
                 && row.EffectiveFrom <= query.Cutoff && (row.EffectiveTo == null || row.EffectiveTo > query.Cutoff))
@@ -89,7 +81,7 @@ public sealed class SqlServerSignalEvidenceReader(TradingEngineDbContext context
             }).ToArray();
     }
 
-    private static SignalEvidence Map(NotificationIntentMatchRow row, PriceObservationRow? quote, bool revisionActive)
+    private static SignalEvidence Map(NotificationIntentMatchRow row, SignalQuote? quote, bool revisionActive)
     {
         NotificationIntentRow intent = row.Intent;
         PriceBasis basis = Enum.TryParse(intent.PriceBasis, out PriceBasis parsed) ? parsed : (PriceBasis)(-1);
@@ -98,7 +90,6 @@ public sealed class SqlServerSignalEvidenceReader(TradingEngineDbContext context
             new SignalPriceBaseline(intent.ScheduledFor, row.CurrentPrice, basis, intent.QuoteCurrency, row.Lower, row.Upper),
             intent.Status, intent.Instrument.MonitoringState != "Monitored", intent.Instrument.DeletedAt is not null,
             revisionActive, intent.Instrument.SamplingIntervalSeconds,
-            quote is null ? null : new SignalQuote(quote.Id, quote.ScheduledFor, quote.RetrievedAt,
-                quote.ProviderObservedAt, quote.Bid, quote.Ask, quote.QuoteCurrency));
+            quote);
     }
 }

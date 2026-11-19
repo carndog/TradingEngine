@@ -1,0 +1,984 @@
+using System;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using TradingEngine.Infrastructure.Persistence;
+
+#nullable disable
+
+namespace TradingEngine.Infrastructure.Persistence.Migrations;
+
+[DbContext(typeof(TradingEngineDbContext))]
+[Migration("20261119232945_SignalQuoteLookup")]
+partial class SignalQuoteLookup
+{
+    protected override void BuildTargetModel(ModelBuilder modelBuilder)
+    {
+#pragma warning disable 612, 618
+        modelBuilder
+            .HasAnnotation("ProductVersion", "10.0.15")
+            .HasAnnotation("Relational:MaxIdentifierLength", 128);
+
+        SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.ChartAnalysisDefinitionRow", b =>
+            {
+                b.Property<Guid>("WatchedInstrumentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<string>("DefinitionXml")
+                    .IsRequired()
+                    .HasColumnType("xml");
+
+                b.HasKey("WatchedInstrumentId");
+
+                b.ToTable("ChartAnalysisDefinitions", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.EvaluationCheckpointRow", b =>
+            {
+                b.Property<Guid>("WatchedInstrumentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("EstablishedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime>("LastProcessedScheduledFor")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime>("UpdatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.HasKey("WatchedInstrumentId");
+
+                b.ToTable("RecommendationCheckpoints", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.ListingConfigurationRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("ConfirmedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("ConfirmedBy")
+                    .IsRequired()
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<string>("DisplayName")
+                    .HasMaxLength(256)
+                    .HasColumnType("nvarchar(256)");
+
+                b.Property<string>("Exchange")
+                    .IsRequired()
+                    .HasMaxLength(20)
+                    .HasColumnType("nvarchar(20)");
+
+                b.Property<DateTime>("LastChangedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("NativeQuoteCurrency")
+                    .IsRequired()
+                    .HasMaxLength(10)
+                    .HasColumnType("nvarchar(10)");
+
+                b.Property<string>("Provider")
+                    .IsRequired()
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<string>("ProviderExchangeName")
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<long>("ProviderInstrumentId")
+                    .HasColumnType("bigint");
+
+                b.Property<string>("ProviderSymbol")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<byte[]>("RowVersion")
+                    .IsConcurrencyToken()
+                    .IsRequired()
+                    .ValueGeneratedOnAddOrUpdate()
+                    .HasColumnType("rowversion");
+
+                b.Property<string>("Symbol")
+                    .IsRequired()
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<string>("UnitSource")
+                    .IsRequired()
+                    .HasMaxLength(20)
+                    .HasColumnType("nvarchar(20)");
+
+                b.HasKey("Id");
+
+                b.HasIndex("Exchange", "Symbol")
+                    .IsUnique()
+                    .HasDatabaseName("UX_ListingConfigurations_Exchange_Symbol");
+
+                b.ToTable("ListingConfigurations", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_ListingConfigurations_ChangeTimestamps", "[LastChangedAt] >= [ConfirmedAt]");
+
+                        t.HasCheckConstraint("CK_ListingConfigurations_UnitSource", "[UnitSource] IN ('Administrator', 'ProviderMetadata')");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRevisionRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<string>("ChangeReason")
+                    .HasMaxLength(512)
+                    .HasColumnType("nvarchar(512)");
+
+                b.Property<DateTime>("CreatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("CreatedBy")
+                    .IsRequired()
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<string>("DefinitionXml")
+                    .IsRequired()
+                    .HasColumnType("xml");
+
+                b.Property<DateTime?>("EffectiveFrom")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime?>("EffectiveTo")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<Guid>("MonitoringRuleId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime?>("ProposedFrom")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime?>("ProposedTo")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<int?>("RevisionNumber")
+                    .HasColumnType("int");
+
+                b.HasKey("Id");
+
+                b.HasIndex("MonitoringRuleId", "EffectiveFrom")
+                    .IsUnique()
+                    .HasDatabaseName("UX_MonitoringRuleRevisions_EffectiveFrom")
+                    .HasFilter("[EffectiveFrom] IS NOT NULL");
+
+                b.HasIndex("MonitoringRuleId", "RevisionNumber")
+                    .IsUnique()
+                    .HasDatabaseName("UX_MonitoringRuleRevisions_RevisionNumber")
+                    .HasFilter("[RevisionNumber] IS NOT NULL");
+
+                b.ToTable("MonitoringRuleRevisions", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_MonitoringRuleRevisions_Numbering", "([EffectiveFrom] IS NULL AND [RevisionNumber] IS NULL) OR ([EffectiveFrom] IS NOT NULL AND [RevisionNumber] IS NOT NULL AND [RevisionNumber] > 0)");
+
+                        t.HasCheckConstraint("CK_MonitoringRuleRevisions_Period", "([EffectiveFrom] IS NULL AND [EffectiveTo] IS NULL) OR ([EffectiveFrom] IS NOT NULL AND ([EffectiveTo] IS NULL OR [EffectiveTo] > [EffectiveFrom]))");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("CreatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<byte[]>("RowVersion")
+                    .IsConcurrencyToken()
+                    .IsRequired()
+                    .ValueGeneratedOnAddOrUpdate()
+                    .HasColumnType("rowversion");
+
+                b.Property<Guid>("WatchedInstrumentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("Id");
+
+                b.HasIndex("WatchedInstrumentId")
+                    .IsUnique()
+                    .HasDatabaseName("UX_MonitoringRules_WatchedInstrumentId");
+
+                b.ToTable("MonitoringRules", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationAttemptRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("AttemptedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("ErrorKind")
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<Guid>("NotificationIntentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<string>("Outcome")
+                    .IsRequired()
+                    .HasMaxLength(24)
+                    .HasColumnType("nvarchar(24)");
+
+                b.Property<string>("ProviderOperationId")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<string>("ProviderStatus")
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<DateTime>("RecordedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.HasKey("Id");
+
+                b.HasIndex("NotificationIntentId")
+                    .HasDatabaseName("IX_NotificationAttempts_NotificationIntentId");
+
+                b.ToTable("NotificationAttempts", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_NotificationAttempts_Outcome", "[Outcome] IN ('Submitted', 'Failed', 'Ambiguous', 'ResolvedSucceeded', 'ResolvedRejected', 'Unresolved', 'Suppressed')");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<string>("ActionId")
+                    .IsRequired()
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<string>("Condition")
+                    .IsRequired()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<decimal>("CurrentPrice")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<decimal>("Level")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<decimal>("Lower")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<Guid>("NotificationIntentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<decimal>("PreviousPrice")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<decimal>("Upper")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<string>("ZoneId")
+                    .IsRequired()
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.HasKey("Id");
+
+                b.HasIndex("NotificationIntentId")
+                    .HasDatabaseName("IX_NotificationIntentMatches_NotificationIntentId");
+
+                b.ToTable("NotificationIntentMatches", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_NotificationIntentMatches_Condition", "[Condition] IN ('BuyZone', 'SupportLoss', 'Breakout')");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<Guid?>("ClaimToken")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime?>("ClaimedUntil")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<Guid?>("CollectionInvocationId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("CreatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<decimal?>("CurrentAsk")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<decimal?>("CurrentBid")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<Guid>("MonitoringRuleRevisionId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime?>("PreviousScheduledFor")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("PriceBasis")
+                    .IsRequired()
+                    .HasMaxLength(8)
+                    .HasColumnType("nvarchar(8)");
+
+                b.Property<string>("ProviderOperationId")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<string>("QuoteCurrency")
+                    .IsRequired()
+                    .HasMaxLength(10)
+                    .HasColumnType("nvarchar(10)");
+
+                b.Property<string>("Reason")
+                    .IsRequired()
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<DateTime>("ScheduledFor")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("Status")
+                    .IsRequired()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<DateTime>("UpdatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<Guid>("WatchedInstrumentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("Id");
+
+                b.HasIndex("ScheduledFor", "CreatedAt")
+                    .HasDatabaseName("IX_NotificationIntents_ScheduledFor_CreatedAt");
+
+                b.HasIndex("Status", "ScheduledFor")
+                    .HasDatabaseName("IX_NotificationIntents_Status_ScheduledFor");
+
+                b.HasIndex("WatchedInstrumentId", "ScheduledFor")
+                    .IsUnique()
+                    .HasDatabaseName("UX_NotificationIntents_WatchedInstrumentId_ScheduledFor");
+
+                b.ToTable("NotificationIntents", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_NotificationIntents_PriceBasis", "[PriceBasis] IN ('Bid', 'Ask')");
+
+                        t.HasCheckConstraint("CK_NotificationIntents_Reason", "[Reason] IN ('ConditionsTriggered')");
+
+                        t.HasCheckConstraint("CK_NotificationIntents_Status", "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed')");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.PriceCollectionAttemptRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("AttemptedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("ErrorCode")
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<Guid>("InvocationId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<string>("Outcome")
+                    .IsRequired()
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<string>("Provider")
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<string>("ProviderRequestId")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<DateTime>("RecordedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime>("ScheduledFor")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<Guid>("WatchedInstrumentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("Id");
+
+                b.HasIndex("InvocationId")
+                    .HasDatabaseName("IX_PriceCollectionAttempts_InvocationId");
+
+                b.HasIndex("WatchedInstrumentId", "ScheduledFor")
+                    .HasDatabaseName("IX_PriceCollectionAttempts_WatchedInstrumentId_ScheduledFor");
+
+                b.ToTable("PriceCollectionAttempts", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_PriceCollectionAttempts_Outcome", "[Outcome] IN ('Observed', 'SkippedMarketClosed', 'SkippedDuplicate', 'Throttled', 'Failed', 'PriceUnavailable')");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.PriceObservationRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<decimal?>("Ask")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<decimal?>("Bid")
+                    .HasPrecision(38, 18)
+                    .HasColumnType("decimal(38,18)");
+
+                b.Property<DateTime>("EffectiveObservedAt")
+                    .ValueGeneratedOnAddOrUpdate()
+                    .HasColumnType("datetime2(7)")
+                    .HasComputedColumnSql("COALESCE([ProviderObservedAt], [RetrievedAt])", true);
+
+                b.Property<Guid>("InvocationId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<string>("Provider")
+                    .IsRequired()
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<long>("ProviderInstrumentId")
+                    .HasColumnType("bigint");
+
+                b.Property<DateTime?>("ProviderObservedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("ProviderRequestId")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<string>("QuoteCurrency")
+                    .IsRequired()
+                    .HasMaxLength(10)
+                    .HasColumnType("nvarchar(10)");
+
+                b.Property<DateTime>("RetrievedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime>("ScheduledFor")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("Timeliness")
+                    .IsRequired()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<Guid>("WatchedInstrumentId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("Id");
+
+                b.HasIndex("WatchedInstrumentId", "ScheduledFor")
+                    .IsUnique()
+                    .HasDatabaseName("UX_PriceObservations_WatchedInstrumentId_ScheduledFor");
+
+                b.HasIndex("WatchedInstrumentId", "EffectiveObservedAt", "ScheduledFor", "RetrievedAt", "Id")
+                    .IsDescending(false, true, true, true, false)
+                    .HasDatabaseName("IX_PriceObservations_Instrument_LatestObserved");
+
+                SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("WatchedInstrumentId", "EffectiveObservedAt", "ScheduledFor", "RetrievedAt", "Id"), new[] { "ProviderObservedAt", "Bid", "Ask", "QuoteCurrency" });
+
+                b.ToTable("PriceObservations", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_PriceObservations_Timeliness", "[Timeliness] IN ('Unknown', 'Realtime', 'Delayed')");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.SignalTrackingAuditRow", b =>
+            {
+                b.Property<long>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("bigint");
+
+                SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                b.Property<bool>("Archived")
+                    .HasColumnType("bit");
+
+                b.Property<DateTime>("ChangedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("ChangedBy")
+                    .IsRequired()
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<Guid>("SignalId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("Id");
+
+                b.HasIndex("SignalId", "ChangedAt", "Id");
+
+                b.ToTable("SignalTrackingAudit", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime>("CreatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime?>("DeletedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("Exchange")
+                    .IsRequired()
+                    .HasMaxLength(20)
+                    .HasColumnType("nvarchar(20)");
+
+                b.Property<DateTime>("LastChangedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("MonitoringState")
+                    .IsRequired()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<int>("PriceDisplayDecimalPlaces")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("int")
+                    .HasDefaultValue(2);
+
+                b.Property<string>("PriceDisplayUnit")
+                    .IsRequired()
+                    .ValueGeneratedOnAdd()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)")
+                    .HasDefaultValue("Major");
+
+                b.Property<string>("QuoteCurrency")
+                    .IsRequired()
+                    .HasMaxLength(10)
+                    .HasColumnType("nvarchar(10)");
+
+                b.Property<byte[]>("RowVersion")
+                    .IsConcurrencyToken()
+                    .IsRequired()
+                    .ValueGeneratedOnAddOrUpdate()
+                    .HasColumnType("rowversion");
+
+                b.Property<int>("SamplingIntervalSeconds")
+                    .HasColumnType("int");
+
+                b.Property<string>("Symbol")
+                    .IsRequired()
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.HasKey("Id");
+
+                b.HasIndex("Exchange", "Symbol", "QuoteCurrency")
+                    .IsUnique()
+                    .HasDatabaseName("UX_WatchedInstruments_Exchange_Symbol_QuoteCurrency")
+                    .HasFilter("[DeletedAt] IS NULL");
+
+                b.ToTable("WatchedInstruments", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_WatchedInstruments_ChangeTimestamps", "[LastChangedAt] >= [CreatedAt]");
+
+                        t.HasCheckConstraint("CK_WatchedInstruments_MonitoringState", "[MonitoringState] IN ('Configured', 'Monitored')");
+
+                        t.HasCheckConstraint("CK_WatchedInstruments_PriceDisplayDecimalPlaces", "[PriceDisplayDecimalPlaces] >= 0 AND [PriceDisplayDecimalPlaces] <= 8");
+
+                        t.HasCheckConstraint("CK_WatchedInstruments_PriceDisplayUnit", "[PriceDisplayUnit] IN ('Major', 'Native')");
+
+                        t.HasCheckConstraint("CK_WatchedInstruments_SamplingIntervalSeconds", "[SamplingIntervalSeconds] >= 1 AND [SamplingIntervalSeconds] <= 3600");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportAttemptRow", b =>
+            {
+                b.Property<long>("Id")
+                    .ValueGeneratedOnAdd()
+                    .HasColumnType("bigint");
+
+                SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                b.Property<string>("ErrorKind")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<DateTime>("OccurredAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("Outcome")
+                    .IsRequired()
+                    .HasMaxLength(32)
+                    .HasColumnType("nvarchar(32)");
+
+                b.Property<string>("ProviderOperationId")
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<string>("ProviderStatus")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<Guid>("ReportId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("Id");
+
+                b.HasIndex("ReportId", "Id");
+
+                b.ToTable("WeeklyReportAttempts", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportItemRow", b =>
+            {
+                b.Property<Guid>("ReportId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<int>("Position")
+                    .HasColumnType("int");
+
+                b.Property<string>("EvidenceJson")
+                    .IsRequired()
+                    .HasColumnType("nvarchar(max)");
+
+                b.Property<Guid>("SignalId")
+                    .HasColumnType("uniqueidentifier");
+
+                b.HasKey("ReportId", "Position");
+
+                b.HasIndex("SignalId");
+
+                b.HasIndex("ReportId", "SignalId")
+                    .IsUnique();
+
+                b.ToTable("WeeklyReportItems", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", b =>
+            {
+                b.Property<Guid>("Id")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<int>("ArchivedCount")
+                    .HasColumnType("int");
+
+                b.Property<DateTime>("CreatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime>("Cutoff")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<Guid?>("DeliveryClaim")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime?>("DeliveryClaimedUntil")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("DeliveryStatus")
+                    .IsRequired()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<DateTime?>("FirstSkippedCutoff")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<Guid?>("GenerationClaim")
+                    .HasColumnType("uniqueidentifier");
+
+                b.Property<DateTime?>("GenerationClaimedUntil")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("GenerationError")
+                    .HasMaxLength(64)
+                    .HasColumnType("nvarchar(64)");
+
+                b.Property<string>("GenerationStatus")
+                    .IsRequired()
+                    .HasMaxLength(16)
+                    .HasColumnType("nvarchar(16)");
+
+                b.Property<string>("HtmlBody")
+                    .HasColumnType("nvarchar(max)");
+
+                b.Property<DateTime>("NextCutoff")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<DateTime>("PeriodStart")
+                    .HasColumnType("datetime2(7)");
+
+                b.Property<string>("PlainTextBody")
+                    .IsRequired()
+                    .HasColumnType("nvarchar(max)");
+
+                b.Property<string>("ProviderOperationId")
+                    .HasMaxLength(128)
+                    .HasColumnType("nvarchar(128)");
+
+                b.Property<string>("RecipientsJson")
+                    .IsRequired()
+                    .HasColumnType("nvarchar(max)");
+
+                b.Property<int>("SendAttempts")
+                    .HasColumnType("int");
+
+                b.Property<int>("SkippedPeriods")
+                    .HasColumnType("int");
+
+                b.Property<string>("Subject")
+                    .IsRequired()
+                    .HasMaxLength(256)
+                    .HasColumnType("nvarchar(256)");
+
+                b.Property<string>("SubscriptionKey")
+                    .IsRequired()
+                    .HasMaxLength(160)
+                    .HasColumnType("nvarchar(160)");
+
+                b.Property<int>("TotalCount")
+                    .HasColumnType("int");
+
+                b.Property<DateTime>("UpdatedAt")
+                    .HasColumnType("datetime2(7)");
+
+                b.HasKey("Id");
+
+                b.HasIndex("SubscriptionKey", "Cutoff")
+                    .IsUnique();
+
+                b.HasIndex("SubscriptionKey", "GenerationStatus", "DeliveryStatus", "UpdatedAt");
+
+                b.ToTable("WeeklyReports", null, t =>
+                    {
+                        t.HasCheckConstraint("CK_WeeklyReports_DeliveryStatus", "[DeliveryStatus] IN ('Skipped', 'Pending', 'Submitted', 'Ambiguous', 'Sent', 'Failed')");
+
+                        t.HasCheckConstraint("CK_WeeklyReports_GenerationStatus", "[GenerationStatus] IN ('Generating', 'Ready', 'Empty')");
+
+                        t.HasCheckConstraint("CK_WeeklyReports_Period", "[PeriodStart] < [Cutoff] AND [Cutoff] < [NextCutoff]");
+                    });
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportScheduleRow", b =>
+            {
+                b.Property<string>("SubscriptionKey")
+                    .HasMaxLength(160)
+                    .HasColumnType("nvarchar(160)");
+
+                b.Property<bool>("Enabled")
+                    .HasColumnType("bit");
+
+                b.Property<string>("Fingerprint")
+                    .IsRequired()
+                    .HasMaxLength(160)
+                    .HasColumnType("nvarchar(160)");
+
+                b.Property<DateTime>("NextCutoff")
+                    .HasColumnType("datetime2(7)");
+
+                b.HasKey("SubscriptionKey");
+
+                b.ToTable("WeeklyReportSchedules", (string)null);
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.ChartAnalysisDefinitionRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                    .WithOne("ChartAnalysisDefinition")
+                    .HasForeignKey("TradingEngine.Infrastructure.Persistence.ChartAnalysisDefinitionRow", "WatchedInstrumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.Navigation("Instrument");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.EvaluationCheckpointRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                    .WithMany()
+                    .HasForeignKey("WatchedInstrumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Instrument");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRevisionRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", "Rule")
+                    .WithMany("Revisions")
+                    .HasForeignKey("MonitoringRuleId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Rule");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                    .WithOne()
+                    .HasForeignKey("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", "WatchedInstrumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Instrument");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationAttemptRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", "Intent")
+                    .WithMany()
+                    .HasForeignKey("NotificationIntentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Intent");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", "Intent")
+                    .WithMany("Matches")
+                    .HasForeignKey("NotificationIntentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Intent");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                    .WithMany()
+                    .HasForeignKey("WatchedInstrumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Instrument");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.PriceCollectionAttemptRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                    .WithMany()
+                    .HasForeignKey("WatchedInstrumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Instrument");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.PriceObservationRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", "Instrument")
+                    .WithMany()
+                    .HasForeignKey("WatchedInstrumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.Navigation("Instrument");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.SignalTrackingAuditRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", null)
+                    .WithMany()
+                    .HasForeignKey("SignalId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportAttemptRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", null)
+                    .WithMany()
+                    .HasForeignKey("ReportId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportItemRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", null)
+                    .WithMany()
+                    .HasForeignKey("ReportId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.HasOne("TradingEngine.Infrastructure.Persistence.NotificationIntentMatchRow", null)
+                    .WithMany()
+                    .HasForeignKey("SignalId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WeeklyReportRow", b =>
+            {
+                b.HasOne("TradingEngine.Infrastructure.Persistence.WeeklyReportScheduleRow", null)
+                    .WithMany()
+                    .HasForeignKey("SubscriptionKey")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.MonitoringRuleRow", b =>
+            {
+                b.Navigation("Revisions");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.NotificationIntentRow", b =>
+            {
+                b.Navigation("Matches");
+            });
+
+        modelBuilder.Entity("TradingEngine.Infrastructure.Persistence.WatchedInstrumentRow", b =>
+            {
+                b.Navigation("ChartAnalysisDefinition");
+            });
+#pragma warning restore 612, 618
+    }
+}

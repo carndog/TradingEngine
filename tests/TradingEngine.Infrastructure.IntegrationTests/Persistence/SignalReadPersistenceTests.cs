@@ -112,4 +112,100 @@ public sealed class SignalReadPersistenceTests
         Assert.That(found.Quote!.Id, Is.EqualTo(latest.Id));
         Assert.That(found.Quote.Bid, Is.Null);
     }
+
+    [Test]
+    public async Task ReadAsync_ProviderTimeDiffersFromSlot_SelectsLatestObservedQuote()
+    {
+        NotificationIntentMatchRow match = await _database.SeedAsync();
+        Instant cutoff = SignalTestDatabase.TriggeredAt.Plus(Duration.FromHours(2));
+        Guid instrumentId = match.Intent.WatchedInstrumentId;
+        PriceObservationRow expected = await _database.QuoteAsync(instrumentId, cutoff.Minus(Duration.FromMinutes(45)),
+            retrievedAt: cutoff.Minus(Duration.FromMinutes(5)), providerAt: cutoff.Minus(Duration.FromMinutes(10)));
+        await _database.QuoteAsync(instrumentId, cutoff.Minus(Duration.FromMinutes(15)),
+            retrievedAt: cutoff.Minus(Duration.FromMinutes(15)), providerAt: cutoff.Minus(Duration.FromMinutes(20)));
+        await using TradingEngineDbContext context = _database.CreateContext();
+
+        SignalEvidence found = (await new SqlServerSignalEvidenceReader(context)
+            .ReadAsync(new SignalQuery(cutoff, SignalId: match.Id), CancellationToken.None)).Single();
+
+        Assert.That(found.Quote!.Id, Is.EqualTo(expected.Id));
+        Assert.That(found.Quote.ObservedAt, Is.EqualTo(expected.ProviderObservedAt));
+    }
+
+    [Test]
+    public async Task ReadAsync_NullProviderTime_OrdersByRetrievalFallback()
+    {
+        NotificationIntentMatchRow match = await _database.SeedAsync();
+        Instant cutoff = SignalTestDatabase.TriggeredAt.Plus(Duration.FromHours(2));
+        Guid instrumentId = match.Intent.WatchedInstrumentId;
+        PriceObservationRow expected = await _database.QuoteAsync(instrumentId, cutoff.Minus(Duration.FromMinutes(45)),
+            retrievedAt: cutoff.Minus(Duration.FromMinutes(5)));
+        await _database.QuoteAsync(instrumentId, cutoff.Minus(Duration.FromMinutes(15)),
+            retrievedAt: cutoff.Minus(Duration.FromMinutes(1)), providerAt: cutoff.Minus(Duration.FromMinutes(10)));
+        await using TradingEngineDbContext context = _database.CreateContext();
+
+        SignalEvidence found = (await new SqlServerSignalEvidenceReader(context)
+            .ReadAsync(new SignalQuery(cutoff, SignalId: match.Id), CancellationToken.None)).Single();
+
+        Assert.That(found.Quote!.Id, Is.EqualTo(expected.Id));
+        Assert.That(found.Quote.ObservedAt, Is.EqualTo(expected.RetrievedAt));
+    }
+
+    [Test]
+    public async Task ReadAsync_EqualObservedTimes_SelectsLaterScheduledSlot()
+    {
+        NotificationIntentMatchRow match = await _database.SeedAsync();
+        Instant cutoff = SignalTestDatabase.TriggeredAt.Plus(Duration.FromHours(2));
+        Guid instrumentId = match.Intent.WatchedInstrumentId;
+        Instant observedAt = cutoff.Minus(Duration.FromMinutes(30));
+        await _database.QuoteAsync(instrumentId, cutoff.Minus(Duration.FromMinutes(45)),
+            retrievedAt: cutoff.Minus(Duration.FromMinutes(5)), providerAt: observedAt);
+        PriceObservationRow expected = await _database.QuoteAsync(instrumentId, cutoff.Minus(Duration.FromMinutes(15)),
+            retrievedAt: cutoff.Minus(Duration.FromMinutes(10)), providerAt: observedAt);
+        await using TradingEngineDbContext context = _database.CreateContext();
+
+        SignalEvidence found = (await new SqlServerSignalEvidenceReader(context)
+            .ReadAsync(new SignalQuery(cutoff, SignalId: match.Id), CancellationToken.None)).Single();
+
+        Assert.That(found.Quote!.Id, Is.EqualTo(expected.Id));
+    }
+
+    [Test]
+    public async Task ReadAsync_NoEligibleQuote_PreservesSignalWithoutBorrowingAnotherInstrumentPrice()
+    {
+        NotificationIntentMatchRow match = await _database.SeedAsync();
+        NotificationIntentMatchRow other = await _database.SeedAsync();
+        Instant cutoff = SignalTestDatabase.TriggeredAt.Plus(Duration.FromHours(2));
+        await _database.QuoteAsync(match.Intent.WatchedInstrumentId, cutoff.PlusTicks(1));
+        await _database.QuoteAsync(other.Intent.WatchedInstrumentId, cutoff.Minus(Duration.FromMinutes(15)));
+        await using TradingEngineDbContext context = _database.CreateContext();
+
+        SignalEvidence found = (await new SqlServerSignalEvidenceReader(context)
+            .ReadAsync(new SignalQuery(cutoff, SignalId: match.Id), CancellationToken.None)).Single();
+
+        Assert.That(found.SignalId, Is.EqualTo(match.Id));
+        Assert.That(found.Quote, Is.Null);
+    }
+
+    [Test]
+    public async Task Latest_MultipleRequestedInstruments_ReturnsOnlyTheirLatestEligibleQuotes()
+    {
+        NotificationIntentMatchRow first = await _database.SeedAsync();
+        NotificationIntentMatchRow second = await _database.SeedAsync();
+        NotificationIntentMatchRow unrelated = await _database.SeedAsync();
+        Instant cutoff = SignalTestDatabase.TriggeredAt.Plus(Duration.FromHours(2));
+        await _database.QuoteAsync(first.Intent.WatchedInstrumentId, cutoff.Minus(Duration.FromMinutes(30)));
+        PriceObservationRow firstLatest = await _database.QuoteAsync(first.Intent.WatchedInstrumentId, cutoff);
+        PriceObservationRow secondLatest = await _database.QuoteAsync(second.Intent.WatchedInstrumentId, cutoff.Minus(Duration.FromMinutes(15)));
+        await _database.QuoteAsync(unrelated.Intent.WatchedInstrumentId, cutoff);
+        await using TradingEngineDbContext context = _database.CreateContext();
+
+        List<InstrumentSignalQuote> quotes = await SignalQuoteQuery.Latest(context,
+            [first.Intent.WatchedInstrumentId, second.Intent.WatchedInstrumentId], cutoff).ToListAsync();
+
+        Assert.That(quotes.Select(item => item.Quote.Id), Is.EquivalentTo(new[] { firstLatest.Id, secondLatest.Id }));
+        Assert.That(quotes.Single(item => item.InstrumentId == first.Intent.WatchedInstrumentId).Quote.Id, Is.EqualTo(firstLatest.Id));
+        Assert.That(quotes.Single(item => item.InstrumentId == second.Intent.WatchedInstrumentId).Quote.Id, Is.EqualTo(secondLatest.Id));
+        Assert.That(context.ChangeTracker.Entries(), Is.Empty);
+    }
 }

@@ -469,6 +469,11 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
 
+                    b.Property<DateTime>("EffectiveObservedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("datetime2(7)")
+                        .HasComputedColumnSql("COALESCE([ProviderObservedAt], [RetrievedAt])", true);
+
                     b.Property<Guid>("InvocationId")
                         .HasColumnType("uniqueidentifier");
 
@@ -511,6 +516,12 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                     b.HasIndex("WatchedInstrumentId", "ScheduledFor")
                         .IsUnique()
                         .HasDatabaseName("UX_PriceObservations_WatchedInstrumentId_ScheduledFor");
+
+                    b.HasIndex("WatchedInstrumentId", "EffectiveObservedAt", "ScheduledFor", "RetrievedAt", "Id")
+                        .IsDescending(false, true, true, true, false)
+                        .HasDatabaseName("IX_PriceObservations_Instrument_LatestObserved");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("WatchedInstrumentId", "EffectiveObservedAt", "ScheduledFor", "RetrievedAt", "Id"), new[] { "ProviderObservedAt", "Bid", "Ask", "QuoteCurrency" });
 
                     b.ToTable("PriceObservations", null, t =>
                         {
