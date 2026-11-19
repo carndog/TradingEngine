@@ -1,5 +1,8 @@
 # Weekly signal reports
 
+This runbook describes the complete reporting feature. The host/API and deployment
+settings require their corresponding implementation to be merged before use.
+
 ## Durable report evidence
 
 Weekly reporting uses its own schedule, report, item and attempt tables. It never
@@ -120,15 +123,15 @@ are required for weekly sending even if immediate alerts are disabled. Weekly
 recipients are independent of `ACS_EMAIL_RECIPIENT_ADDRESSES`. The deployment
 preflight rejects malformed/unbounded settings without printing values; runtime
 validation remains authoritative. Azure what-if summaries redact all weekly-setting
-paths and never print their values. Stacked PRs run Bicep build/lint and synthetic
-configuration checks; the authenticated Azure what-if runs after retargeting onto
-`main`, before merging the deployment slice.
+paths and never print their values. Infrastructure PRs targeting `main` run Bicep
+build/lint, synthetic configuration checks and the authenticated Azure what-if
+before merging the deployment changes.
 
 ## Controlled rollout and recovery
 
-1. Review and merge the numbered PRs in order, restacking each successor onto the
-   resulting `main` and verifying its incremental diff/checks. Keep weekly reporting
-   disabled. Before merging the first audit-dependent query or report runtime, use
+1. Review each coherent PR against `main` and verify its diff and checks. Start
+   dependent work after its prerequisite is merged. Keep weekly reporting disabled.
+   Before merging the first audit-dependent query or report runtime, use
    the existing `DEPLOYMENT_HOLD` and controlled migration workflow as needed so
    application requests cannot precede `SignalTracking` / `WeeklyReportSnapshots`.
 2. Apply the additive migrations from the reviewed commit via the existing database

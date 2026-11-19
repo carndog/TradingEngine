@@ -35,12 +35,12 @@ Read and comply with [CODING_STANDARDS.md](../CODING_STANDARDS.md) for every C# 
 
 Before proposing or reviewing a completed change, run `dotnet build TradingEngine.sln` and `dotnet test TradingEngine.sln`, then inspect the complete diff for coding-standard, architecture, safety and public-scope violations.
 
-## Pull request size and stacked delivery
+## Pull request size and delivery
 
-Read and follow [AGENTS.md](../AGENTS.md#pull-request-size-and-stacked-story-delivery) before planning, implementing or reviewing a story.
+Read and follow [AGENTS.md](../AGENTS.md#pull-request-size-and-delivery) before planning, implementing or reviewing a story.
 
 - Prefer about 10 changed files per PR; normally aim for no more than 20. This is a review guideline, not a hard cap. Explain justified repetitive, mechanical, generated or indivisible changes.
-- Plan coherent, tested slices and use numbered `_1`, `_2`, etc. branch/PR names for dependent story work. The first targets `main`; each later PR targets its predecessor.
-- Report the incremental file count against the actual base, link the story and stack, and avoid closing the story from an intermediate PR.
-- Put necessary corrections into the earliest suitable open PR, propagate them forward, and recheck affected diffs/tests/reviews. After a predecessor merges, update and retarget the next PR to `main`; handle changed ancestry after squash/rebase merges explicitly.
+- Plan coherent, tested slices. Create branches from current `main` and target `main`; do not stack PRs. Wait for an unmerged prerequisite before creating its dependent slice. Numbered branch/PR suffixes are not required.
+- Report the changed-file count against `main`, link the story, and avoid closing the story from an intermediate PR.
+- Put necessary corrections into the appropriate open PR and recheck affected diffs/tests/reviews. Use forward fixes for merged work.
 - Preserve the existing approval, public-scope and history-safety requirements. Do not game file counts or introduce a hard size gate.
