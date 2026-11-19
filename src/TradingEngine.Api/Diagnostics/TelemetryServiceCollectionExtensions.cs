@@ -9,6 +9,7 @@ using OpenTelemetry.Trace;
 using TradingEngine.Api.PriceCollection;
 using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.Recommendations;
+using TradingEngine.Api.WeeklyReports;
 using TradingEngine.Contracts.Diagnostics;
 
 namespace TradingEngine.Api.Diagnostics;
@@ -150,6 +151,7 @@ internal static class TelemetryServiceCollectionExtensions
             meterProviderBuilder
                 .AddMeter(RateLimitingTelemetry.MeterName)
                 .AddMeter(RecommendationTelemetry.MeterName)
+                .AddMeter(WeeklyReportTelemetry.MeterName)
                 .AddMeter(PriceCollectionTelemetry.MeterName));
 
         services.Configure<AspNetCoreTraceInstrumentationOptions>(options =>

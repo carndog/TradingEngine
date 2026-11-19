@@ -11,6 +11,7 @@ using TradingEngine.Api.RateLimiting;
 using TradingEngine.Api.Session;
 using TradingEngine.Api.Signals;
 using TradingEngine.Api.WatchedInstruments;
+using TradingEngine.Api.WeeklyReports;
 using TradingEngine.Infrastructure;
 using TradingEngine.Infrastructure.MarketData;
 
@@ -41,7 +42,8 @@ builder.Services
     .AddEtoroMarketData(builder.Configuration)
     .AddPriceCollection(builder.Configuration)
     .AddRecommendations(builder.Configuration)
-    .AddNotifications(builder.Configuration);
+    .AddNotifications(builder.Configuration)
+    .AddWeeklyReports(builder.Configuration);
 
 WebApplication app = builder.Build();
 
@@ -101,6 +103,7 @@ app.MapMonitoringRuleEndpoints();
 app.MapPriceObservationEndpoints();
 app.MapSessionEndpoints();
 app.MapSignalEndpoints();
+app.MapWeeklyReportEndpoints();
 
 HttpMethodMetadata getAndHeadOnly = new([HttpMethods.Get, HttpMethods.Head]);
 
