@@ -5,11 +5,12 @@ on:
     branches: [main]
     paths:
       - 'infra/**'
+      - '.github/scripts/*'
       - '.github/workflows/deploy-infrastructure-development.yml'
   pull_request:
-    branches: [main]
     paths:
       - 'infra/**'
+      - '.github/scripts/*'
       - '.github/workflows/deploy-infrastructure-development.yml'
   workflow_dispatch:
 
@@ -41,6 +42,12 @@ jobs:
           param tags = { environment: 'synthetic' }
           param enableRecommendations = true
           param enableNotifications = true
+          param weeklyReportSettings = {
+            enabled: true
+            deploymentId: 'synthetic'
+            baseUrl: 'https://synthetic.example'
+            recipientAddresses: ['devnull@synthetic.example']
+          }
           param enablePipelineFailureAlerts = true
           param acsEmailConnectionString = 'Endpoint=https://synthetic.communication.azure.com/;accesskey=c3ludGhldGljLXN5bnRoZXRpYy1zeW50aGV0aWM='
           param acsEmailSenderAddress = 'DoNotReply@synthetic.azurecomm.net'
@@ -48,9 +55,12 @@ jobs:
           EOF
           az bicep build-params --file infra/environments/synthetic-pipeline.bicepparam --stdout > /dev/null
           rm infra/environments/synthetic-pipeline.bicepparam
-          for setting in Notifications__Email__ConnectionString Notifications__Email__SenderAddress Notifications__Email__RecipientAddresses Recommendations__Enabled Notifications__Enabled; do
+          for setting in Notifications__Email__ConnectionString Notifications__Email__SenderAddress Notifications__Email__RecipientAddresses Recommendations__Enabled Notifications__Enabled WeeklyReports__Enabled WeeklyReports__DeploymentId WeeklyReports__RecipientAddresses WeeklyReports__LocalTime; do
             az bicep build --file infra/main.bicep --stdout | grep -q "$setting" || { echo "::error::Compiled template does not emit $setting."; exit 1; }
           done
+
+      - name: Validate weekly configuration preflight
+        run: python3 .github/scripts/test-weekly-report-settings.py
 
       - name: Lint Bicep
         run: az bicep lint --file infra/main.bicep
@@ -60,6 +70,7 @@ jobs:
     needs: validate
     if: >-
       github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: development-infrastructure-preview
@@ -79,6 +90,7 @@ jobs:
       ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
       ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
       PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
+      WEEKLY_REPORT_SETTINGS: ${{ secrets.WEEKLY_REPORT_SETTINGS }}
       ACS_EMAIL_CONNECTION_STRING: ${{ secrets.ACS_EMAIL_CONNECTION_STRING }}
       ACS_EMAIL_SENDER_ADDRESS: ${{ secrets.ACS_EMAIL_SENDER_ADDRESS }}
       ACS_EMAIL_RECIPIENT_ADDRESSES: ${{ secrets.ACS_EMAIL_RECIPIENT_ADDRESSES }}
@@ -121,7 +133,9 @@ jobs:
 
       - name: Run subscription what-if (merge preview, SQL enabled)
         run: |
+          python3 .github/scripts/validate-weekly-report-settings.py
           extra_params=()
+          if [ -n "$WEEKLY_REPORT_SETTINGS" ]; then extra_params+=(--parameters "weeklyReportSettings=$WEEKLY_REPORT_SETTINGS"); fi
           if [ -n "$ETORO_MARKET_DATA_API_KEY" ]; then extra_params+=(--parameters "etoroMarketDataApiKey=$ETORO_MARKET_DATA_API_KEY"); fi
           if [ -n "$ETORO_MARKET_DATA_USER_KEY" ]; then extra_params+=(--parameters "etoroMarketDataUserKey=$ETORO_MARKET_DATA_USER_KEY"); fi
           if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi
@@ -203,6 +217,7 @@ jobs:
       ETORO_MARKET_DATA_EXCHANGE_MAP: ${{ secrets.ETORO_MARKET_DATA_EXCHANGE_MAP }}
       ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP: ${{ secrets.ETORO_MARKET_DATA_QUOTE_CURRENCY_MAP }}
       PRICE_COLLECTION_EXCHANGE_SESSIONS: ${{ secrets.PRICE_COLLECTION_EXCHANGE_SESSIONS }}
+      WEEKLY_REPORT_SETTINGS: ${{ secrets.WEEKLY_REPORT_SETTINGS }}
       ACS_EMAIL_CONNECTION_STRING: ${{ secrets.ACS_EMAIL_CONNECTION_STRING }}
       ACS_EMAIL_SENDER_ADDRESS: ${{ secrets.ACS_EMAIL_SENDER_ADDRESS }}
       ACS_EMAIL_RECIPIENT_ADDRESSES: ${{ secrets.ACS_EMAIL_RECIPIENT_ADDRESSES }}
@@ -245,7 +260,9 @@ jobs:
 
       - name: Deploy subscription-scope Bicep
         run: |
+          python3 .github/scripts/validate-weekly-report-settings.py
           extra_params=()
+          if [ -n "$WEEKLY_REPORT_SETTINGS" ]; then extra_params+=(--parameters "weeklyReportSettings=$WEEKLY_REPORT_SETTINGS"); fi
           if [ -n "$ETORO_MARKET_DATA_API_KEY" ]; then extra_params+=(--parameters "etoroMarketDataApiKey=$ETORO_MARKET_DATA_API_KEY"); fi
           if [ -n "$ETORO_MARKET_DATA_USER_KEY" ]; then extra_params+=(--parameters "etoroMarketDataUserKey=$ETORO_MARKET_DATA_USER_KEY"); fi
           if [ -n "$ETORO_MARKET_DATA_EXCHANGE_MAP" ]; then extra_params+=(--parameters "marketDataExchangeMap=$ETORO_MARKET_DATA_EXCHANGE_MAP"); fi

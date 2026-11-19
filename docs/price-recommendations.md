@@ -8,6 +8,15 @@ execution or order pathway. The only side effects are durable recommendation
 records and notification emails sent through Azure Communication Services
 (ACS) Email.
 
+Issue [#130](https://github.com/carndog/TradingEngine/issues/130) adds optional
+[weekly signal reports](weekly-signal-reports.md). Each saved intent match remains
+a separate signal. Weekly reporting reads this evidence and later saved prices;
+it never re-evaluates a trigger or inserts a synthetic instrument. Its schedule,
+immutable reports and delivery attempts are separate from immediate alerts, while
+both use the same submission/reconciliation implementation and ACS adapter.
+`WeeklyReports:Enabled` defaults to false and does not change the immediate-alert
+`Notifications:Enabled` flag.
+
 ## Pipeline shape
 
 Two independent hosted services share a SQL transaction boundary but never

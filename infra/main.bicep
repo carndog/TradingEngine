@@ -94,6 +94,10 @@ param acsEmailSenderAddress string = ''
 @secure()
 param acsEmailRecipientAddresses string = ''
 
+@description('Private weekly-report configuration object. Empty keeps reporting disabled. Supply durable deployment/subscription identity, schedule, bounds, HTTPS application origin and recipientAddresses from environment secrets.')
+@secure()
+param weeklyReportSettings object = {}
+
 @description('Enable scheduled-query alert rules for repeated price-collection and notification dispatch failures. Disabled by default as a deliberate enablement decision.')
 param enablePipelineFailureAlerts bool = false
 
@@ -146,6 +150,7 @@ module appService 'modules/app-service.bicep' = {
     acsEmailConnectionString: acsEmailConnectionString
     acsEmailSenderAddress: acsEmailSenderAddress
     acsEmailRecipientAddresses: acsEmailRecipientAddresses
+    weeklyReportSettings: weeklyReportSettings
     tags: tags
   }
   dependsOn: [
