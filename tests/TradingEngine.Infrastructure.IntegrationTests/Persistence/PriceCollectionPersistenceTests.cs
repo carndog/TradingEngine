@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using NodaTime;
 using Testcontainers.MsSql;
 using TradingEngine.Application.MarketData;
@@ -552,7 +553,7 @@ public sealed class PriceCollectionPersistenceTests
             "CREATE TRIGGER TR_PO_DelayInsert ON PriceObservations " +
             "AFTER INSERT AS WAITFOR DELAY '00:00:03'");
 
-        TradingEngineDbContext context = CreateContext();
+        TradingEngineDbContext context = CreateContext(hasDelayTrigger: true);
         try
         {
             SqlServerPriceObservationStore store = new(context);
@@ -821,14 +822,17 @@ public sealed class PriceCollectionPersistenceTests
         return id;
     }
 
-    private TradingEngineDbContext CreateContext()
+    private TradingEngineDbContext CreateContext(bool hasDelayTrigger = false)
     {
-        DbContextOptions<TradingEngineDbContext> options =
+        DbContextOptionsBuilder<TradingEngineDbContext> options =
             new DbContextOptionsBuilder<TradingEngineDbContext>()
-                .UseSqlServer(ConnectionStringFor())
-                .Options;
+                .UseSqlServer(ConnectionStringFor());
+        if (hasDelayTrigger)
+        {
+            options.ReplaceService<IModelCustomizer, PriceObservationDelayTriggerModelCustomizer>();
+        }
 
-        return new TradingEngineDbContext(options);
+        return new TradingEngineDbContext(options.Options);
     }
 
     private string ConnectionStringFor()

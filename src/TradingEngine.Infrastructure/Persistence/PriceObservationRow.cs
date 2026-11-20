@@ -24,6 +24,8 @@ internal sealed class PriceObservationRow
 
     public Instant RetrievedAt { get; set; }
 
+    public Instant EffectiveObservedAt { get; set; }
+
     public string Timeliness { get; set; } = string.Empty;
 
     public string? ProviderRequestId { get; set; }

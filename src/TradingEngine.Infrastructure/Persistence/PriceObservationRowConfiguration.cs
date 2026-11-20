@@ -53,6 +53,11 @@ internal sealed class PriceObservationRowConfiguration : IEntityTypeConfiguratio
             .HasColumnType("datetime2(7)")
             .HasConversion(InstantConverters.ToUtcDateTime, InstantConverters.FromUtcDateTime);
 
+        builder.Property(row => row.EffectiveObservedAt)
+            .HasColumnType("datetime2(7)")
+            .HasConversion(InstantConverters.ToUtcDateTime, InstantConverters.FromUtcDateTime)
+            .HasComputedColumnSql("COALESCE([ProviderObservedAt], [RetrievedAt])", stored: true);
+
         builder.Property(row => row.Timeliness)
             .IsRequired()
             .HasMaxLength(16)
@@ -68,6 +73,11 @@ internal sealed class PriceObservationRowConfiguration : IEntityTypeConfiguratio
         builder.HasIndex(row => new { row.WatchedInstrumentId, row.ScheduledFor })
             .IsUnique()
             .HasDatabaseName("UX_PriceObservations_WatchedInstrumentId_ScheduledFor");
+
+        builder.HasIndex(row => new { row.WatchedInstrumentId, row.EffectiveObservedAt, row.ScheduledFor, row.RetrievedAt, row.Id })
+            .IsDescending(false, true, true, true, false)
+            .IncludeProperties(row => new { row.ProviderObservedAt, row.Bid, row.Ask, row.QuoteCurrency })
+            .HasDatabaseName("IX_PriceObservations_Instrument_LatestObserved");
 
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_PriceObservations_Timeliness",

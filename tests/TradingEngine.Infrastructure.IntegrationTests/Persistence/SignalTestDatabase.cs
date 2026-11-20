@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using NodaTime;
 using Testcontainers.MsSql;
 using TradingEngine.Infrastructure.Persistence;
@@ -11,11 +13,11 @@ internal sealed class SignalTestDatabase : IAsyncDisposable
 
     public static Instant TriggeredAt => Instant.FromUtc(2026, 1, 5, 12, 0);
 
-    public async Task StartAsync()
+    public async Task StartAsync(string? targetMigration = null)
     {
         await _container.StartAsync();
         await using TradingEngineDbContext context = CreateContext();
-        await context.Database.MigrateAsync();
+        await context.GetService<IMigrator>().MigrateAsync(targetMigration);
     }
 
     public TradingEngineDbContext CreateContext()

@@ -175,3 +175,32 @@ Monitor the weekly generated/failure/delivery metrics and recent report summarie
 verify a completed/empty report after each due cutoff. Retention/deletion of saved
 reports is not automated in this version. Database growth and archive policy remain
 operator decisions; never silently discard saved reporting evidence.
+
+## Latest saved price lookup
+
+Each signal page uses one SQL query with a correlated `TOP(1)` lookup for each
+requested instrument. The query projects only the quote evidence needed by the
+report. The instrument identity in the inner projection preserves `CROSS APPLY`
+translation; a SQL translation regression test guards against ranking the whole
+price history with `ROW_NUMBER` before filtering instruments.
+
+`PriceObservations.EffectiveObservedAt` is a persisted computed column equal to
+`COALESCE(ProviderObservedAt, RetrievedAt)`. The covering index
+`IX_PriceObservations_Instrument_LatestObserved` supports the instrument equality,
+observed-time upper bound and descending latest-price order. Scheduled and
+retrieval timestamps must still be at or before the cutoff. Provider timestamps,
+retrieval fallback, equal-time ordering and missing bid/ask values retain the same
+meaning; the reader never substitutes an older quote for a missing price side.
+
+Apply the additive `SignalQuoteLookup` migration before deploying this reader,
+using the existing deployment hold and controlled migration workflow. Populating
+the computed column and building its index may take schema locks on existing price
+history; allow the migration to finish before resuming the app. No original price,
+signal or report evidence is rewritten or deleted. The index adds storage and
+maintenance work to price inserts.
+
+A report whose generation previously failed keeps its identity, cutoff and
+recipient snapshot. Once the fixed build is running, the worker retries that
+report after its existing generation lease expires. Verify the preview, completed
+report status and received email before treating recovery as complete; changing
+the weekly schedule or creating another report identity is unnecessary.
