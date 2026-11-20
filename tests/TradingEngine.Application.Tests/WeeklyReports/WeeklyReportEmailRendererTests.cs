@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Net;
 using System.Text;
 using NodaTime;
 using TradingEngine.Application.Notifications;
@@ -10,6 +12,62 @@ namespace TradingEngine.Application.Tests.WeeklyReports;
 public sealed class WeeklyReportEmailRendererTests
 {
     private static readonly Instant Cutoff = Instant.FromUtc(2026, 1, 18, 18, 0);
+
+    [TestCase("42.370000000000000000", "42.37")]
+    [TestCase("42", "42.00")]
+    [TestCase("0.012340000000000000", "0.01234")]
+    [TestCase("1.123456784", "1.12345678")]
+    [TestCase("1.123456785", "1.12345679")]
+    [TestCase("-1.123456785", "-1.12345679")]
+    [TestCase("9.999999999", "10.00")]
+    [TestCase("0.000000000123400000", "0.0000000001234")]
+    [TestCase("-0.000000000123400000", "-0.0000000001234")]
+    [TestCase("0.0000000000000000000000000001", "0.0000000000000000000000000001")]
+    [TestCase("0", "0.00")]
+    [TestCase("79228162514264337593543950335", "79228162514264337593543950335.00")]
+    [SetCulture("fr-FR")]
+    public void Render_PricePrecision_FormatsBothBodiesWithoutChangingEvidence(string input, string expected)
+    {
+        decimal price = decimal.Parse(input, CultureInfo.InvariantCulture);
+        WeeklyReportOptions options = new();
+        SignalStatus item = Item() with
+        {
+            TriggerPrice = price,
+            LatestPrice = price,
+            Lower = 40.100000000000000000m,
+            Upper = 45.050000000000000000m,
+            PercentageChange = 1.23456789m,
+            RangePosition = "Within"
+        };
+
+        RecommendationEmail email = new WeeklyReportEmailRenderer(options).Render(
+            new WeeklyReportSchedule(options).PeriodEndingAt(Cutoff), null, [item], [], 0);
+
+        foreach (string body in new[] { email.PlainTextBody, WebUtility.HtmlDecode(email.HtmlBody ?? string.Empty) })
+        {
+            Assert.That(body, Does.Contain($"Original price: {expected} USD (Bid)"));
+            Assert.That(body, Does.Contain($"Latest saved price: {expected} USD"));
+            Assert.That(body, Does.Contain("Original range: 40.10–45.05; position: Within"));
+            Assert.That(body, Does.Contain("Price change since signal: +1.23%"));
+        }
+
+        Assert.That(item.TriggerPrice, Is.EqualTo(price));
+        Assert.That(item.LatestPrice, Is.EqualTo(price));
+        Assert.That(item.PercentageChange, Is.EqualTo(1.23456789m));
+    }
+
+    [Test]
+    public void Render_MissingLatestPrice_PreservesUnavailableInBothBodies()
+    {
+        WeeklyReportOptions options = new();
+        SignalStatus item = Item() with { LatestPrice = null, PercentageChange = null };
+
+        RecommendationEmail email = new WeeklyReportEmailRenderer(options).Render(
+            new WeeklyReportSchedule(options).PeriodEndingAt(Cutoff), null, [item], [], 0);
+
+        Assert.That(email.PlainTextBody, Does.Contain("Latest saved price: unavailable USD"));
+        Assert.That(email.HtmlBody, Does.Contain("Latest saved price: unavailable USD"));
+    }
 
     [TestCase(10, "+10.00%")]
     [TestCase(-5, "-5.00%")]

@@ -64,18 +64,29 @@ public sealed class WeeklyReportEmailRenderer(WeeklyReportOptions options)
             percentage = $"unavailable ({item.ComparisonUnavailableReason ?? "no comparable quote"})";
         }
 
-        string latest = item.LatestPrice?.ToString(CultureInfo.InvariantCulture) ?? "unavailable";
+        string latest = item.LatestPrice is decimal latestPrice ? FormatPrice(latestPrice) : "unavailable";
         string time = item.LatestObservedAt?.ToString("u", CultureInfo.InvariantCulture) ?? "unavailable";
         return $"\n{Section(item, period)} — {item.Exchange}/{item.Symbol} — {item.Condition}\n"
             + $"Signal {item.SignalId}; triggered {item.TriggeredAt.ToString("u", CultureInfo.InvariantCulture)}\n"
-            + $"Original price: {item.TriggerPrice.ToString(CultureInfo.InvariantCulture)} {item.QuoteCurrency} ({item.PriceBasis}). "
+            + $"Original price: {FormatPrice(item.TriggerPrice)} {item.QuoteCurrency} ({item.PriceBasis}). "
             + $"Latest saved price: {latest} {item.QuoteCurrency} at {time}.\n"
             + $"Price change since signal: {percentage}. Quote freshness: {item.QuoteFreshness}; "
             + $"age seconds: {item.QuoteAgeSeconds?.ToString("0", CultureInfo.InvariantCulture) ?? "unknown"}.\n"
-            + $"Original range: {item.Lower.ToString(CultureInfo.InvariantCulture)}–{item.Upper.ToString(CultureInfo.InvariantCulture)}; "
+            + $"Original range: {FormatPrice(item.Lower)}–{FormatPrice(item.Upper)}; "
             + $"position: {item.RangePosition ?? "unavailable"}. Original email status: {item.EmailStatus}.\n"
             + $"Archived: {item.Archived}; monitoring paused: {item.MonitoringPaused}; instrument removed: {item.InstrumentRemoved}; "
             + $"source revision active: {item.SourceRevisionActive}.\n";
+    }
+
+    private static string FormatPrice(decimal value)
+    {
+        decimal rounded = decimal.Round(value, 8, MidpointRounding.AwayFromZero);
+        if (rounded == 0m && value != 0m)
+        {
+            return value.ToString("0.00##########################", CultureInfo.InvariantCulture);
+        }
+
+        return rounded.ToString("0.00######", CultureInfo.InvariantCulture);
     }
 
     private static string Section(SignalStatus item, WeeklyReportPeriod period)

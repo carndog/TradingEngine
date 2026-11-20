@@ -70,6 +70,15 @@ use canonical units, and are rounded only in email display. Last-known, missing 
 unknown-freshness quotes remain explicitly labelled. Range position never infers
 profit, loss, an order or a short position.
 
+Original/latest prices and range bounds use invariant decimal formatting with two
+to eight fractional digits, removing trailing zeros beyond two digits. Display
+rounding uses midpoint-away-from-zero; a nonzero value that would round to zero
+retains its significant decimal digits instead. Percentages remain signed with two
+decimal places. Source prices, calculations and range classification retain their
+original precision. This applies to newly composed previews and report emails;
+completed snapshots, retry payloads and already-received emails remain unchanged.
+No schedule reset or resend is needed for a formatting deployment.
+
 ## Authenticated inspection
 
 All routes use the existing `/api` Easy Auth and request limits. A preview needs no
