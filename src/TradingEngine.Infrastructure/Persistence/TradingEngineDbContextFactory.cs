@@ -12,7 +12,7 @@ public sealed class TradingEngineDbContextFactory : IDesignTimeDbContextFactory<
             ?? "Server=(localdb)\\mssqllocaldb;Database=TradingEngine;Trusted_Connection=True;Encrypt=False";
 
         DbContextOptionsBuilder<TradingEngineDbContext> options = new();
-        options.UseSqlServer(connectionString);
+        options.UseSqlServer(connectionString, sql => sql.CommandTimeout(600));
 
         return new TradingEngineDbContext(options.Options);
     }
