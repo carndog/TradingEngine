@@ -95,7 +95,7 @@ internal sealed class NotificationIntentRowConfiguration
 
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_NotificationIntents_Status",
-            "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed')"));
+            "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed', 'SuppressedRepeat')"));
 
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_NotificationIntents_PriceBasis",

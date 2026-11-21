@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using NodaTime;
+using TradingEngine.Application.Notifications;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Recommendations;
 using TradingEngine.Application.Time;
@@ -16,9 +17,18 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
 
     private readonly TradingEngineDbContext _context;
 
+    private readonly bool _suppressRepeatRangeEmails;
+
     public SqlServerRecommendationStore(TradingEngineDbContext context)
+        : this(context, new NotificationOptions())
+    {
+    }
+
+    public SqlServerRecommendationStore(TradingEngineDbContext context, NotificationOptions options)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        ArgumentNullException.ThrowIfNull(options);
+        _suppressRepeatRangeEmails = options.SuppressRepeatRangeEmails;
     }
 
     public async Task<IReadOnlyList<EvaluableInstrument>> ListEvaluableAsync(
@@ -197,7 +207,13 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
 
             if (commit.Intent is not null)
             {
-                _context.NotificationIntents.Add(MapIntent(commit));
+                NotificationIntentRow intent = MapIntent(commit);
+                if (_suppressRepeatRangeEmails)
+                {
+                    await SuppressRepeatedMatchesAsync(intent, cancellationToken);
+                }
+
+                _context.NotificationIntents.Add(intent);
 
                 try
                 {
@@ -238,6 +254,33 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
             throw new RecommendationStorageException(
                 "Persisting the evaluation outcome failed.",
                 exception);
+        }
+    }
+
+    private async Task SuppressRepeatedMatchesAsync(
+        NotificationIntentRow intent,
+        CancellationToken cancellationToken)
+    {
+        HashSet<(string ZoneId, string Condition)> selected = (await _context.NotificationIntentMatches
+            .Where(match => match.Intent.WatchedInstrumentId == intent.WatchedInstrumentId
+                && match.Intent.MonitoringRuleRevisionId == intent.MonitoringRuleRevisionId
+                && match.Intent.ScheduledFor < intent.ScheduledFor
+                && match.Intent.Status != nameof(NotificationStatus.Failed)
+                && match.SuppressedAsRepeat == false)
+            .Select(match => new { match.ZoneId, match.Condition })
+            .Distinct()
+            .ToListAsync(cancellationToken))
+            .Select(key => (key.ZoneId, key.Condition))
+            .ToHashSet();
+
+        foreach (NotificationIntentMatchRow match in intent.Matches)
+        {
+            match.SuppressedAsRepeat = selected.Contains((match.ZoneId, match.Condition));
+        }
+
+        if (intent.Matches.All(match => match.SuppressedAsRepeat))
+        {
+            intent.Status = nameof(NotificationStatus.SuppressedRepeat);
         }
     }
 

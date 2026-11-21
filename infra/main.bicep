@@ -83,6 +83,9 @@ param enableRecommendations bool = false
 @description('Enable the notification dispatch hosted service inside the API. Disabled by default; enabling is a deliberate issue-11 decision and requires the ACS email settings below.')
 param enableNotifications bool = false
 
+@description('Select one immediate email per instrument, revision, range and condition.')
+param suppressRepeatRangeEmails bool = false
+
 @description('Azure Communication Services connection string applied as the Notifications__Email__ConnectionString app setting. Supplied at deploy time from environment secrets; never commit a live value.')
 @secure()
 param acsEmailConnectionString string = ''
@@ -147,6 +150,7 @@ module appService 'modules/app-service.bicep' = {
     priceCollectionExchangeSessions: priceCollectionExchangeSessions
     recommendationsEnabled: enableRecommendations
     notificationsEnabled: enableNotifications
+    suppressRepeatRangeEmails: suppressRepeatRangeEmails
     acsEmailConnectionString: acsEmailConnectionString
     acsEmailSenderAddress: acsEmailSenderAddress
     acsEmailRecipientAddresses: acsEmailRecipientAddresses

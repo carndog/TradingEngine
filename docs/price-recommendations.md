@@ -75,6 +75,27 @@ intent already present while the checkpoint is still behind — only possible
 through manual repair — the checkpoint advance is committed anyway
 (`AlreadyRecorded`), which self-heals rather than stalling the instrument.
 
+## Repeat emails for the same range
+
+Set the private development environment secret `SUPPRESS_REPEAT_RANGE_EMAILS` to
+`true` and run the infrastructure deployment to enable this policy. For a local
+host use `Notifications:SuppressRepeatRangeEmails`. The default is `false`.
+Apply the database migration and deploy the updated evaluation and dispatch
+workers before enabling suppression.
+
+With suppression enabled, the first crossing for each instrument, rule revision,
+zone ID and condition is selected for immediate email. A new revision starts a
+fresh set. Historical selections count when enabling the policy, including
+pending submissions. A terminally failed selection allows a later crossing to
+qualify again. In-flight retries and reconciliation continue on their original
+intent. Toggling the policy affects future evaluation decisions only.
+
+Every crossing remains a separate signal. For a slot with several matches,
+the email contains only newly selected matches. The signal API and weekly
+report show `SuppressedRepeat` for each omitted match, including when another
+match in the same email was sent. An entirely suppressed intent produces no
+dispatch attempt. The checkpoint transaction commits all decisions together.
+
 ## Dispatch, claims and ambiguous sends
 
 `NotificationAttempts` records every dispatch attempt and resolution:

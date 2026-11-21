@@ -6,5 +6,6 @@ public enum NotificationStatus
     Ambiguous = 2,
     Sent = 3,
     Failed = 4,
-    Submitted = 5
+    Submitted = 5,
+    SuppressedRepeat = 6
 }

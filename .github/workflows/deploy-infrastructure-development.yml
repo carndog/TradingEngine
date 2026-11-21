@@ -42,6 +42,7 @@ jobs:
           param tags = { environment: 'synthetic' }
           param enableRecommendations = true
           param enableNotifications = true
+          param suppressRepeatRangeEmails = true
           param weeklyReportSettings = {
             enabled: true
             deploymentId: 'synthetic'
@@ -55,7 +56,7 @@ jobs:
           EOF
           az bicep build-params --file infra/environments/synthetic-pipeline.bicepparam --stdout > /dev/null
           rm infra/environments/synthetic-pipeline.bicepparam
-          for setting in Notifications__Email__ConnectionString Notifications__Email__SenderAddress Notifications__Email__RecipientAddresses Recommendations__Enabled Notifications__Enabled WeeklyReports__Enabled WeeklyReports__DeploymentId WeeklyReports__RecipientAddresses WeeklyReports__LocalTime; do
+          for setting in Notifications__Email__ConnectionString Notifications__Email__SenderAddress Notifications__Email__RecipientAddresses Recommendations__Enabled Notifications__Enabled Notifications__SuppressRepeatRangeEmails WeeklyReports__Enabled WeeklyReports__DeploymentId WeeklyReports__RecipientAddresses WeeklyReports__LocalTime; do
             az bicep build --file infra/main.bicep --stdout | grep -q "$setting" || { echo "::error::Compiled template does not emit $setting."; exit 1; }
           done
 
@@ -95,6 +96,7 @@ jobs:
       ACS_EMAIL_SENDER_ADDRESS: ${{ secrets.ACS_EMAIL_SENDER_ADDRESS }}
       ACS_EMAIL_RECIPIENT_ADDRESSES: ${{ secrets.ACS_EMAIL_RECIPIENT_ADDRESSES }}
       ENABLE_RECOMMENDATIONS: ${{ vars.ENABLE_RECOMMENDATIONS }}
+      SUPPRESS_REPEAT_RANGE_EMAILS: ${{ secrets.SUPPRESS_REPEAT_RANGE_EMAILS }}
       ENABLE_NOTIFICATIONS: ${{ vars.ENABLE_NOTIFICATIONS }}
       ENABLE_PIPELINE_FAILURE_ALERTS: ${{ vars.ENABLE_PIPELINE_FAILURE_ALERTS }}
     steps:
@@ -145,6 +147,7 @@ jobs:
           if [ -n "$ACS_EMAIL_SENDER_ADDRESS" ]; then extra_params+=(--parameters "acsEmailSenderAddress=$ACS_EMAIL_SENDER_ADDRESS"); fi
           if [ -n "$ACS_EMAIL_RECIPIENT_ADDRESSES" ]; then extra_params+=(--parameters "acsEmailRecipientAddresses=$ACS_EMAIL_RECIPIENT_ADDRESSES"); fi
           if [ "$ENABLE_RECOMMENDATIONS" = "true" ]; then extra_params+=(--parameters "enableRecommendations=true"); fi
+          if [ -n "$SUPPRESS_REPEAT_RANGE_EMAILS" ]; then extra_params+=(--parameters "suppressRepeatRangeEmails=$SUPPRESS_REPEAT_RANGE_EMAILS"); fi
           if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then extra_params+=(--parameters "enableNotifications=true"); fi
           if [ "$ENABLE_PIPELINE_FAILURE_ALERTS" = "true" ]; then extra_params+=(--parameters "enablePipelineFailureAlerts=true"); fi
           az deployment sub what-if \
@@ -222,6 +225,7 @@ jobs:
       ACS_EMAIL_SENDER_ADDRESS: ${{ secrets.ACS_EMAIL_SENDER_ADDRESS }}
       ACS_EMAIL_RECIPIENT_ADDRESSES: ${{ secrets.ACS_EMAIL_RECIPIENT_ADDRESSES }}
       ENABLE_RECOMMENDATIONS: ${{ vars.ENABLE_RECOMMENDATIONS }}
+      SUPPRESS_REPEAT_RANGE_EMAILS: ${{ secrets.SUPPRESS_REPEAT_RANGE_EMAILS }}
       ENABLE_NOTIFICATIONS: ${{ vars.ENABLE_NOTIFICATIONS }}
       ENABLE_PIPELINE_FAILURE_ALERTS: ${{ vars.ENABLE_PIPELINE_FAILURE_ALERTS }}
     steps:
@@ -272,6 +276,7 @@ jobs:
           if [ -n "$ACS_EMAIL_SENDER_ADDRESS" ]; then extra_params+=(--parameters "acsEmailSenderAddress=$ACS_EMAIL_SENDER_ADDRESS"); fi
           if [ -n "$ACS_EMAIL_RECIPIENT_ADDRESSES" ]; then extra_params+=(--parameters "acsEmailRecipientAddresses=$ACS_EMAIL_RECIPIENT_ADDRESSES"); fi
           if [ "$ENABLE_RECOMMENDATIONS" = "true" ]; then extra_params+=(--parameters "enableRecommendations=true"); fi
+          if [ -n "$SUPPRESS_REPEAT_RANGE_EMAILS" ]; then extra_params+=(--parameters "suppressRepeatRangeEmails=$SUPPRESS_REPEAT_RANGE_EMAILS"); fi
           if [ "$ENABLE_NOTIFICATIONS" = "true" ]; then extra_params+=(--parameters "enableNotifications=true"); fi
           if [ "$ENABLE_PIPELINE_FAILURE_ALERTS" = "true" ]; then extra_params+=(--parameters "enablePipelineFailureAlerts=true"); fi
           az deployment sub create \
