@@ -12,14 +12,20 @@ public sealed class SignalQuoteLookupMigrationTests
     {
         await using SignalTestDatabase database = new();
         await database.StartAsync("20261118010853_WeeklyReportSnapshots");
-        NotificationIntentMatchRow signal = await database.SeedAsync();
-        Guid instrumentId = signal.Intent.WatchedInstrumentId;
+        NotificationIntentRow intent = await database.SeedIntentAsync();
+        Guid instrumentId = intent.WatchedInstrumentId;
+        Guid signalId = Guid.NewGuid();
         Guid providerQuoteId = Guid.NewGuid();
         Guid fallbackQuoteId = Guid.NewGuid();
         Instant firstSlot = SignalTestDatabase.TriggeredAt.Plus(Duration.FromMinutes(15));
         Instant secondSlot = firstSlot.Plus(Duration.FromMinutes(15));
         Instant providerAt = firstSlot.Minus(Duration.FromMinutes(1));
         await using TradingEngineDbContext context = database.CreateContext();
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO NotificationIntentMatches
+                (Id, NotificationIntentId, ZoneId, Condition, ActionId, Lower, Level, Upper, PreviousPrice, CurrentPrice)
+            VALUES ({signalId}, {intent.Id}, N'synthetic-zone', N'BuyZone', N'notify', 95, 100, 105, 106, 103)
+            """);
         await InsertAsync(context, providerQuoteId, instrumentId, firstSlot, providerAt);
         await InsertAsync(context, fallbackQuoteId, instrumentId, secondSlot, null);
 
@@ -35,7 +41,9 @@ public sealed class SignalQuoteLookupMigrationTests
         Assert.That(prices.Select(row => row.Bid), Is.All.EqualTo(100m));
         Assert.That(prices.Select(row => row.Ask), Is.All.EqualTo(101m));
         Assert.That(latest.Single().Quote.Id, Is.EqualTo(fallbackQuoteId));
-        Assert.That(await context.NotificationIntentMatches.CountAsync(), Is.EqualTo(1));
+        NotificationIntentMatchRow migrated = await context.NotificationIntentMatches.SingleAsync();
+        Assert.That(migrated.Id, Is.EqualTo(signalId));
+        Assert.That(migrated.SuppressedAsRepeat, Is.False);
     }
 
     private static Task<int> InsertAsync(TradingEngineDbContext context, Guid id, Guid instrumentId, Instant slot, Instant? providerAt)

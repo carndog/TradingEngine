@@ -21,6 +21,7 @@ internal static class NotificationsServiceCollectionExtensions
             .Get<NotificationOptions>() ?? new NotificationOptions();
 
         services.AddSingleton(options);
+        services.AddSingleton(AssetEmailCooldown.FromJson(configuration["Notifications:AssetEmailCooldownJson"]));
         services.TryAddSingleton<RecommendationTelemetry>();
         services.AddSingleton<RecommendationEmailRenderer>();
 

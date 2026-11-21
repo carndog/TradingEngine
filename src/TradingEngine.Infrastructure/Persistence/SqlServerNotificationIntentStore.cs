@@ -70,7 +70,7 @@ public sealed class SqlServerNotificationIntentStore : INotificationIntentStore
 
         List<NotificationIntentMatchRow> matches = await _context.NotificationIntentMatches
             .AsNoTracking()
-            .Where(match => intentIds.Contains(match.NotificationIntentId))
+            .Where(match => intentIds.Contains(match.NotificationIntentId) && match.SuppressedAsRepeat == false)
             .OrderBy(match => match.Id)
             .ToListAsync(cancellationToken);
 

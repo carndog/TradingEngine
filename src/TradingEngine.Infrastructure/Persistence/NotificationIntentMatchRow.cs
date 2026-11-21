@@ -12,6 +12,8 @@ internal sealed class NotificationIntentMatchRow
 
     public string ActionId { get; set; } = string.Empty;
 
+    public bool SuppressedAsRepeat { get; set; }
+
     public decimal Lower { get; set; }
 
     public decimal Level { get; set; }

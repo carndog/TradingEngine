@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using NodaTime;
+using TradingEngine.Application.Notifications;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Recommendations;
 using TradingEngine.Application.Time;
@@ -16,9 +17,17 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
 
     private readonly TradingEngineDbContext _context;
 
+    private readonly AssetEmailCooldown _cooldown;
+
     public SqlServerRecommendationStore(TradingEngineDbContext context)
+        : this(context, AssetEmailCooldown.Disabled)
+    {
+    }
+
+    public SqlServerRecommendationStore(TradingEngineDbContext context, AssetEmailCooldown cooldown)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        _cooldown = cooldown ?? throw new ArgumentNullException(nameof(cooldown));
     }
 
     public async Task<IReadOnlyList<EvaluableInstrument>> ListEvaluableAsync(
@@ -197,7 +206,13 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
 
             if (commit.Intent is not null)
             {
-                _context.NotificationIntents.Add(MapIntent(commit));
+                NotificationIntentRow intent = MapIntent(commit);
+                if (_cooldown.Enabled)
+                {
+                    await SuppressRepeatedMatchesAsync(intent, cancellationToken);
+                }
+
+                _context.NotificationIntents.Add(intent);
 
                 try
                 {
@@ -238,6 +253,58 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
             throw new RecommendationStorageException(
                 "Persisting the evaluation outcome failed.",
                 exception);
+        }
+    }
+
+    private async Task SuppressRepeatedMatchesAsync(
+        NotificationIntentRow intent,
+        CancellationToken cancellationToken)
+    {
+        NotificationIntentMatchRow[] covered = intent.Matches.Where(match =>
+            match.Condition is nameof(ChartConditionType.BuyZone) or nameof(ChartConditionType.SupportLoss)).ToArray();
+        if (covered.Length == 0)
+        {
+            return;
+        }
+
+        IQueryable<NotificationIntentMatchRow> selections = _context.NotificationIntentMatches
+            .Where(match => match.Intent.WatchedInstrumentId == intent.WatchedInstrumentId
+                && match.Intent.ScheduledFor < intent.ScheduledFor
+                && (match.Condition == nameof(ChartConditionType.BuyZone)
+                    || match.Condition == nameof(ChartConditionType.SupportLoss))
+                && match.SuppressedAsRepeat == false
+                && match.Intent.Status != nameof(NotificationStatus.Failed));
+
+        AssetEmailSelection? previous = await selections.Select(match => new
+            {
+                Price = match.CurrentPrice,
+                match.Intent.ScheduledFor,
+                AlertedAt = _context.NotificationAttempts
+                    .Where(attempt => attempt.NotificationIntentId == match.NotificationIntentId
+                        && attempt.Outcome == "Submitted")
+                    .Max(attempt => (Instant?)attempt.RecordedAt)
+                    ?? (match.Intent.Status == nameof(NotificationStatus.Sent) ? match.Intent.UpdatedAt : (Instant?)null)
+            })
+            .OrderBy(selection => selection.AlertedAt.HasValue)
+            .ThenByDescending(selection => selection.AlertedAt)
+            .ThenByDescending(selection => selection.ScheduledFor)
+            .Select(selection => new AssetEmailSelection(selection.Price, selection.AlertedAt))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (previous is null || (previous.AlertedAt is Instant lastAlert
+            && _cooldown.IsCoolingDown(intent.WatchedInstrumentId, previous.Price, lastAlert, intent.ScheduledFor) is false))
+        {
+            return;
+        }
+
+        foreach (NotificationIntentMatchRow match in covered)
+        {
+            match.SuppressedAsRepeat = true;
+        }
+
+        if (intent.Matches.All(match => match.SuppressedAsRepeat))
+        {
+            intent.Status = nameof(NotificationStatus.SuppressedRepeat);
         }
     }
 
