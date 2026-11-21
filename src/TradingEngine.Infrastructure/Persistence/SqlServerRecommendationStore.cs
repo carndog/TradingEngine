@@ -17,18 +17,17 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
 
     private readonly TradingEngineDbContext _context;
 
-    private readonly bool _suppressRepeatRangeEmails;
+    private readonly AssetEmailCooldown _cooldown;
 
     public SqlServerRecommendationStore(TradingEngineDbContext context)
-        : this(context, new NotificationOptions())
+        : this(context, AssetEmailCooldown.Disabled)
     {
     }
 
-    public SqlServerRecommendationStore(TradingEngineDbContext context, NotificationOptions options)
+    public SqlServerRecommendationStore(TradingEngineDbContext context, AssetEmailCooldown cooldown)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        ArgumentNullException.ThrowIfNull(options);
-        _suppressRepeatRangeEmails = options.SuppressRepeatRangeEmails;
+        _cooldown = cooldown ?? throw new ArgumentNullException(nameof(cooldown));
     }
 
     public async Task<IReadOnlyList<EvaluableInstrument>> ListEvaluableAsync(
@@ -208,7 +207,7 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
             if (commit.Intent is not null)
             {
                 NotificationIntentRow intent = MapIntent(commit);
-                if (_suppressRepeatRangeEmails)
+                if (_cooldown.Enabled)
                 {
                     await SuppressRepeatedMatchesAsync(intent, cancellationToken);
                 }
@@ -261,21 +260,46 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
         NotificationIntentRow intent,
         CancellationToken cancellationToken)
     {
-        HashSet<(string ZoneId, string Condition)> selected = (await _context.NotificationIntentMatches
-            .Where(match => match.Intent.WatchedInstrumentId == intent.WatchedInstrumentId
-                && match.Intent.MonitoringRuleRevisionId == intent.MonitoringRuleRevisionId
-                && match.Intent.ScheduledFor < intent.ScheduledFor
-                && match.Intent.Status != nameof(NotificationStatus.Failed)
-                && match.SuppressedAsRepeat == false)
-            .Select(match => new { match.ZoneId, match.Condition })
-            .Distinct()
-            .ToListAsync(cancellationToken))
-            .Select(key => (key.ZoneId, key.Condition))
-            .ToHashSet();
-
-        foreach (NotificationIntentMatchRow match in intent.Matches)
+        NotificationIntentMatchRow[] covered = intent.Matches.Where(match =>
+            match.Condition is nameof(ChartConditionType.BuyZone) or nameof(ChartConditionType.SupportLoss)).ToArray();
+        if (covered.Length == 0)
         {
-            match.SuppressedAsRepeat = selected.Contains((match.ZoneId, match.Condition));
+            return;
+        }
+
+        IQueryable<NotificationIntentMatchRow> selections = _context.NotificationIntentMatches
+            .Where(match => match.Intent.WatchedInstrumentId == intent.WatchedInstrumentId
+                && match.Intent.ScheduledFor < intent.ScheduledFor
+                && (match.Condition == nameof(ChartConditionType.BuyZone)
+                    || match.Condition == nameof(ChartConditionType.SupportLoss))
+                && match.SuppressedAsRepeat == false
+                && match.Intent.Status != nameof(NotificationStatus.Failed));
+
+        AssetEmailSelection? previous = await selections.Select(match => new
+            {
+                Price = match.CurrentPrice,
+                match.Intent.ScheduledFor,
+                AlertedAt = _context.NotificationAttempts
+                    .Where(attempt => attempt.NotificationIntentId == match.NotificationIntentId
+                        && attempt.Outcome == "Submitted")
+                    .Max(attempt => (Instant?)attempt.RecordedAt)
+                    ?? (match.Intent.Status == nameof(NotificationStatus.Sent) ? match.Intent.UpdatedAt : (Instant?)null)
+            })
+            .OrderBy(selection => selection.AlertedAt.HasValue)
+            .ThenByDescending(selection => selection.AlertedAt)
+            .ThenByDescending(selection => selection.ScheduledFor)
+            .Select(selection => new AssetEmailSelection(selection.Price, selection.AlertedAt))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (previous is null || (previous.AlertedAt is Instant lastAlert
+            && _cooldown.IsCoolingDown(intent.WatchedInstrumentId, previous.Price, lastAlert, intent.ScheduledFor) is false))
+        {
+            return;
+        }
+
+        foreach (NotificationIntentMatchRow match in covered)
+        {
+            match.SuppressedAsRepeat = true;
         }
 
         if (intent.Matches.All(match => match.SuppressedAsRepeat))

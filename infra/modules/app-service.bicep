@@ -65,8 +65,9 @@ param recommendationsEnabled bool = false
 @description('Enable the notification dispatch hosted service, exposed as the Notifications__Enabled app setting.')
 param notificationsEnabled bool = false
 
-@description('Record repeated crossings and suppress their immediate emails.')
-param suppressRepeatRangeEmails bool = false
+@description('Private operator settings for the asset email cooldown.')
+@secure()
+param assetEmailCooldown object = {}
 
 @description('Azure Communication Services connection string, exposed as the Notifications__Email__ConnectionString app setting. Supplied at deploy time from environment secrets; empty omits the setting. Never commit a live value.')
 @secure()
@@ -237,11 +238,11 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (suppressRepeatRangeEmails || !empty(weeklyReportSettings) || tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || recommendationsEnabled || notificationsEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions) || acsEmailConnectionString != '' || acsEmailSenderAddress != '' || !empty(acsEmailRecipientAddresses)) {
+resource webAppAppSettings 'Microsoft.Web/sites/config@2023-12-01' = if (!empty(assetEmailCooldown) || !empty(weeklyReportSettings) || tradingEngineConnectionString != '' || configureEntraAuth || applicationInsightsConnectionString != '' || priceCollectionEnabled || recommendationsEnabled || notificationsEnabled || etoroMarketDataApiKey != '' || etoroMarketDataUserKey != '' || !empty(marketDataExchangeMap) || !empty(marketDataQuoteCurrencyMap) || !empty(priceCollectionExchangeSessions) || acsEmailConnectionString != '' || acsEmailSenderAddress != '' || !empty(acsEmailRecipientAddresses)) {
   parent: webApp
   name: 'appsettings'
   properties: union(
-    { Notifications__SuppressRepeatRangeEmails: string(suppressRepeatRangeEmails) },
+    { Notifications__AssetEmailCooldownJson: empty(assetEmailCooldown) ? '' : string(assetEmailCooldown) },
     weeklyReportAppSettings,
     weeklyReportRecipientSettings,
     tradingEngineConnectionString != ''

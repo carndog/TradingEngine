@@ -75,26 +75,48 @@ intent already present while the checkpoint is still behind — only possible
 through manual repair — the checkpoint advance is committed anyway
 (`AlreadyRecorded`), which self-heals rather than stalling the instrument.
 
-## Repeat emails for the same range
+## Shared cooldown for buy-zone and support-loss emails
 
-Set the private development environment secret `SUPPRESS_REPEAT_RANGE_EMAILS` to
-`true` and run the infrastructure deployment to enable this policy. For a local
-host use `Notifications:SuppressRepeatRangeEmails`. The default is `false`.
-Apply the database migration and deploy the updated evaluation and dispatch
-workers before enabling suppression.
+Buy-zone entry and support loss share one immediate-email cooldown per watched
+instrument across all its zones and rule revisions. Either condition can start
+the clock. A crossing before expiry is recorded silently. The first crossing
+at or after expiry can send the next email. Suppressed crossings and quiet
+periods do not restart the clock. Breakout emails are independent.
 
-With suppression enabled, the first crossing for each instrument, rule revision,
-zone ID and condition is selected for immediate email. A new revision starts a
-fresh set. Historical selections count when enabling the policy, including
-pending submissions. A terminally failed selection allows a later crossing to
-qualify again. In-flight retries and reconciliation continue on their original
-intent. Toggling the policy affects future evaluation decisions only.
+The clock starts at the recorded acceptance of the immediate email by the
+provider. While a selected submission is outstanding, its reservation prevents
+another worker or crossing from queuing a second covered email. If acceptance
+is only established during successful reconciliation, that confirmation time
+is used. A terminal failure releases the reservation. Time comparisons use
+the observation slot and UTC. Calendar months use the corresponding day and
+time in the destination month, clipped to the last day when necessary.
 
-Every crossing remains a separate signal. For a slot with several matches,
-the email contains only newly selected matches. The signal API and weekly
-report show `SuppressedRepeat` for each omitted match, including when another
-match in the same email was sent. An entirely suppressed intent produces no
-dispatch attempt. The checkpoint transaction commits all decisions together.
+Set the private deployment secret `ASSET_EMAIL_COOLDOWN` to a JSON object, or
+set `Notifications:AssetEmailCooldownJson` locally. An absent policy disables
+the cooldown. Supply the operator's `defaultPeriod` and optional `overrides`.
+For example, this synthetic policy gives one instrument a different interval
+and a further override when its last selected alert price was in a specific band.
+
+```json
+{
+  "defaultPeriod": "PT2H",
+  "overrides": [
+    { "instrumentId": "aaaaaaaa-0000-4000-8000-000000000001", "period": "P2D" },
+    { "instrumentId": "aaaaaaaa-0000-4000-8000-000000000001", "fromInclusive": 10, "toExclusive": 20, "period": "PT5M" }
+  ]
+}
+```
+
+An interval is a positive whole number of calendar months, days, hours or
+minutes in ISO period format. A matching price band takes precedence over the
+asset interval and the deployment default. A later crossing uses the current
+policy with the previous alert's price, so moving between price bands alone
+cannot start a new clock. Persisted selections and suppression decisions survive
+restarts and policy edits. Each signal remains in weekly history with its own
+email status, including `SuppressedRepeat`.
+
+Apply the migration and deploy all updated workers before enabling the policy
+through the infrastructure deployment.
 
 ## Dispatch, claims and ambiguous sends
 

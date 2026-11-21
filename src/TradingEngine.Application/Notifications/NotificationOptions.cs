@@ -6,8 +6,6 @@ public sealed class NotificationOptions
 
     public bool Enabled { get; set; }
 
-    public bool SuppressRepeatRangeEmails { get; set; }
-
     public int PollIntervalSeconds { get; set; } = 30;
 
     public int MaxIntentsPerRun { get; set; } = 50;
