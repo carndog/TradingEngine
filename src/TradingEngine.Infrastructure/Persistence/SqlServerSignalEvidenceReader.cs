@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NodaTime;
+using TradingEngine.Application.Notifications;
 using TradingEngine.Application.Ports;
 using TradingEngine.Application.Signals;
 using TradingEngine.Domain.MonitoringRules;
@@ -88,7 +89,8 @@ public sealed class SqlServerSignalEvidenceReader(TradingEngineDbContext context
         return new SignalEvidence(row.Id, intent.Id, intent.WatchedInstrumentId, intent.Instrument.Symbol,
             intent.Instrument.Exchange, intent.MonitoringRuleRevisionId, row.ZoneId, row.Condition, row.ActionId,
             new SignalPriceBaseline(intent.ScheduledFor, row.CurrentPrice, basis, intent.QuoteCurrency, row.Lower, row.Upper),
-            intent.Status, intent.Instrument.MonitoringState != "Monitored", intent.Instrument.DeletedAt is not null,
+            row.SuppressedAsRepeat ? nameof(NotificationStatus.SuppressedRepeat) : intent.Status,
+            intent.Instrument.MonitoringState != "Monitored", intent.Instrument.DeletedAt is not null,
             revisionActive, intent.Instrument.SamplingIntervalSeconds,
             quote);
     }

@@ -296,6 +296,11 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
 
+                    b.Property<bool>("SuppressedAsRepeat")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<decimal>("Upper")
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
@@ -399,7 +404,7 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_NotificationIntents_Reason", "[Reason] IN ('ConditionsTriggered')");
 
-                            t.HasCheckConstraint("CK_NotificationIntents_Status", "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed')");
+                            t.HasCheckConstraint("CK_NotificationIntents_Status", "[Status] IN ('Pending', 'Ambiguous', 'Submitted', 'Sent', 'Failed', 'SuppressedRepeat')");
                         });
                 });
 

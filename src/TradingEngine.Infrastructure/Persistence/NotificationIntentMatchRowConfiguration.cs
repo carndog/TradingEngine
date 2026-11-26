@@ -34,6 +34,9 @@ internal sealed class NotificationIntentMatchRowConfiguration
             .HasMaxLength(64)
             .HasColumnType("nvarchar(64)");
 
+        builder.Property(row => row.SuppressedAsRepeat)
+            .HasDefaultValue(false);
+
         builder.Property(row => row.Lower)
             .HasPrecision(38, 18);
 

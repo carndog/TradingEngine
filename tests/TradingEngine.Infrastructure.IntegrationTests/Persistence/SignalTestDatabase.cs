@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -9,13 +10,25 @@ namespace TradingEngine.Infrastructure.IntegrationTests.Persistence;
 
 internal sealed class SignalTestDatabase : IAsyncDisposable
 {
-    private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").Build();
+    private MsSqlContainer? _container;
+    private string? _connectionString;
 
     public static Instant TriggeredAt => Instant.FromUtc(2026, 1, 5, 12, 0);
 
     public async Task StartAsync(string? targetMigration = null)
     {
-        await _container.StartAsync();
+        string? server = Environment.GetEnvironmentVariable("TRADINGENGINE_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(server))
+        {
+            _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").Build();
+            await _container.StartAsync();
+            server = _container.GetConnectionString();
+        }
+
+        _connectionString = new SqlConnectionStringBuilder(server)
+        {
+            InitialCatalog = $"SignalTest_{Guid.NewGuid():N}"
+        }.ConnectionString;
         await using TradingEngineDbContext context = CreateContext();
         await context.GetService<IMigrator>().MigrateAsync(targetMigration);
     }
@@ -23,10 +36,21 @@ internal sealed class SignalTestDatabase : IAsyncDisposable
     public TradingEngineDbContext CreateContext()
     {
         return new TradingEngineDbContext(new DbContextOptionsBuilder<TradingEngineDbContext>()
-            .UseSqlServer(_container.GetConnectionString()).Options);
+            .UseSqlServer(_connectionString ?? throw new InvalidOperationException("Start the test database first.")).Options);
     }
 
     public async Task<NotificationIntentMatchRow> SeedAsync()
+    {
+        NotificationIntentRow intent = await SeedIntentAsync();
+        NotificationIntentMatchRow match = Match(intent);
+        await using TradingEngineDbContext context = CreateContext();
+        context.Attach(intent);
+        context.Add(match);
+        await context.SaveChangesAsync();
+        return match;
+    }
+
+    public async Task<NotificationIntentRow> SeedIntentAsync()
     {
         await using TradingEngineDbContext context = CreateContext();
         WatchedInstrumentRow instrument = new()
@@ -49,11 +73,10 @@ internal sealed class SignalTestDatabase : IAsyncDisposable
             QuoteCurrency = "USD", CurrentBid = 100m, CurrentAsk = 101m, Status = "Pending",
             CreatedAt = TriggeredAt, UpdatedAt = TriggeredAt
         };
-        NotificationIntentMatchRow match = Match(intent);
         context.Add(revision);
-        context.Add(match);
+        context.Add(intent);
         await context.SaveChangesAsync();
-        return match;
+        return intent;
     }
 
     public static NotificationIntentMatchRow Match(NotificationIntentRow intent)
@@ -82,6 +105,14 @@ internal sealed class SignalTestDatabase : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _container.DisposeAsync();
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
+        else if (_connectionString is not null)
+        {
+            await using TradingEngineDbContext context = CreateContext();
+            await context.Database.EnsureDeletedAsync();
+        }
     }
 }

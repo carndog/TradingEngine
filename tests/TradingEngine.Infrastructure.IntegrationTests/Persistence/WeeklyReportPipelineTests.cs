@@ -64,6 +64,33 @@ public sealed class WeeklyReportPipelineTests : IEmailSender
     }
 
     [Test]
+    public async Task HandleAsync_MixedImmediateEmailDecisions_IncludesBothSignalsInOneWeeklyEmail()
+    {
+        WeeklyReportOptions options = Options();
+        NotificationIntentMatchRow selected = await _database.SeedAsync();
+        await using TradingEngineDbContext context = _database.CreateContext();
+        NotificationIntentRow intent = await context.NotificationIntents.SingleAsync();
+        intent.Status = "Sent";
+        NotificationIntentMatchRow repeat = SignalTestDatabase.Match(intent);
+        repeat.ZoneId = "another-zone";
+        repeat.SuppressedAsRepeat = true;
+        context.Add(repeat);
+        await context.SaveChangesAsync();
+
+        await RunAsync(options, Cutoff.Minus(Duration.FromMinutes(1)));
+        await RunAsync(options, Cutoff);
+        WeeklyReportRow report = await context.WeeklyReports.AsNoTracking().SingleAsync();
+        WeeklyReportPage page = (await new SqlServerWeeklyReportStore(context)
+            .ReadAsync(options.SubscriptionKey, report.Id, 1, 25, CancellationToken.None))!;
+
+        Assert.That(_sent, Has.Count.EqualTo(1));
+        Assert.That(page.Items.Select(item => (item.SignalId, item.EmailStatus)),
+            Is.EquivalentTo(new[] { (selected.Id, "Sent"), (repeat.Id, "SuppressedRepeat") }));
+        Assert.That(_sent.Single().PlainTextBody, Does.Contain("Original email status: SuppressedRepeat"));
+        Assert.That(_sent.Single().HtmlBody, Does.Contain("Original email status: SuppressedRepeat"));
+    }
+
+    [Test]
     public async Task HandleAsync_Downtime_ProducesOnlyLatestMissedWeekAndRecordsSkippedPeriods()
     {
         WeeklyReportOptions options = Options();
