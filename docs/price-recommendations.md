@@ -75,21 +75,27 @@ intent already present while the checkpoint is still behind — only possible
 through manual repair — the checkpoint advance is committed anyway
 (`AlreadyRecorded`), which self-heals rather than stalling the instrument.
 
-## Shared cooldown for buy-zone and support-loss emails
+## Per-condition cooldown for buy-zone and support-loss emails
 
-Buy-zone entry and support loss share one immediate-email cooldown per watched
-instrument across all its zones and rule revisions. Either condition can start
-the clock. A crossing before expiry is recorded silently. The first crossing
-at or after expiry can send the next email. Suppressed crossings and quiet
-periods do not restart the clock. Breakout emails are independent.
+Buy-zone entry and support loss each keep their own immediate-email cooldown
+per watched instrument, shared across that instrument's zones and rule
+revisions. A buy-zone email suppresses only later buy-zone emails for the
+same instrument; a support-loss email suppresses only later support-loss
+emails for the same instrument. Different instruments remain independent.
+A crossing before its own condition's expiry is recorded silently. The first
+crossing of that condition at or after expiry can send the next email.
+Suppressed crossings and quiet periods restart neither clock. Breakout
+emails are independent of both clocks.
 
-The clock starts at the recorded acceptance of the immediate email by the
-provider. While a selected submission is outstanding, its reservation prevents
-another worker or crossing from queuing a second covered email. If acceptance
+Each clock starts at the recorded acceptance of that condition's immediate
+email by the provider. While a selected submission is outstanding, its
+reservation prevents another worker or crossing from queuing a second email
+for the same condition — the other condition can still send. If acceptance
 is only established during successful reconciliation, that confirmation time
-is used. A terminal failure releases the reservation. Time comparisons use
-the observation slot and UTC. Calendar months use the corresponding day and
-time in the destination month, clipped to the last day when necessary.
+is used. A terminal failure releases only that condition's reservation. Time
+comparisons use the observation slot and UTC. Calendar months use the
+corresponding day and time in the destination month, clipped to the last day
+when necessary.
 
 Set the private deployment secret `ASSET_EMAIL_COOLDOWN` to a JSON object, or
 set `Notifications:AssetEmailCooldownJson` locally. An absent policy disables
@@ -110,10 +116,10 @@ and a further override when its last selected alert price was in a specific band
 An interval is a positive whole number of calendar months, days, hours or
 minutes in ISO period format. A matching price band takes precedence over the
 asset interval and the deployment default. A later crossing uses the current
-policy with the previous alert's price, so moving between price bands alone
-cannot start a new clock. Persisted selections and suppression decisions survive
-restarts and policy edits. Each signal remains in weekly history with its own
-email status, including `SuppressedRepeat`.
+policy with the previous alert's price for the same condition, so moving
+between price bands alone cannot start a new clock. Persisted selections and
+suppression decisions survive restarts and policy edits. Each signal remains
+in weekly history with its own email status, including `SuppressedRepeat`.
 
 Apply the migration and deploy all updated workers before enabling the policy
 through the infrastructure deployment.

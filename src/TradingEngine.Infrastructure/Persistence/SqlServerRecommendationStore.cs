@@ -260,22 +260,40 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
         NotificationIntentRow intent,
         CancellationToken cancellationToken)
     {
-        NotificationIntentMatchRow[] covered = intent.Matches.Where(match =>
-            match.Condition is nameof(ChartConditionType.BuyZone) or nameof(ChartConditionType.SupportLoss)).ToArray();
-        if (covered.Length == 0)
+        string[] coveredConditions = intent.Matches
+            .Select(match => match.Condition)
+            .Where(condition => condition is nameof(ChartConditionType.BuyZone)
+                or nameof(ChartConditionType.SupportLoss))
+            .Distinct()
+            .ToArray();
+        if (coveredConditions.Length == 0)
         {
             return;
         }
 
-        IQueryable<NotificationIntentMatchRow> selections = _context.NotificationIntentMatches
+        foreach (string condition in coveredConditions)
+        {
+            await SuppressConditionMatchesAsync(intent, condition, cancellationToken);
+        }
+
+        if (intent.Matches.All(match => match.SuppressedAsRepeat))
+        {
+            intent.Status = nameof(NotificationStatus.SuppressedRepeat);
+        }
+    }
+
+    private async Task SuppressConditionMatchesAsync(
+        NotificationIntentRow intent,
+        string condition,
+        CancellationToken cancellationToken)
+    {
+        AssetEmailSelection? previous = await _context.NotificationIntentMatches
             .Where(match => match.Intent.WatchedInstrumentId == intent.WatchedInstrumentId
                 && match.Intent.ScheduledFor < intent.ScheduledFor
-                && (match.Condition == nameof(ChartConditionType.BuyZone)
-                    || match.Condition == nameof(ChartConditionType.SupportLoss))
+                && match.Condition == condition
                 && match.SuppressedAsRepeat == false
-                && match.Intent.Status != nameof(NotificationStatus.Failed));
-
-        AssetEmailSelection? previous = await selections.Select(match => new
+                && match.Intent.Status != nameof(NotificationStatus.Failed))
+            .Select(match => new
             {
                 Price = match.CurrentPrice,
                 match.Intent.ScheduledFor,
@@ -297,14 +315,9 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
             return;
         }
 
-        foreach (NotificationIntentMatchRow match in covered)
+        foreach (NotificationIntentMatchRow match in intent.Matches.Where(match => match.Condition == condition))
         {
             match.SuppressedAsRepeat = true;
-        }
-
-        if (intent.Matches.All(match => match.SuppressedAsRepeat))
-        {
-            intent.Status = nameof(NotificationStatus.SuppressedRepeat);
         }
     }
 
