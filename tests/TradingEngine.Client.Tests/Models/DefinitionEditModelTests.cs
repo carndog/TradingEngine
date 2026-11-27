@@ -6,6 +6,32 @@ namespace TradingEngine.Client.Tests.Models;
 public sealed class DefinitionEditModelTests
 {
     [Test]
+    public void FromDto_ResistanceEntry_RetainsOptInActionAndCloneIndependence()
+    {
+        DefinitionEditModel model = DefinitionEditModel.Empty();
+        model.AddResistanceZone();
+        model.ResistanceZones[0].Id = "resistance-a";
+        model.ResistanceZones[0].Lower = 120m;
+        model.ResistanceZones[0].Level = 125m;
+        model.ResistanceZones[0].Upper = 130m;
+        DefinitionEditModel original = model.Clone();
+        model.ResistanceZones[0].ResistanceEntryEnabled = true;
+        model.ResistanceZones[0].Conditions[1].ActionId = "custom-action";
+
+        DefinitionEditModel restored = DefinitionEditModel.FromDto(model.ToDto());
+        DefinitionEditModel clone = restored.Clone();
+
+        Assert.That(restored.SameContent(model), Is.True);
+        Assert.That(restored.ResistanceZones[0].ResistanceEntryEnabled, Is.True);
+        Assert.That(restored.ResistanceZones[0].Conditions[1].ActionId, Is.EqualTo("custom-action"));
+        Assert.That(restored.DescribeChangesAgainst(original), Does.Contain("condition 'resistance-entry' added"));
+        clone.ResistanceZones[0].ResistanceEntryEnabled = false;
+        Assert.That(restored.ResistanceZones[0].ResistanceEntryEnabled, Is.True);
+        Assert.That(clone.DescribeChangesAgainst(restored), Does.Contain("condition 'resistance-entry' removed"));
+        Assert.That(DefinitionEditModel.FromDto(original.ToDto()).ResistanceZones[0].ResistanceEntryEnabled, Is.False);
+    }
+
+    [Test]
     public void SameContent_ClonedModel_ReturnsTrue()
     {
         DefinitionEditModel model = DefinitionEditModel.Empty();

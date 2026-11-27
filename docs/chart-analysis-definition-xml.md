@@ -87,12 +87,13 @@ Conditions describe generic chart events. They do not decide position size, orde
 | `buy-zone` | Support zone | The previous price was above `upper` and the current price is greater than `level` and less than or equal to `upper` |
 | `support-loss` | Support zone | The previous price was greater than or equal to `lower` and the current price is below `lower` |
 | `breakout` | Resistance zone | The previous price was less than or equal to `upper` and the current price is above `upper` |
+| `resistance-entry` | Resistance zone, optional | The previous price was below `lower` and the current price is within `[lower, upper]` |
 
 Equality with a boundary remains within the zone. A first observation establishes state and does not produce a crossing condition. `ChartAnalysisEvaluator` implements these semantics (see [Chart-condition evaluation](chart-analysis-evaluation.md)); later integration work will own deduplication and the durable record of triggered alerts rather than a record of every evaluation.
 
 Each zone has a stable `id` so a resulting signal can identify the chart feature that produced it. Each condition has a stable `actionId` resolved by an application action registry. The only public example action is `publish-signal`; strategy-specific or execution-specific actions and parameters remain private.
 
-A support zone must contain one `buy-zone` condition followed by one `support-loss` condition. A resistance zone must contain one `breakout` condition. Conditions cannot be duplicated or placed under the wrong zone type.
+A support zone must contain one `buy-zone` condition followed by one `support-loss` condition. A resistance zone must contain one `breakout` condition, optionally followed by one `resistance-entry` condition. Omitting entry retains the existing breakout-only behavior. Conditions cannot be duplicated or placed under the wrong zone type.
 
 ## Deterministic serialization
 
@@ -144,3 +145,16 @@ The document deliberately contains only:
 - Price-format metadata.
 
 Historical prices, generated signals, trade intents, orders, credentials, execution mode and proprietary strategy parameters are outside this document.
+
+## Opting into resistance entry
+
+Registration and draft editing expose an unchecked resistance-entry control per resistance zone. Enabling it adds the optional condition after `breakout` with the generic `publish-signal` action. For an existing instrument, save and apply or schedule the draft through the usual concurrency-protected workflow. Old and historical definitions are not modified. A prior buy signal never creates a resistance target.
+
+```xml
+<ResistanceZone id="resistance-a" lower="120.00" level="125.00" upper="130.00">
+  <Condition type="breakout" actionId="publish-signal" />
+  <Condition type="resistance-entry" actionId="publish-signal" />
+</ResistanceZone>
+```
+
+The JSON condition name is also `resistance-entry`. Signal read APIs retain the distinct `ResistanceEntry` condition value; immediate emails and newly composed weekly reports label it “resistance entry”. See [evaluation boundaries](chart-analysis-evaluation.md#condition-semantics) and [rollout](price-recommendations.md#resistance-entry-rollout).

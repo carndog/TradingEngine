@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using NodaTime;
 using TradingEngine.Contracts.MonitoringRules;
+using TradingEngine.Contracts.WatchedInstruments;
 using static TradingEngine.Api.IntegrationTests.MonitoringRules.MonitoringRuleApiHost;
 
 namespace TradingEngine.Api.IntegrationTests.MonitoringRules;
@@ -29,6 +30,35 @@ public sealed class MonitoringRuleLifecycleEndpointTests
     public void TearDown()
     {
         _host.Dispose();
+    }
+
+    [Test]
+    public async Task PostApply_ResistanceEntryDraft_PreservesOptInAndHistoricalDefinition()
+    {
+        MonitoringRuleTimelineResponse original = await _host.GetTimelineAsync();
+        MonitoringRuleDefinitionDto definition = DefinitionDto(100m) with
+        {
+            ResistanceZones = [new ChartZoneDto("resistance-a", 120m, 125m, 130m,
+                [new ChartConditionDto("breakout", "publish-signal"),
+                 new ChartConditionDto("resistance-entry", "publish-signal")])]
+        };
+        HttpResponseMessage createdResponse = await _host.SendAsync(HttpMethod.Post, Path("/drafts"),
+            new MonitoringRuleDraftRequest("enable resistance entry", null, definition), original.ConcurrencyToken);
+        MonitoringRuleRevisionResponse? created = await createdResponse.Content.ReadFromJsonAsync<MonitoringRuleRevisionResponse>();
+        MonitoringRuleDraftsResponse drafts = await _host.GetDraftsAsync();
+        Assert.That(drafts.Drafts.Single().Definition.ResistanceZones![0].Conditions!.Select(condition => condition.Type),
+            Is.EqualTo(new[] { "breakout", "resistance-entry" }));
+
+        HttpResponseMessage appliedResponse = await _host.SendAsync(HttpMethod.Post,
+            Path($"/drafts/{created!.Revision.Id}/apply"), null, created.ConcurrencyToken);
+        MonitoringRuleTimelineResponse timeline = await _host.GetTimelineAsync();
+
+        Assert.That(appliedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(timeline.Revisions[0].Id, Is.EqualTo(original.Revisions[0].Id));
+        Assert.That(timeline.Revisions[0].Definition.ResistanceZones, Is.Empty);
+        Assert.That(timeline.Revisions[1].Id, Is.EqualTo(created.Revision.Id));
+        Assert.That(timeline.Revisions[1].Definition.ResistanceZones![0].Conditions!.Select(condition => condition.Type),
+            Is.EqualTo(new[] { "breakout", "resistance-entry" }));
     }
 
     [Test]

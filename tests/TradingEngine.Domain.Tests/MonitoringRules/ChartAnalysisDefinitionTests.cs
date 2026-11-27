@@ -6,6 +6,53 @@ namespace TradingEngine.Domain.Tests.MonitoringRules;
 [TestFixture]
 public sealed class ChartAnalysisDefinitionTests
 {
+    [TestCase(ChartConditionType.Breakout, ChartConditionType.ResistanceEntry, true)]
+    [TestCase(ChartConditionType.ResistanceEntry, ChartConditionType.Breakout, false)]
+    [TestCase(ChartConditionType.ResistanceEntry, ChartConditionType.ResistanceEntry, false)]
+    [TestCase(ChartConditionType.Breakout, ChartConditionType.Breakout, false)]
+    [TestCase(ChartConditionType.Breakout, ChartConditionType.BuyZone, false)]
+    public void Create_ResistanceConditions_ValidatesOptionalEntryOrder(
+        ChartConditionType first, ChartConditionType second, bool valid)
+    {
+        ChartAnalysisIdentifier action = ChartAnalysisIdentifier.From("publish-signal").Value;
+        ChartZone zone = ChartZone.Create(ChartAnalysisIdentifier.From("resistance-a").Value, 120m, 125m, 130m,
+            [ChartCondition.Create(first, action).Value, ChartCondition.Create(second, action).Value]).Value;
+
+        Result<ChartAnalysisDefinition> result = ChartAnalysisDefinition.Create(2, [], [zone]);
+
+        Assert.That(result.IsSuccess, Is.EqualTo(valid));
+        if (valid is false)
+        {
+            Assert.That(result.Error.Code, Is.EqualTo("chart_analysis.invalid_condition_order"));
+        }
+    }
+
+    [Test]
+    public void Create_ResistanceEntryOnSupportZone_RejectsDefinition()
+    {
+        ChartZone zone = CreateResistanceZone("support-a", 95m, 100m, 105m);
+        ChartCondition entry = ChartCondition.Create(ChartConditionType.ResistanceEntry,
+            ChartAnalysisIdentifier.From("publish-signal").Value).Value;
+        ChartZone support = ChartZone.Create(zone.Id, zone.Lower, zone.Level, zone.Upper, [entry]).Value;
+
+        Result<ChartAnalysisDefinition> result = ChartAnalysisDefinition.Create(2, [support], []);
+
+        Assert.That(result.Error.Code, Is.EqualTo("chart_analysis.invalid_condition_order"));
+    }
+
+    [Test]
+    public void Create_ResistanceEntryWithoutBreakout_RejectsDefinition()
+    {
+        ChartCondition entry = ChartCondition.Create(ChartConditionType.ResistanceEntry,
+            ChartAnalysisIdentifier.From("publish-signal").Value).Value;
+        ChartZone zone = ChartZone.Create(ChartAnalysisIdentifier.From("resistance-a").Value,
+            120m, 125m, 130m, [entry]).Value;
+
+        Result<ChartAnalysisDefinition> result = ChartAnalysisDefinition.Create(2, [], [zone]);
+
+        Assert.That(result.Error.Code, Is.EqualTo("chart_analysis.invalid_condition_order"));
+    }
+
     [Test]
     public void Create_WithValidZones_ReturnsDefinition()
     {

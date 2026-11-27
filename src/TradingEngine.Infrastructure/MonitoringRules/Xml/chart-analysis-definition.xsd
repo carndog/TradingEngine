@@ -27,6 +27,7 @@
       <xs:enumeration value="buy-zone" />
       <xs:enumeration value="support-loss" />
       <xs:enumeration value="breakout" />
+      <xs:enumeration value="resistance-entry" />
     </xs:restriction>
   </xs:simpleType>
 

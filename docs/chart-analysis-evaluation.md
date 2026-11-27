@@ -50,10 +50,11 @@ Conditions follow the canonical contract in [Chart-analysis definition XML](char
 | `buy-zone` | Support | Entering from above | `previous > upper` and `level < current <= upper` |
 | `support-loss` | Support | Leaving below | `previous >= lower` and `current < lower` |
 | `breakout` | Resistance | Leaving above | `previous <= upper` and `current > upper` |
+| `resistance-entry` | Resistance, opt-in | Entering from below | `previous < lower` and `lower <= current <= upper` |
 
 In transition terms: a price below `lower` is below the zone, `(level, upper]` is the buy-zone band, `[lower, upper]` is within the zone, and above `upper` is above. Boundary equality is inclusive on the previous side and on `buy-zone`'s entry bound: a previous observation exactly at `lower` or `upper` still counts as being on that boundary and can cross on the next sample — `previous == lower` followed by `current < lower` fires `support-loss`, and `previous == upper` followed by `current > upper` fires `breakout` — while a current observation exactly at `lower` or `upper` does not itself constitute a loss or breakout. `buy-zone` fires when the current price lands exactly on `upper`.
 
-Each zone contributes at most one match per evaluation because the three conditions partition the transition space. A price that jumps across a whole zone in one step fires only the condition for the observed endpoints — for example `above -> below` a support zone fires `support-loss`, never `buy-zone` — because no unobserved intermediate path is inferred.
+Each zone contributes at most one match per evaluation because each zone's conditions partition the transition space. A price that jumps across a whole zone in one step fires only the condition for the observed endpoints — for example `above -> below` a support zone fires `support-loss`, never `buy-zone` — because no unobserved intermediate path is inferred.
 
 ## Outcomes and failure separation
 
@@ -102,3 +103,9 @@ Issue #11 implements what happens to these results in [price-recommendations.md]
 ## Boundary
 
 The evaluator is generic public infrastructure: it mechanically applies the documented condition contract to caller-supplied definitions. Real zone levels, instrument selections, meaningful parameters, generated alerts and private research remain private under [PUBLIC_SCOPE.md](../PUBLIC_SCOPE.md); tests and examples here use only synthetic fixtures.
+
+## Resistance entry and sampling
+
+Entry uses the full configured interval, including both boundaries, rather than a distance-to-resistance threshold. With synthetic bounds 120–130, 119 → 120, 119 → 125 and 119 → 130 produce entry. Remaining inside, falling into the zone from above, or first observing a price inside the band produces no entry. A 119 → 131 jump produces breakout only. Different zones may produce different observed events in the same evaluation.
+
+An observed fall below the band followed by a rise back into it can produce another event. Email eligibility is independently subject to the [per-condition cooldown](price-recommendations.md#per-condition-email-cooldowns). A rise into and back out of the band between collected observations cannot be inferred retrospectively. Entry is informational and needs neither a prior buy signal nor a position; it does not place orders or assert profit.

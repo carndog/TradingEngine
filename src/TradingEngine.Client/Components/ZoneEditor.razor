@@ -22,6 +22,16 @@
             <input type="number" step="any" @bind="Zone.Upper" @bind:event="oninput" @bind:after="NotifyChanged" aria-label="Upper bound">
         </label>
     </div>
+    @if (Zone.Kind == "resistance")
+    {
+        <label>
+            <input type="checkbox" @bind="Zone.ResistanceEntryEnabled" @bind:after="NotifyChanged"
+                   aria-label="Enable resistance entry alert">
+            Alert when price rises into this resistance zone
+        </label>
+        <p class="te-note">Resistance entry alerts on a rise from below Lower into the Lower–Upper band.
+            Breakout alerts on a rise above Upper. A sampled jump above the whole band produces breakout only.</p>
+    }
     @foreach (ConditionEditModel condition in Zone.Conditions)
     {
         <div class="te-row" style="justify-content:flex-start;gap:14px">

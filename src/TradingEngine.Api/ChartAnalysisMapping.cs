@@ -151,6 +151,7 @@ internal static class ChartAnalysisMapping
             "buy-zone" => ChartConditionType.BuyZone,
             "support-loss" => ChartConditionType.SupportLoss,
             "breakout" => ChartConditionType.Breakout,
+            "resistance-entry" => ChartConditionType.ResistanceEntry,
             _ => ChartAnalysisErrors.ConditionTypeUndefined
         };
     }
@@ -179,6 +180,7 @@ internal static class ChartAnalysisMapping
             ChartConditionType.BuyZone => "buy-zone",
             ChartConditionType.SupportLoss => "support-loss",
             ChartConditionType.Breakout => "breakout",
+            ChartConditionType.ResistanceEntry => "resistance-entry",
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unknown chart condition type.")
         };
     }

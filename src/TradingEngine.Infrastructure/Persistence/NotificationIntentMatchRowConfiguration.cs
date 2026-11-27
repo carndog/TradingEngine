@@ -57,7 +57,7 @@ internal sealed class NotificationIntentMatchRowConfiguration
 
         builder.ToTable(table => table.HasCheckConstraint(
             "CK_NotificationIntentMatches_Condition",
-            "[Condition] IN ('BuyZone', 'SupportLoss', 'Breakout')"));
+            "[Condition] IN ('BuyZone', 'SupportLoss', 'Breakout', 'ResistanceEntry')"));
 
         builder.HasOne(row => row.Intent)
             .WithMany(intent => intent.Matches)

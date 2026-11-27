@@ -13,8 +13,11 @@ public sealed class RecommendationEmailRendererTests
         Guid.Parse("aaaaaaaa-0000-4000-8000-000000000001");
     private static readonly Instant Slot = Instant.FromUtc(2026, 10, 30, 13, 44, 0);
 
-    [Test]
-    public void Render_WhenIntentHasBuyZoneMatch_IncludesRequiredFields()
+    [TestCase(ChartConditionType.BuyZone, "buy-zone entry")]
+    [TestCase(ChartConditionType.SupportLoss, "support-loss")]
+    [TestCase(ChartConditionType.Breakout, "breakout")]
+    [TestCase(ChartConditionType.ResistanceEntry, "resistance entry")]
+    public void Render_WhenIntentHasMatch_IncludesRequiredFields(ChartConditionType condition, string label)
     {
         PendingNotification intent = new(
             Guid.CreateVersion7(),
@@ -31,7 +34,7 @@ public sealed class RecommendationEmailRendererTests
             [
                 new TriggeredCondition(
                     ChartAnalysisIdentifier.From("support-a").Value,
-                    ChartConditionType.BuyZone,
+                    condition,
                     ChartAnalysisIdentifier.From("notify").Value,
                     95m,
                     100m,
@@ -48,7 +51,8 @@ public sealed class RecommendationEmailRendererTests
         Assert.Multiple(() =>
         {
             Assert.That(email.Subject, Does.Contain("DEMO"));
-            Assert.That(email.Subject, Does.Contain("buy-zone entry"));
+            Assert.That(email.Subject, Does.Contain(label));
+            Assert.That(email.PlainTextBody, Does.Contain(label));
             Assert.That(email.PlainTextBody, Does.Contain("DEMO (XNAS)"));
             Assert.That(email.PlainTextBody, Does.Contain("2026-10-30T13:44:00Z"));
             Assert.That(email.PlainTextBody, Does.Contain("100.25 USD (Bid basis)"));

@@ -52,6 +52,31 @@ public sealed class WatchedInstrumentEndpointTests
     }
 
     [Test]
+    public async Task PostWatchedInstrument_OptedInResistance_RoundTripsBothConditions()
+    {
+        HttpClient client = _factory.CreateClient();
+        RegisterWatchedInstrumentRequest request = CreateRequest() with
+        {
+            ResistanceZones = [new ChartZoneDto("resistance-a", 120m, 125m, 130m,
+                [new ChartConditionDto("breakout", "publish-signal"),
+                 new ChartConditionDto("resistance-entry", "publish-signal")])]
+        };
+
+        HttpResponseMessage response = await client.PostAsJsonAsync("/api/watched-instruments", request);
+        WatchedInstrumentResponse? created = await response.Content.ReadFromJsonAsync<WatchedInstrumentResponse>();
+        _store.GetResult = CreateConfiguration(_store.GeneratedId, _store.AddedRegistration!);
+        HttpResponseMessage read = await client.GetAsync($"/api/watched-instruments/{created!.Id}");
+        WatchedInstrumentResponse? retrieved = await read.Content.ReadFromJsonAsync<WatchedInstrumentResponse>();
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        Assert.That(read.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(created.ResistanceZones[0].Conditions!.Select(condition => condition.Type),
+            Is.EqualTo(new[] { "breakout", "resistance-entry" }));
+        Assert.That(retrieved!.ResistanceZones[0].Conditions!.Select(condition => condition.Type),
+            Is.EqualTo(new[] { "breakout", "resistance-entry" }));
+    }
+
+    [Test]
     public async Task PostWatchedInstrument_WithValidRequest_ReturnsCreatedWithLocationAndBody()
     {
         HttpClient client = _factory.CreateClient();

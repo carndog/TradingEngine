@@ -263,7 +263,8 @@ public sealed class SqlServerRecommendationStore : IRecommendationEvaluationStor
         string[] coveredConditions = intent.Matches
             .Select(match => match.Condition)
             .Where(condition => condition is nameof(ChartConditionType.BuyZone)
-                or nameof(ChartConditionType.SupportLoss))
+                or nameof(ChartConditionType.SupportLoss)
+                or nameof(ChartConditionType.ResistanceEntry))
             .Distinct()
             .ToArray();
         if (coveredConditions.Length == 0)

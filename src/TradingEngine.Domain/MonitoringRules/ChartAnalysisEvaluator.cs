@@ -147,6 +147,8 @@ public sealed class ChartAnalysisEvaluator
                 previousPrice >= zone.Lower && currentPrice < zone.Lower,
             ChartConditionType.Breakout =>
                 previousPrice <= zone.Upper && currentPrice > zone.Upper,
+            ChartConditionType.ResistanceEntry =>
+                previousPrice < zone.Lower && currentPrice >= zone.Lower && currentPrice <= zone.Upper,
             _ => false
         };
     }

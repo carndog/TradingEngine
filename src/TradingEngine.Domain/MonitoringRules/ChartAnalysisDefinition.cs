@@ -14,7 +14,8 @@ public sealed record ChartAnalysisDefinition
 
     private static readonly ChartConditionType[] ResistanceConditionOrder =
     [
-        ChartConditionType.Breakout
+        ChartConditionType.Breakout,
+        ChartConditionType.ResistanceEntry
     ];
 
     private ChartAnalysisDefinition(
@@ -50,7 +51,7 @@ public sealed record ChartAnalysisDefinition
         IReadOnlyList<ChartZone> resistance = CopyZones(resistanceZones, nameof(resistanceZones));
 
         Error? failure = EnsureConditionOrder(support, SupportConditionOrder, "A support zone")
-            ?? EnsureConditionOrder(resistance, ResistanceConditionOrder, "A resistance zone")
+            ?? EnsureConditionOrder(resistance, ResistanceConditionOrder, "A resistance zone", optionalLast: true)
             ?? EnsureUniqueZoneIds(support, resistance)
             ?? EnsurePriceScale(support, resistance, priceScale)
             ?? EnsureNoOverlap(support, resistance);
@@ -78,7 +79,8 @@ public sealed record ChartAnalysisDefinition
     private static Error? EnsureConditionOrder(
         IReadOnlyList<ChartZone> zones,
         ChartConditionType[] requiredOrder,
-        string zoneDescription)
+        string zoneDescription,
+        bool optionalLast = false)
     {
         foreach (ChartZone zone in zones)
         {
@@ -86,9 +88,11 @@ public sealed record ChartAnalysisDefinition
                 .Select(condition => condition.Type)
                 .ToArray();
 
-            if (actual.SequenceEqual(requiredOrder) is false)
+            bool valid = actual.SequenceEqual(requiredOrder)
+                || (optionalLast && actual.SequenceEqual(requiredOrder.SkipLast(1)));
+            if (valid is false)
             {
-                return ChartAnalysisErrors.InvalidConditionOrder(zoneDescription, requiredOrder);
+                return ChartAnalysisErrors.InvalidConditionOrder(zoneDescription, requiredOrder, optionalLast);
             }
         }
 

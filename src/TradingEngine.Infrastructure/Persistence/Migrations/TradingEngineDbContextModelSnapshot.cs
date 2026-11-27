@@ -317,7 +317,7 @@ namespace TradingEngine.Infrastructure.Persistence.Migrations
 
                     b.ToTable("NotificationIntentMatches", null, t =>
                         {
-                            t.HasCheckConstraint("CK_NotificationIntentMatches_Condition", "[Condition] IN ('BuyZone', 'SupportLoss', 'Breakout')");
+                            t.HasCheckConstraint("CK_NotificationIntentMatches_Condition", "[Condition] IN ('BuyZone', 'SupportLoss', 'Breakout', 'ResistanceEntry')");
                         });
                 });
 
