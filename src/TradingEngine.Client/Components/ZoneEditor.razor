@@ -24,7 +24,7 @@
     </div>
     @if (Zone.Kind == "resistance")
     {
-        <label>
+        <label style="display:flex;gap:8px;align-items:center">
             <input type="checkbox" @bind="Zone.ResistanceEntryEnabled" @bind:after="NotifyChanged"
                    aria-label="Enable resistance entry alert">
             Alert when price rises into this resistance zone

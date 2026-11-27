@@ -444,9 +444,9 @@ public sealed class RecommendationPipelinePersistenceTests
         RecordingEmailSender sender = new();
         BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
         await AddObservationAsync(asset, T0, 110m);
-        await RunEvaluationAsync(policy: policy);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(1), TriggerPrice(first));
-        await RunEvaluationAsync(policy: policy);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         if (accepted)
         {
             await RunDispatchAsync(sender, clock);
@@ -456,14 +456,14 @@ public sealed class RecommendationPipelinePersistenceTests
 
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(2), 110m);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(3), TriggerPrice(second));
-        await RunEvaluationAsync(policy: policy);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await RunDispatchAsync(sender, clock);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(4), 110m);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(5), TriggerPrice(first));
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(6), 110m);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(7), TriggerPrice(second));
-        await RunEvaluationAsync(policy: policy);
-        await RunEvaluationAsync(policy: policy);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await RunDispatchAsync(sender, clock);
         await using TradingEngineDbContext context = CreateContext();
         IReadOnlyList<SignalEvidence> history = await new SqlServerSignalEvidenceReader(context).ReadAsync(
@@ -491,34 +491,36 @@ public sealed class RecommendationPipelinePersistenceTests
             await AddObservationAsync(asset, T0, 110m);
         }
 
-        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(1), 125m);
-        await RunEvaluationAsync(policy: policy);
-        RecordingEmailSender sender = new();
         BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(1), 125m);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        RecordingEmailSender sender = new();
         await RunDispatchAsync(sender, clock);
         sender.ProbeResults.Enqueue(new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
         await RunDispatchAsync(sender, clock);
 
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(20), 102m);
-        await RunEvaluationAsync(policy: policy);
         clock.Now = T0 + Duration.FromMinutes(30);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await RunDispatchAsync(sender, clock);
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(128), 110m);
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(129), 125m);
         await AddObservationAsync(secondAsset, T0 + Duration.FromMinutes(129), 125m);
-        await RunEvaluationAsync(policy: policy);
         clock.Now = T0 + Duration.FromMinutes(129);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await RunDispatchAsync(sender, clock);
 
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(129) + Duration.FromSeconds(30), 110m);
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(130), 125m);
-        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(131), 102m);
-        await RunEvaluationAsync(policy: policy);
         clock.Now = T0 + Duration.FromMinutes(130);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await RunDispatchAsync(sender, clock);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(131), 102m);
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(132), 110m);
         await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(133), 125m);
-        await RunEvaluationAsync(policy: policy);
+        clock.Now = T0 + Duration.FromMinutes(133);
+        await RunEvaluationAsync(policy: policy, clock: clock);
         await RunDispatchAsync(sender, clock);
 
         Assert.That(sender.Sends, Has.Count.EqualTo(4));
@@ -546,13 +548,14 @@ public sealed class RecommendationPipelinePersistenceTests
             Assert.That(added.IsSuccess, Is.True);
         }
 
+        BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
         await AddObservationAsync(asset, T0, 110m);
+        await RunEvaluationAsync(suppressRepeats: true, clock: clock);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(1), 125m);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(2), 110m);
         await AddObservationAsync(asset, T0 + Duration.FromMinutes(3), 125m);
-        await RunEvaluationAsync(suppressRepeats: true);
+        await RunEvaluationAsync(suppressRepeats: true, clock: clock);
         RecordingEmailSender sender = new();
-        BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
         await RunDispatchAsync(sender, clock);
         await using TradingEngineDbContext context = CreateContext();
         IReadOnlyList<SignalEvidence> history = await new SqlServerSignalEvidenceReader(context).ReadAsync(
@@ -1449,15 +1452,15 @@ public sealed class RecommendationPipelinePersistenceTests
         return intentId;
     }
 
-    private async Task<EvaluationRunResult> RunEvaluationAsync(bool suppressRepeats = false, AssetEmailCooldown? policy = null)
+    private async Task<EvaluationRunResult> RunEvaluationAsync(bool suppressRepeats = false, AssetEmailCooldown? policy = null, IClock? clock = null)
     {
         await using TradingEngineDbContext context = CreateContext();
-        return await CreateHandler(context, suppressRepeats, policy).HandleAsync(
+        return await CreateHandler(context, suppressRepeats, policy, clock).HandleAsync(
             new EvaluateSavedPrices(),
             CancellationToken.None);
     }
 
-    private EvaluateSavedPricesHandler CreateHandler(TradingEngineDbContext context, bool suppressRepeats = false, AssetEmailCooldown? policy = null)
+    private EvaluateSavedPricesHandler CreateHandler(TradingEngineDbContext context, bool suppressRepeats = false, AssetEmailCooldown? policy = null, IClock? clock = null)
     {
         return new EvaluateSavedPricesHandler(
             new SqlServerRecommendationStore(context, policy ?? (suppressRepeats
@@ -1465,7 +1468,7 @@ public sealed class RecommendationPipelinePersistenceTests
                 : AssetEmailCooldown.Disabled)),
             new SqlServerMonitoringRuleStore(context, _serializer),
             new ChartAnalysisEvaluator(),
-            SystemClock.Instance,
+            clock ?? SystemClock.Instance,
             TimeProvider.System,
             new RecommendationOptions
             {

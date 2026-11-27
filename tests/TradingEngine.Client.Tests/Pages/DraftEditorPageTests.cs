@@ -100,7 +100,7 @@ public sealed class DraftEditorPageTests
         {
             submitted = await request.Content!.ReadFromJsonAsync<MonitoringRuleDraftRequest>(cancellationToken);
             return StubHttpMessageHandler.Json(HttpStatusCode.OK,
-                ClientTestData.JsonOf(ClientTestData.RevisionResponse("tok-d2", Draft(submitted!.Definition!))));
+                ClientTestData.JsonOf(ClientTestData.Timeline("tok-d2")));
         });
         using BunitContext ctx = CreateContext(handler);
         IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(parameters => parameters
