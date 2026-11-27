@@ -4,5 +4,6 @@ public enum ChartConditionType
 {
     BuyZone,
     SupportLoss,
-    Breakout
+    Breakout,
+    ResistanceEntry
 }

@@ -73,6 +73,7 @@ public sealed class RecommendationEmailRenderer
             ChartConditionType.BuyZone => "buy-zone entry",
             ChartConditionType.SupportLoss => "support-loss",
             ChartConditionType.Breakout => "breakout",
+            ChartConditionType.ResistanceEntry => "resistance entry",
             _ => condition.ToString()
         };
     }

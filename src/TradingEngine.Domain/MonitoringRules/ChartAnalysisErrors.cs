@@ -67,11 +67,13 @@ public static class ChartAnalysisErrors
 
     public static Error InvalidConditionOrder(
         string zoneDescription,
-        IReadOnlyList<ChartConditionType> requiredOrder)
+        IReadOnlyList<ChartConditionType> requiredOrder,
+        bool optionalLast = false)
     {
+        string suffix = optionalLast ? " The last condition is optional." : string.Empty;
         return Error.Validation(
             "chart_analysis.invalid_condition_order",
-            $"{zoneDescription} must declare conditions in the order: {string.Join(", ", requiredOrder)}.");
+            $"{zoneDescription} must declare conditions in the order: {string.Join(", ", requiredOrder)}.{suffix}");
     }
 
     public static Error DuplicateZoneId(string zoneId)

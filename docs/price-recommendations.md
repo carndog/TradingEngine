@@ -75,22 +75,22 @@ intent already present while the checkpoint is still behind — only possible
 through manual repair — the checkpoint advance is committed anyway
 (`AlreadyRecorded`), which self-heals rather than stalling the instrument.
 
-## Per-condition cooldown for buy-zone and support-loss emails
+## Per-condition email cooldowns
 
-Buy-zone entry and support loss each keep their own immediate-email cooldown
+Buy-zone entry, support loss and optional resistance entry each keep their own immediate-email cooldown
 per watched instrument, shared across that instrument's zones and rule
 revisions. A buy-zone email suppresses only later buy-zone emails for the
 same instrument; a support-loss email suppresses only later support-loss
-emails for the same instrument. Different instruments remain independent.
+emails for the same instrument. Resistance entry suppresses only later resistance-entry emails for that instrument. Different instruments remain independent.
 A crossing before its own condition's expiry is recorded silently. The first
 crossing of that condition at or after expiry can send the next email.
-Suppressed crossings and quiet periods restart neither clock. Breakout
-emails are independent of both clocks.
+Suppressed crossings and quiet periods restart none of these clocks. Breakout
+emails remain independent of these clocks.
 
 Each clock starts at the recorded acceptance of that condition's immediate
 email by the provider. While a selected submission is outstanding, its
 reservation prevents another worker or crossing from queuing a second email
-for the same condition — the other condition can still send. If acceptance
+for the same condition — the other conditions can still send. If acceptance
 is only established during successful reconciliation, that confirmation time
 is used. A terminal failure releases only that condition's reservation. Time
 comparisons use the observation slot and UTC. Calendar months use the
@@ -241,3 +241,14 @@ The pipeline is generic public infrastructure. Zone contents, recipient
 addresses, ACS credentials and any live deployment values remain private under
 [PUBLIC_SCOPE.md](../PUBLIC_SCOPE.md); tests and examples use only synthetic
 fixtures.
+
+## Resistance-entry rollout
+
+Story #155 adds optional resistance-entry events through the existing evaluator, durable intents, delivery attempts, signal history and weekly reports. Repeated events share the existing private interval configuration, but selections and clocks are keyed separately by instrument and condition. A pending or accepted buy-zone or support-loss notification does not reserve the resistance-entry clock. Suppressed entry events remain in history and reports with `SuppressedRepeat`; their detection does not move the last accepted-email time.
+
+1. Apply `20261127190432_ResistanceEntryAlerts` before deploying the application. It only widens the notification-match condition constraint; it does not rewrite definitions, signals, report snapshots or prices.
+2. Deploy all readers and workers before opting in. Previous binaries cannot deserialize a new resistance-entry definition. Existing breakout-only definitions remain valid and keep their original behavior.
+3. Explicitly configure a resistance zone and enable entry in registration or a new draft. Review and commit that draft normally. Leave actual instruments, boundaries and policy values in private configuration.
+4. Verify the saved definition and new event labels. No historical entry events are backfilled or emails resent. Existing notification enablement, dispatch settings and private repeat intervals still apply.
+
+Before first use, rollback can restore the previous constraint without removing rows. Once any registration or revision contains `resistance-entry`, or signal history contains `ResistanceEntry`, the migration refuses downgrade. Use a forward fix that preserves that evidence; do not delete history to downgrade. Existing immutable weekly report payloads are not regenerated.

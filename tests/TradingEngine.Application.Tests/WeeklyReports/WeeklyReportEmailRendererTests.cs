@@ -13,6 +13,26 @@ public sealed class WeeklyReportEmailRendererTests
 {
     private static readonly Instant Cutoff = Instant.FromUtc(2026, 1, 18, 18, 0);
 
+    [Test]
+    public void Render_ResistanceEntry_LabelsBothBodiesWithoutChangingConditionEvidence()
+    {
+        WeeklyReportOptions options = new();
+        SignalStatus item = Item() with { Condition = "ResistanceEntry", EmailStatus = "SuppressedRepeat" };
+
+        RecommendationEmail email = new WeeklyReportEmailRenderer(options).Render(
+            new WeeklyReportSchedule(options).PeriodEndingAt(Cutoff), null, [item], [], 0);
+
+        foreach (string body in new[] { email.PlainTextBody, WebUtility.HtmlDecode(email.HtmlBody ?? string.Empty) })
+        {
+            Assert.That(body, Does.Contain("resistance entry"));
+            Assert.That(body, Does.Contain("Original email status: SuppressedRepeat"));
+            Assert.That(body, Does.Not.Contain("BuyZone"));
+            Assert.That(body, Does.Not.Contain("Breakout"));
+        }
+
+        Assert.That(item.Condition, Is.EqualTo("ResistanceEntry"));
+    }
+
     [TestCase("42.370000000000000000", "42.37")]
     [TestCase("42", "42.00")]
     [TestCase("0.012340000000000000", "0.01234")]

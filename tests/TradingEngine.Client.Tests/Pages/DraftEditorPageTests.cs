@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,6 +78,44 @@ public sealed class DraftEditorPageTests
             proposedFrom,
             null,
             definition);
+    }
+
+    [Test]
+    public async Task SaveDraft_ResistanceEntryOptIn_SendsConditionAndRetainsItAfterSave()
+    {
+        StubHttpMessageHandler handler = new();
+        MonitoringRuleDefinitionDto definition = Definition(2, 95m, 100m, 105m) with
+        {
+            ResistanceZones = [new ChartZoneDto("resistance-a", 120m, 125m, 130m,
+                [new ChartConditionDto("breakout", "publish-signal")])]
+        };
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Settings(InstrumentId))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.RevisionResponse("tok-d1", Draft(definition)))));
+        handler.Enqueue(StubHttpMessageHandler.Json(HttpStatusCode.OK,
+            ClientTestData.JsonOf(ClientTestData.Timeline("tok-t1"))));
+        MonitoringRuleDraftRequest? submitted = null;
+        handler.Enqueue(async (request, cancellationToken) =>
+        {
+            submitted = await request.Content!.ReadFromJsonAsync<MonitoringRuleDraftRequest>(cancellationToken);
+            return StubHttpMessageHandler.Json(HttpStatusCode.OK,
+                ClientTestData.JsonOf(ClientTestData.Timeline("tok-d2")));
+        });
+        using BunitContext ctx = CreateContext(handler);
+        IRenderedComponent<DraftEditorPage> cut = ctx.Render<DraftEditorPage>(parameters => parameters
+            .Add(component => component.Id, InstrumentId).Add(component => component.DraftId, DraftId));
+        cut.WaitForAssertion(() => Assert.That(cut.FindAll("input[aria-label='Enable resistance entry alert']"),
+            Has.Count.EqualTo(1)));
+
+        await cut.InvokeAsync(() => cut.Find("input[aria-label='Enable resistance entry alert']").Change(true));
+        await cut.InvokeAsync(() => cut.FindAll("button").Single(button => button.TextContent == "Save draft").Click());
+
+        cut.WaitForAssertion(() => Assert.That(submitted, Is.Not.Null));
+        Assert.That(submitted!.Definition!.ResistanceZones![0].Conditions!.Select(condition => condition.Type),
+            Is.EqualTo(new[] { "breakout", "resistance-entry" }));
+        Assert.That(cut.Find("input[aria-label='Enable resistance entry alert']").HasAttribute("checked"), Is.True);
+        Assert.That(handler.Methods.Last(), Is.EqualTo(HttpMethod.Put));
     }
 
     [Test]

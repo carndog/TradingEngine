@@ -20,7 +20,23 @@ public sealed class ZoneEditModel
 
     public decimal? Upper { get; set; }
 
-    public IReadOnlyList<ConditionEditModel> Conditions { get; }
+    public IReadOnlyList<ConditionEditModel> Conditions { get; private set; }
+
+    public bool ResistanceEntryEnabled
+    {
+        get => Conditions.Any(condition => condition.Type == "resistance-entry");
+        set
+        {
+            if (Kind != "resistance" || value == ResistanceEntryEnabled)
+            {
+                return;
+            }
+
+            Conditions = value
+                ? [.. Conditions, new ConditionEditModel("resistance-entry", "publish-signal")]
+                : Conditions.Where(condition => condition.Type != "resistance-entry").ToArray();
+        }
+    }
 
     public ChartZoneDto ToDto()
     {
@@ -83,6 +99,7 @@ public sealed class ZoneEditModel
 
         if (dto.Conditions is not null)
         {
+            zone.ResistanceEntryEnabled = dto.Conditions.Any(condition => condition.Type == "resistance-entry");
             List<ConditionEditModel> conditions = zone.Conditions.ToList();
             foreach (ChartConditionDto condition in dto.Conditions)
             {

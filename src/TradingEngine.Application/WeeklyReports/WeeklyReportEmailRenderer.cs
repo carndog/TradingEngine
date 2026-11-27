@@ -66,7 +66,8 @@ public sealed class WeeklyReportEmailRenderer(WeeklyReportOptions options)
 
         string latest = item.LatestPrice is decimal latestPrice ? FormatPrice(latestPrice) : "unavailable";
         string time = item.LatestObservedAt?.ToString("u", CultureInfo.InvariantCulture) ?? "unavailable";
-        return $"\n{Section(item, period)} — {item.Exchange}/{item.Symbol} — {item.Condition}\n"
+        string condition = item.Condition == "ResistanceEntry" ? "resistance entry" : item.Condition;
+        return $"\n{Section(item, period)} — {item.Exchange}/{item.Symbol} — {condition}\n"
             + $"Signal {item.SignalId}; triggered {item.TriggeredAt.ToString("u", CultureInfo.InvariantCulture)}\n"
             + $"Original price: {FormatPrice(item.TriggerPrice)} {item.QuoteCurrency} ({item.PriceBasis}). "
             + $"Latest saved price: {latest} {item.QuoteCurrency} at {time}.\n"

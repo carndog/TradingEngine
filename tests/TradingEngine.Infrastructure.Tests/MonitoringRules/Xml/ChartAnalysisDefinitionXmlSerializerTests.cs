@@ -18,6 +18,39 @@ public sealed class ChartAnalysisDefinitionXmlSerializerTests
     }
 
     [Test]
+    public void Deserialize_OptedInResistance_RoundTripsEntryWithoutChangingLegacyXml()
+    {
+        string legacy = _serializer.Serialize(_serializer.Deserialize(ReadExample("valid.xml")));
+        string enabled = legacy.Replace("</ResistanceZone>",
+            "<Condition type=\"resistance-entry\" actionId=\"publish-signal\" /></ResistanceZone>", StringComparison.Ordinal);
+
+        ChartAnalysisDefinition definition = _serializer.Deserialize(enabled);
+        string roundTrip = _serializer.Serialize(definition);
+
+        Assert.That(roundTrip, Is.EqualTo(enabled));
+        Assert.That(definition.ResistanceZones[0].Conditions.Select(condition => condition.Type),
+            Is.EqualTo(new[] { ChartConditionType.Breakout, ChartConditionType.ResistanceEntry }));
+        Assert.That(_serializer.Serialize(_serializer.Deserialize(legacy)), Is.EqualTo(legacy));
+        Assert.That(legacy, Does.Not.Contain("resistance-entry"));
+    }
+
+    [TestCase("resistance-entry", "breakout")]
+    [TestCase("resistance-entry", "resistance-entry")]
+    public void Deserialize_InvalidResistanceOrder_RejectsDefinition(string first, string second)
+    {
+        string xml = $"""
+            <ChartAnalysisDefinition priceScale="2"><ResistanceZones>
+              <ResistanceZone id="resistance-a" lower="120" level="125" upper="130">
+                <Condition type="{first}" actionId="publish-signal" />
+                <Condition type="{second}" actionId="publish-signal" />
+              </ResistanceZone>
+            </ResistanceZones></ChartAnalysisDefinition>
+            """;
+
+        Assert.That(() => _serializer.Deserialize(xml), Throws.TypeOf<InvalidDataException>());
+    }
+
+    [Test]
     public void Deserialize_WithValidDocument_RoundTripsToCanonicalXml()
     {
         string xml = ReadExample("valid.xml");

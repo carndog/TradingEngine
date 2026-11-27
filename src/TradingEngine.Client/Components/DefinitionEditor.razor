@@ -27,7 +27,7 @@
             <span class="te-zone-head">Resistance zones</span>
             <button type="button" @onclick="AddResistance">+ Add resistance zone</button>
         </div>
-        <p class="te-note">Each resistance zone requires a breakout condition.</p>
+        <p class="te-note">Each resistance zone requires a breakout condition. Resistance entry alerts are optional per zone.</p>
         @foreach (ZoneEditModel zone in Model.ResistanceZones)
         {
             <ZoneEditor Zone="@zone" OnChanged="NotifyChanged" OnRemove="() => RemoveResistance(zone)" />

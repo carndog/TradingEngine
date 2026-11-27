@@ -423,6 +423,172 @@ public sealed class RecommendationPipelinePersistenceTests
         });
     }
 
+    [TestCase(ChartConditionType.BuyZone, ChartConditionType.SupportLoss, false)]
+    [TestCase(ChartConditionType.SupportLoss, ChartConditionType.BuyZone, false)]
+    [TestCase(ChartConditionType.BuyZone, ChartConditionType.ResistanceEntry, false)]
+    [TestCase(ChartConditionType.ResistanceEntry, ChartConditionType.BuyZone, false)]
+    [TestCase(ChartConditionType.SupportLoss, ChartConditionType.ResistanceEntry, false)]
+    [TestCase(ChartConditionType.ResistanceEntry, ChartConditionType.SupportLoss, false)]
+    [TestCase(ChartConditionType.BuyZone, ChartConditionType.SupportLoss, true)]
+    [TestCase(ChartConditionType.SupportLoss, ChartConditionType.BuyZone, true)]
+    [TestCase(ChartConditionType.BuyZone, ChartConditionType.ResistanceEntry, true)]
+    [TestCase(ChartConditionType.ResistanceEntry, ChartConditionType.BuyZone, true)]
+    [TestCase(ChartConditionType.SupportLoss, ChartConditionType.ResistanceEntry, true)]
+    [TestCase(ChartConditionType.ResistanceEntry, ChartConditionType.SupportLoss, true)]
+    public async Task HandleAsync_DistinctConditions_OnlySuppressesSameCondition(
+        ChartConditionType first, ChartConditionType second, bool accepted)
+    {
+        Guid asset = await InsertInstrumentAsync($"PAIR-{_suffix}", "Configured");
+        await AddRuleAsync(asset, ResistanceDefinition());
+        AssetEmailCooldown policy = AssetEmailCooldown.FromJson("""{"defaultPeriod":"PT2H"}""");
+        RecordingEmailSender sender = new();
+        BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
+        await AddObservationAsync(asset, T0, 110m);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(1), TriggerPrice(first));
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        if (accepted)
+        {
+            await RunDispatchAsync(sender, clock);
+            sender.ProbeResults.Enqueue(new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+            await RunDispatchAsync(sender, clock);
+        }
+
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(2), 110m);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(3), TriggerPrice(second));
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunDispatchAsync(sender, clock);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(4), 110m);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(5), TriggerPrice(first));
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(6), 110m);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(7), TriggerPrice(second));
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunDispatchAsync(sender, clock);
+        await using TradingEngineDbContext context = CreateContext();
+        IReadOnlyList<SignalEvidence> history = await new SqlServerSignalEvidenceReader(context).ReadAsync(
+            new SignalQuery(T0 + Duration.FromHours(1), asset), CancellationToken.None);
+
+        Assert.That(sender.Sends.Select(send => send.OperationId), Is.EquivalentTo(new[]
+        {
+            IntentIdFor(asset, T0 + Duration.FromMinutes(1)),
+            IntentIdFor(asset, T0 + Duration.FromMinutes(3))
+        }));
+        Assert.That(history, Has.Count.EqualTo(4));
+        Assert.That(history.Where(signal => signal.EmailStatus == "SuppressedRepeat").Select(signal => signal.Condition),
+            Is.EquivalentTo(new[] { first.ToString(), second.ToString() }));
+    }
+
+    [Test]
+    public async Task HandleAsync_ResistanceEntryCooldown_ExpiresWithoutSuppressedEventsExtendingIt()
+    {
+        Guid firstAsset = await InsertInstrumentAsync($"ENT-{_suffix}", "Configured");
+        Guid secondAsset = await InsertInstrumentAsync($"OTH-{_suffix}", "Configured");
+        AssetEmailCooldown policy = AssetEmailCooldown.FromJson("""{"defaultPeriod":"PT2H"}""");
+        foreach (Guid asset in new[] { firstAsset, secondAsset })
+        {
+            await AddRuleAsync(asset, ResistanceDefinition());
+            await AddObservationAsync(asset, T0, 110m);
+        }
+
+        BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(1), 125m);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        RecordingEmailSender sender = new();
+        await RunDispatchAsync(sender, clock);
+        sender.ProbeResults.Enqueue(new EmailOperationProbe(EmailOperationStatus.Succeeded, "Succeeded", null));
+        await RunDispatchAsync(sender, clock);
+
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(20), 102m);
+        clock.Now = T0 + Duration.FromMinutes(30);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunDispatchAsync(sender, clock);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(128), 110m);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(129), 125m);
+        await AddObservationAsync(secondAsset, T0 + Duration.FromMinutes(129), 125m);
+        clock.Now = T0 + Duration.FromMinutes(129);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunDispatchAsync(sender, clock);
+
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(129) + Duration.FromSeconds(30), 110m);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(130), 125m);
+        clock.Now = T0 + Duration.FromMinutes(130);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunDispatchAsync(sender, clock);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(131), 102m);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(132), 110m);
+        await AddObservationAsync(firstAsset, T0 + Duration.FromMinutes(133), 125m);
+        clock.Now = T0 + Duration.FromMinutes(133);
+        await RunEvaluationAsync(policy: policy, clock: clock);
+        await RunDispatchAsync(sender, clock);
+
+        Assert.That(sender.Sends, Has.Count.EqualTo(4));
+        Assert.That(sender.Sends.Count(send => send.Email.Subject.Contains("resistance entry", StringComparison.Ordinal)),
+            Is.EqualTo(3));
+        Assert.That(IntentStatusCount(firstAsset, "SuppressedRepeat"), Is.EqualTo(3));
+        Assert.That(IntentStatusCount(secondAsset, "SuppressedRepeat"), Is.Zero);
+        Assert.That(sender.Sends.Last().OperationId, Is.EqualTo(IntentIdFor(firstAsset, T0 + Duration.FromMinutes(130))));
+    }
+
+    [Test]
+    public async Task HandleAsync_ResistanceEntryAcrossZonesAndRevisions_SharesClockAndPreservesEvidence()
+    {
+        Guid asset = await InsertInstrumentAsync($"REVRE-{_suffix}", "Configured");
+        Guid originalRevision = Guid.NewGuid();
+        Guid newRevision = Guid.NewGuid();
+        MonitoringRule rule = MonitoringRule.Create(Guid.NewGuid(), asset, originalRevision,
+            ResistanceDefinition(), T0, "synthetic").Value;
+        rule.CreateDraft(newRevision, ResistanceDefinition("resistance-b"), T0 + Duration.FromSeconds(1),
+            "synthetic", null, null);
+        rule.Schedule(newRevision, T0 + Duration.FromMinutes(3), null, Guid.NewGuid(), T0 + Duration.FromSeconds(1));
+        await using (TradingEngineDbContext setup = CreateContext())
+        {
+            Result added = await new SqlServerMonitoringRuleStore(setup, _serializer).AddAsync(rule, CancellationToken.None);
+            Assert.That(added.IsSuccess, Is.True);
+        }
+
+        BatchTestClock clock = new() { Now = T0 + Duration.FromMinutes(10) };
+        await AddObservationAsync(asset, T0, 110m);
+        await RunEvaluationAsync(suppressRepeats: true, clock: clock);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(1), 125m);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(2), 110m);
+        await AddObservationAsync(asset, T0 + Duration.FromMinutes(3), 125m);
+        await RunEvaluationAsync(suppressRepeats: true, clock: clock);
+        RecordingEmailSender sender = new();
+        await RunDispatchAsync(sender, clock);
+        await using TradingEngineDbContext context = CreateContext();
+        IReadOnlyList<SignalEvidence> history = await new SqlServerSignalEvidenceReader(context).ReadAsync(
+            new SignalQuery(T0 + Duration.FromHours(1), asset), CancellationToken.None);
+
+        Assert.That(sender.Sends, Has.Count.EqualTo(1));
+        Assert.That(history.Select(signal => (signal.ZoneId, signal.RevisionId, signal.EmailStatus)), Is.EquivalentTo(new[]
+        {
+            ("resistance-a", originalRevision, "Submitted"),
+            ("resistance-b", newRevision, "SuppressedRepeat")
+        }));
+    }
+
+    private static ChartAnalysisDefinition ResistanceDefinition(string zoneId = "resistance-a")
+    {
+        ChartAnalysisIdentifier action = ChartAnalysisIdentifier.From("publish-signal").Value;
+        ChartZone resistance = ChartZone.Create(ChartAnalysisIdentifier.From(zoneId).Value, 120m, 125m, 130m,
+            [ChartCondition.Create(ChartConditionType.Breakout, action).Value,
+             ChartCondition.Create(ChartConditionType.ResistanceEntry, action).Value]).Value;
+        return ChartAnalysisDefinition.Create(2, Zone(95m, 100m, 105m).SupportZones, [resistance]).Value;
+    }
+
+    private static decimal TriggerPrice(ChartConditionType condition)
+    {
+        return condition switch
+        {
+            ChartConditionType.BuyZone => 102m,
+            ChartConditionType.SupportLoss => 90m,
+            ChartConditionType.ResistanceEntry => 125m,
+            _ => throw new ArgumentOutOfRangeException(nameof(condition))
+        };
+    }
+
     [Test]
     public async Task HandleAsync_BreakoutCrossings_SendIndependentlyOfCoveredConditions()
     {
@@ -509,18 +675,21 @@ public sealed class RecommendationPipelinePersistenceTests
         });
     }
 
-    [TestCase(false, 2)]
-    [TestCase(true, 1)]
-    public async Task HandleAsync_WhenWorkersRace_SingleIntentPerTrigger(bool suppressRepeats, int expectedSends)
+    [TestCase(false, 2, false)]
+    [TestCase(true, 1, false)]
+    [TestCase(false, 2, true)]
+    [TestCase(true, 1, true)]
+    public async Task HandleAsync_WhenWorkersRace_SingleIntentPerTrigger(
+        bool suppressRepeats, int expectedSends, bool resistanceEntry)
     {
         Guid instrumentId = await InsertInstrumentAsync($"RCW-{_suffix}", "Configured");
-        await AddRuleAsync(instrumentId, Zone(95m, 100m, 105m));
-        await AddObservationAsync(instrumentId, T0, 120m);
+        await AddRuleAsync(instrumentId, resistanceEntry ? ResistanceDefinition() : Zone(95m, 100m, 105m));
+        await AddObservationAsync(instrumentId, T0, resistanceEntry ? 110m : 120m);
         await RunEvaluationAsync();
-        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), 102m);
-        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(2)), 97m);
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(1)), resistanceEntry ? 125m : 102m);
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(2)), resistanceEntry ? 126m : 97m);
         await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(3)), 110m);
-        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(4)), 102m);
+        await AddObservationAsync(instrumentId, T0.Plus(Duration.FromMinutes(4)), resistanceEntry ? 125m : 102m);
 
         await using TradingEngineDbContext contextA = CreateContext();
         await using TradingEngineDbContext contextB = CreateContext();
@@ -1283,15 +1452,15 @@ public sealed class RecommendationPipelinePersistenceTests
         return intentId;
     }
 
-    private async Task<EvaluationRunResult> RunEvaluationAsync(bool suppressRepeats = false, AssetEmailCooldown? policy = null)
+    private async Task<EvaluationRunResult> RunEvaluationAsync(bool suppressRepeats = false, AssetEmailCooldown? policy = null, IClock? clock = null)
     {
         await using TradingEngineDbContext context = CreateContext();
-        return await CreateHandler(context, suppressRepeats, policy).HandleAsync(
+        return await CreateHandler(context, suppressRepeats, policy, clock).HandleAsync(
             new EvaluateSavedPrices(),
             CancellationToken.None);
     }
 
-    private EvaluateSavedPricesHandler CreateHandler(TradingEngineDbContext context, bool suppressRepeats = false, AssetEmailCooldown? policy = null)
+    private EvaluateSavedPricesHandler CreateHandler(TradingEngineDbContext context, bool suppressRepeats = false, AssetEmailCooldown? policy = null, IClock? clock = null)
     {
         return new EvaluateSavedPricesHandler(
             new SqlServerRecommendationStore(context, policy ?? (suppressRepeats
@@ -1299,7 +1468,7 @@ public sealed class RecommendationPipelinePersistenceTests
                 : AssetEmailCooldown.Disabled)),
             new SqlServerMonitoringRuleStore(context, _serializer),
             new ChartAnalysisEvaluator(),
-            SystemClock.Instance,
+            clock ?? SystemClock.Instance,
             TimeProvider.System,
             new RecommendationOptions
             {
