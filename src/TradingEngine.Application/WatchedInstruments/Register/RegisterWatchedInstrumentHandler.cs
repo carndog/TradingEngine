@@ -75,7 +75,7 @@ public sealed class RegisterWatchedInstrumentHandler
         MarketListing? listing = null;
         if (resolved.IsFailure)
         {
-            resolutionState = MapResolutionError(resolved.Error);
+            resolutionState = ListingStatusEvaluator.MapResolutionError(resolved.Error);
             resolutionDetail = resolved.Error.Code;
         }
         else
@@ -231,26 +231,6 @@ public sealed class RegisterWatchedInstrumentHandler
             resolutionDetail);
 
         return new WatchedInstrumentRegistrationOutcome(instrument.Value, listingInfo);
-    }
-
-    private static ListingResolutionState MapResolutionError(Error error)
-    {
-        if (error.Code == MarketDataErrors.InstrumentMappingUnresolved.Code)
-        {
-            return ListingResolutionState.NotFound;
-        }
-
-        if (error.Code == MarketDataErrors.InstrumentMappingAmbiguous.Code)
-        {
-            return ListingResolutionState.Ambiguous;
-        }
-
-        if (error.Code == MarketDataErrors.ExchangeMappingUnconfigured.Code)
-        {
-            return ListingResolutionState.UnsupportedVenue;
-        }
-
-        return ListingResolutionState.Unavailable;
     }
 
     private static Error SourceConflictError(NativeQuoteUnitResolution resolution)

@@ -18,6 +18,25 @@
 
 Two instants are kept distinct: `ProviderObservedAt` is the provider's `date` field (nullable — it can be absent or delayed), while `RetrievedAt` is the local `IClock` capture when the quote was mapped.
 
+## Pre-registration verification
+
+The Add Instrument page offers **Verify with eToro** after symbol, exchange and quote currency are entered. The authenticated `POST /api/watched-instruments/verify` endpoint accepts those fields plus the optional proposed native unit. It resolves the exact listing through the existing provider adapter, then uses the existing native-unit and monitoring-readiness checks. No watched-instrument ID is required.
+
+Recognition, readiness and quote availability are independent. A recognised listing can have unconfirmed or conflicting units, missing session/calendar configuration, a closed session, or no available quote. Entering a native unit does not verify it: existing persisted/deployment configuration or authoritative provider metadata must establish the unit before a quote check. An operator can still register an incomplete instrument as Configured and use the existing confirmation workflow. Registration validates again and accepts no verification flag.
+
+The check has a 20-second cancellation budget across resolution and quote retrieval, in addition to the adapter's existing shared rate gate, retries and deadlines. Quotes are requested only in an eligible session with verified units. The response retains available bid/ask sides, native units, retrieval time, provider-observed time and reported timeliness. Both-null quotes and quotes whose provider identity differs from the resolved listing are not displayed. A snapshot is never presented as a continuously live price.
+
+The endpoint writes no instruments, listing confirmations, price observations, success audits or signals. It returns only the required listing/quote fields and stable diagnostic codes, with `Cache-Control: no-store`; provider payloads, request correlation and exception details stay off the browser. Existing bounded provider lookup caching is unchanged. The UI cancels and clears results whenever symbol, exchange, currency or proposed native unit changes, prevents duplicate checks, ignores late responses and preserves the registration form.
+
+Authenticated acceptance walkthrough (use synthetic provider fixtures locally, or keep any live evidence private):
+
+1. Enter a known exact listing and choose Verify with eToro using the keyboard. Confirm the recognised name, exact symbol and exchange, unit/readiness guidance and any available quote timestamps.
+2. Change an identity field while a check is pending and after a successful check. Confirm the old result clears and cannot return later; repeat the check with the new inputs.
+3. Check an unknown or ambiguous listing, then recover to a valid listing without losing zone values. Confirm unconfirmed units, session closures, delayed/one-sided quotes and temporary failures have distinct guidance.
+4. Confirm no instrument or collection rows were created by verification. Register as Configured separately and confirm existing registration validation still applies.
+
+This is an additive API/UI change with no migration or deployment configuration change.
+
 ## Verified provider contract
 
 Sources (accessed 2026-11-04):

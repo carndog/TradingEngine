@@ -9,6 +9,7 @@ using TradingEngine.Application.WatchedInstruments.Register;
 using TradingEngine.Application.WatchedInstruments.Search;
 using TradingEngine.Application.WatchedInstruments.Settings;
 using TradingEngine.Application.WatchedInstruments.Status;
+using TradingEngine.Application.WatchedInstruments.Verify;
 using TradingEngine.Contracts.WatchedInstruments;
 using TradingEngine.Domain.Instruments;
 using TradingEngine.Domain.MonitoringRules;
@@ -28,6 +29,7 @@ internal static class WatchedInstrumentEndpoints
 
         RouteGroupBuilder group = routes.MapGroup(GroupPath);
         group.MapPost("", RegisterAsync);
+        group.MapPost("/verify", VerifyAsync);
         group.MapGet("", SearchAsync);
         group.MapGet("/{id:guid}", GetAsync);
         group.MapGet("/{id:guid}/settings", GetSettingsAsync);
@@ -36,6 +38,45 @@ internal static class WatchedInstrumentEndpoints
         group.MapPost("/bulk-delete", BulkDeleteAsync);
 
         return group;
+    }
+
+    private static async Task<IResult> VerifyAsync(
+        VerifyInstrumentRequest? request,
+        VerifyInstrumentHandler handler,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.User.Identity?.IsAuthenticated is not true)
+        {
+            return ApiProblemDetails.Unauthorized("authentication.principal_required", "Sign in to verify an instrument.");
+        }
+
+        if (request is null)
+        {
+            return ApiProblemDetails.Problem(WatchedInstrumentErrors.RequestRequired);
+        }
+
+        Result<InstrumentVerification> verified = await handler.HandleAsync(new VerifyInstrument(
+            request.Symbol ?? string.Empty, request.Exchange ?? string.Empty,
+            request.QuoteCurrency ?? string.Empty, request.NativeQuoteCurrency), cancellationToken);
+        if (verified.IsFailure)
+        {
+            return ApiProblemDetails.Problem(verified.Error);
+        }
+
+        InstrumentVerification result = verified.Value;
+        VerificationQuoteDto? quote = result.Quote is null ? null : new(
+            result.Quote.Bid, result.Quote.Ask, result.Quote.Instrument.QuoteCurrency,
+            result.Quote.RetrievedAt.ToDateTimeOffset(), result.Quote.ProviderObservedAt?.ToDateTimeOffset(),
+            result.Quote.Timeliness.ToString().ToLowerInvariant());
+        context.Response.Headers.CacheControl = "no-store";
+        return TypedResults.Ok(new InstrumentVerificationResponse(
+            result.Identity.Symbol, result.Identity.Exchange, result.Identity.QuoteCurrency,
+            FormatResolutionState(result.ResolutionState), result.ResolutionDetailCode,
+            result.Listing?.Provider, result.Listing?.ProviderSymbol, result.Listing?.ProviderExchangeName,
+            result.Listing?.ProviderExchangeId, result.Listing?.DisplayName, result.NativeQuoteCurrency,
+            result.ReadyForMonitoring, result.ReadinessDetailCode, FormatSessionStatus(result.Session.Status),
+            result.Session.ReasonCode, quote, result.QuoteDetailCode));
     }
 
     private static async Task<Results<Created<WatchedInstrumentResponse>, ProblemHttpResult>> RegisterAsync(
@@ -409,6 +450,14 @@ internal static class WatchedInstrumentEndpoints
             info.LastAttemptOutcome?.ToString(),
             info.LastAttemptErrorCode);
     }
+
+    private static string FormatSessionStatus(ExchangeSessionStatus status) => status switch
+    {
+        ExchangeSessionStatus.Open => "open",
+        ExchangeSessionStatus.Closed => "closed",
+        ExchangeSessionStatus.CalendarUnavailable => "calendar-unavailable",
+        _ => "unconfigured"
+    };
 
     private static string FormatResolutionState(ListingResolutionState state)
     {

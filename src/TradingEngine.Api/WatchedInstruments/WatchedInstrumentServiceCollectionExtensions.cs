@@ -8,6 +8,7 @@ using TradingEngine.Application.WatchedInstruments.Register;
 using TradingEngine.Application.WatchedInstruments.Search;
 using TradingEngine.Application.WatchedInstruments.Settings;
 using TradingEngine.Application.WatchedInstruments.Status;
+using TradingEngine.Application.WatchedInstruments.Verify;
 
 namespace TradingEngine.Api.WatchedInstruments;
 
@@ -17,6 +18,7 @@ internal static class WatchedInstrumentServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddScoped<VerifyInstrumentHandler>();
         services.AddScoped<ListingStatusEvaluator>(provider =>
             new ListingStatusEvaluator(
                 provider.GetRequiredService<INativeQuoteUnitMap>()));

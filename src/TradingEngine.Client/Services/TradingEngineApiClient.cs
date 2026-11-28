@@ -132,6 +132,14 @@ public sealed class TradingEngineApiClient
             cancellationToken);
     }
 
+    public Task<ApiResult<InstrumentVerificationResponse>> VerifyInstrumentAsync(
+        VerifyInstrumentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return SendAsync<InstrumentVerificationResponse>(HttpMethod.Post,
+            "api/watched-instruments/verify", request, ifMatch: null, cancellationToken);
+    }
+
     public Task<ApiResult<WatchedInstrumentResponse>> RegisterInstrumentAsync(
         RegisterWatchedInstrumentRequest request,
         CancellationToken cancellationToken = default)
