@@ -1,0 +1,203 @@
+@inject TradingEngineApiClient Api
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<section class="te-detail-card" aria-label="Instrument verification" aria-busy="@_checking">
+    <div class="te-row">
+        <h4>Verify listing</h4>
+        <button type="button" @onclick="VerifyAsync" disabled="@(_checking || InputsMissing)">
+            @(_checking ? "Checking…" : "Verify with eToro")
+        </button>
+    </div>
+    <div role="status" aria-live="polite" aria-atomic="true">
+        <strong>@Status</strong>
+        @if (_result is not null)
+        {
+            @if (_result.ResolutionState == "resolved")
+            {
+                <p>@_result.DisplayName — @_result.ProviderSymbol · @_result.ProviderExchangeName
+                    @if (_result.ProviderExchangeId is not null)
+                    {
+                        <span>(exchange ID @_result.ProviderExchangeId)</span>
+                    }
+                </p>
+                <p>Native quote unit: @(_result.NativeQuoteCurrency ?? "Unconfirmed").
+                    @(_result.ReadyForMonitoring ? "Ready for monitoring after registration." : "Not ready for monitoring.")</p>
+                @if (_result.ReadinessDetailCode is not null)
+                {
+                    <p>@Guidance(_result.ReadinessDetailCode)</p>
+                }
+                @if (_result.SessionStatus == "closed")
+                {
+                    <p>The exchange session is closed. Check for a quote when it reopens.</p>
+                }
+                else if (_result.SessionStatus is "unconfigured" or "calendar-unavailable")
+                {
+                    <p>@Guidance(_result.SessionDetailCode ?? "price_collection.exchange_session_unconfigured")</p>
+                }
+                @if (_result.Quote is VerificationQuoteDto quote)
+                {
+                    <p>Quote available — Bid: @Price(quote.Bid) · Ask: @Price(quote.Ask) @quote.NativeQuoteCurrency</p>
+                    <p>Retrieved: @Time(quote.RetrievedAt). Provider observed: @Time(quote.ProviderObservedAt).</p>
+                    <p>@Timeliness(quote.Timeliness)</p>
+                }
+                else
+                {
+                    <p>No quote available from this check.
+                        @if (_result.QuoteDetailCode is not null && _result.SessionStatus == "open")
+                        {
+                            <span>@Guidance(_result.QuoteDetailCode)</span>
+                        }
+                    </p>
+                }
+            }
+            else
+            {
+                <p>@Guidance(_result.ResolutionDetailCode)</p>
+            }
+        }
+        else if (_error is not null)
+        {
+            <p>@FailureGuidance</p>
+            @if (_error.IsUnauthorized)
+            {
+                <a href="@AuthLinks.SignInUrl(Navigation)">Sign in again</a>
+            }
+        }
+        else if (_checking is false)
+        {
+            <p>Enter a symbol, exchange and quote currency, then check the exact listing.</p>
+        }
+    </div>
+    <p class="te-note">This check does not save the instrument or start collection. You can still register it
+        as Configured and complete its setup in Settings.</p>
+</section>
+
+@code {
+    [Parameter] public string Symbol { get; set; } = string.Empty;
+    [Parameter] public string Exchange { get; set; } = string.Empty;
+    [Parameter] public string QuoteCurrency { get; set; } = string.Empty;
+    [Parameter] public string NativeQuoteCurrency { get; set; } = string.Empty;
+
+    private VerifyInstrumentRequest? _inputs;
+    private InstrumentVerificationResponse? _result;
+    private ApiError? _error;
+    private CancellationTokenSource? _request;
+    private bool _checking;
+    private bool _disposed;
+
+    private bool InputsMissing => string.IsNullOrWhiteSpace(Symbol)
+        || string.IsNullOrWhiteSpace(Exchange) || string.IsNullOrWhiteSpace(QuoteCurrency);
+
+    private string Status => _checking ? "Checking" : ResultStatus;
+
+    private string ResultStatus => _result?.ResolutionState switch
+    {
+        "resolved" => "Recognised",
+        "not-found" => "Not found",
+        "ambiguous" => "Multiple matches",
+        null when _error is null => "Not checked",
+        _ => "Unable to check"
+    };
+
+    private string FailureGuidance => _error?.Status switch
+    {
+        401 => "Your session has expired. Sign in and try again.",
+        403 => "Your account cannot perform this check. Contact the administrator.",
+        400 => "Check the symbol, exchange and currency fields, then try again.",
+        429 => "Too many requests. Wait briefly before trying again.",
+        _ => "The check could not complete. Your inputs are preserved; try again shortly."
+    };
+
+    protected override void OnParametersSet()
+    {
+        VerifyInstrumentRequest inputs = new(Symbol, Exchange, QuoteCurrency,
+            string.IsNullOrWhiteSpace(NativeQuoteCurrency) ? null : NativeQuoteCurrency);
+        if (inputs != _inputs)
+        {
+            CancelRequest();
+            _inputs = inputs;
+            _result = null;
+            _error = null;
+        }
+    }
+
+    private async Task VerifyAsync()
+    {
+        if (_checking || InputsMissing || _disposed)
+        {
+            return;
+        }
+
+        VerifyInstrumentRequest inputs = _inputs!;
+        using CancellationTokenSource request = new();
+        _request = request;
+        _checking = true;
+        _result = null;
+        _error = null;
+        try
+        {
+            ApiResult<InstrumentVerificationResponse> response = await Api.VerifyInstrumentAsync(inputs, request.Token);
+            if (_disposed is false && ReferenceEquals(_request, request) && inputs == _inputs)
+            {
+                _result = response.Value;
+                _error = response.Error;
+            }
+        }
+        catch (OperationCanceledException) when (request.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_request, request))
+            {
+                _request = null;
+                _checking = false;
+            }
+        }
+    }
+
+    private void CancelRequest()
+    {
+        CancellationTokenSource? request = _request;
+        _request = null;
+        _checking = false;
+        request?.Cancel();
+    }
+
+    private static string Price(decimal? value) => value?.ToString("0.############################",
+        System.Globalization.CultureInfo.InvariantCulture) ?? "Unavailable";
+
+    private static string Time(DateTimeOffset? value) => value?.ToUniversalTime().ToString(
+        "yyyy-MM-dd HH:mm:ss 'UTC'", System.Globalization.CultureInfo.InvariantCulture) ?? "Not supplied";
+
+    private static string Timeliness(string value) => value switch
+    {
+        "delayed" => "Provider timeliness: delayed. This is a sampled quote, not a live stream.",
+        "realtime" => "Provider timeliness: realtime. This is a snapshot at the times shown, not a live stream.",
+        _ => "Provider timeliness: unknown. This may be the last available quote."
+    };
+
+    private static string Guidance(string? code) => code switch
+    {
+        "market_data.instrument_mapping_unresolved" => "No exact listing was found. Check the provider symbol and exchange; no alternative listing was selected.",
+        "market_data.instrument_mapping_ambiguous" => "Several listings match. Confirm the intended listing with the administrator before monitoring.",
+        "market_data.exchange_mapping_unconfigured" => "This exchange has no provider mapping. Ask the administrator to configure it, then retry.",
+        "market_data.quote_currency_unconfigured" => "The native quote unit is unconfirmed. Check it against the provider listing and confirm it during registration or later in Settings.",
+        "market_data.quote_currency_conflict" => "The entered currency or native unit conflicts with the verified native quote unit. Correct the input; do not substitute display units for native units.",
+        "market_data.quote_currency_source_conflict" => "Saved and provider/deployment unit information conflict. Ask the administrator to resolve the configuration.",
+        "price_collection.exchange_session_unconfigured" => "Trading sessions are not configured for this exchange. Ask the administrator to configure them.",
+        "price_collection.calendar_unavailable" => "Verified trading-calendar coverage is unavailable. Ask the administrator to update it.",
+        "market_data.provider_throttled" or "market_data.provider_request_deferred" => "The provider request limit was reached. Wait briefly and retry.",
+        "market_data.provider_timeout" => "The provider check timed out. Try again shortly.",
+        "market_data.provider_credentials_unconfigured" => "The provider connection is not configured. Ask the administrator to check its credentials.",
+        "market_data.price_unavailable" => "The listing was recognised, but the provider supplied no usable bid or ask. Try again later.",
+        _ => "The provider check could not complete. Try again shortly; if it persists, ask the administrator to check the connection."
+    };
+
+    public void Dispose()
+    {
+        _disposed = true;
+        CancelRequest();
+    }
+}

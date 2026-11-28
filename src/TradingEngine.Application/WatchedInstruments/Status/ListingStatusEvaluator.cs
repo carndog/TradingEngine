@@ -57,6 +57,26 @@ public sealed class ListingStatusEvaluator
             resolutionDetailCode);
     }
 
+    public static ListingResolutionState MapResolutionError(Error error)
+    {
+        if (error.Code == MarketDataErrors.InstrumentMappingUnresolved.Code)
+        {
+            return ListingResolutionState.NotFound;
+        }
+
+        if (error.Code == MarketDataErrors.InstrumentMappingAmbiguous.Code)
+        {
+            return ListingResolutionState.Ambiguous;
+        }
+
+        if (error.Code == MarketDataErrors.ExchangeMappingUnconfigured.Code)
+        {
+            return ListingResolutionState.UnsupportedVenue;
+        }
+
+        return ListingResolutionState.Unavailable;
+    }
+
     private static ListingUnitState ResolveUnitState(NativeQuoteUnitResolution resolution)
     {
         if (resolution.SourceConflict)
